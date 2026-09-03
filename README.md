@@ -10,6 +10,7 @@ Lo strumento è un **ausilio istruttorio** (decision-support) *explainable* e au
 |-----------|-----------|
 | [`docs/WebScraping_AdverseMedia_FSC_MASE.md`](docs/WebScraping_AdverseMedia_FSC_MASE.md) | Documento tecnico-funzionale **(v1.1)**: architettura, modulo di scraping, fonti, modello dati, governance e piano di sviluppo |
 | [`docs/NOTE_DI_REVISIONE.md`](docs/NOTE_DI_REVISIONE.md) | Memo di revisione esperta: rilievi ordinati per criticità, razionale e punti aperti |
+| [`docs/DEPLOYMENT_E_INTEGRAZIONE_SAS.md`](docs/DEPLOYMENT_E_INTEGRAZIONE_SAS.md) | Architettura di deployment a container (Docker→Kubernetes, scalabile) e integrazione SAS Viya via SAS MCP server; LLM via Azure AI Foundry |
 
 ## Pilastri di progetto
 
