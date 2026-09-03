@@ -2,12 +2,12 @@
 ## Adverse Media Screening FSC/MASE
 
 > **Documento di architettura** · Deployment cloud-native e integrazione con SAS Viya / SAS Visual Investigator
-> Versione: **1.2** · Settembre 2026 · (modifiche in [Appendice C](#appendice-c--changelog))
+> Versione: **1.3** · Settembre 2026 · (modifiche in [Appendice C](#appendice-c--changelog))
 > Prerequisito: [documento tecnico-funzionale (baseline 1.0)](WebScraping_AdverseMedia_FSC_MASE.1.0.md)
 
 ### Decisioni di base (fissate)
-- **Cloud target: Microsoft Azure** (stesso account/tenant di Foundry), orchestrazione con **AKS** → §11.
-- **LLM/embedding → Microsoft Azure AI Foundry** (managed; nessun node pool GPU nel cluster).
+- **Due ambienti di deployment**: **locale su Docker Desktop** (docker-compose) per sviluppo → **produzione su Azure/AKS**. Stessa immagine, cambia solo la configurazione (§11).
+- **LLM/embedding → Microsoft Azure AI Foundry in _entrambi_ gli ambienti** (anche in locale: nessun LLM on-device, nessun node pool GPU). L'autenticazione differisce per ambiente: Workload Identity in cloud (§10.2), `az login`/service principal in locale (§10.4).
 - **SAS Viya esterna/gestita**: integrazione *via rete* attraverso **due canali** — `sas-mcp-server` (scoring/decisioning) e `svi-publisher` (popolamento SAS Visual Investigator).
 - **Front-end su due console distinte**:
   - **SAS Visual Investigator (SVI)** = console **investigativa** del I livello: triage alert, dossier, **network analysis**, case management, disposizione (§3, §9.8).
@@ -287,17 +287,43 @@ Sì, è la scelta corretta ed è già quella adottata (container #14 e #16). Mot
 ### 10.1 llm-gateway (punto unico di governo)
 Tutti i worker LLM/embedding passano dal **`llm-gateway`** (può basarsi su LiteLLM): routing **dual-LLM**, rate-limit/backpressure sulle quote, **redazione PII**, logging (hash) per audit, caching semantico, cost accounting per soggetto/CUP.
 
-### 10.2 Autenticazione
-**AKS Workload Identity** verso Foundry: accesso *keyless* (ruolo Entra), nessuna API key statica.
+### 10.2 Autenticazione (produzione)
+In produzione, **AKS Workload Identity** verso Foundry: accesso *keyless* (ruolo Entra "Cognitive Services OpenAI User"), nessuna API key statica. Il `llm-gateway` risolve la credenziale con **`DefaultAzureCredential`**, così lo **stesso codice** vale in locale (§10.4) e in cloud cambiando solo la sorgente della credenziale.
 
 ### 10.3 Residenza dati e compliance (da validare in DPIA/FRIA)
 - **Regione UE** (Italy North) + **Private Endpoint**; DPA con **non addestramento** sugli input.
 - **Dato sensibile (art. 10 GDPR)**: l'invio di testo potenzialmente giudiziario a Foundry va valutato in **DPIA/FRIA**; redazione PII + minimizzazione riducono l'esposizione; fallback on-prem reso a basso costo dall'astrazione del gateway.
 
+### 10.4 Autenticazione da locale (Docker Desktop)
+In locale non esiste Workload Identity (è AKS-only), ma **la classificazione usa comunque Azure AI Foundry**. Il `llm-gateway` risolve la credenziale con `DefaultAzureCredential`, che in locale attinge — in ordine di preferenza:
+1. **`az login` dello sviluppatore** (Azure CLI credential): nessun segreto in chiaro; si monta `~/.azure` in sola lettura nel container. *Consigliato.*
+2. **Service principal di sviluppo** (`AZURE_TENANT_ID`/`AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET` nel `.env` locale, non committato): utile per CI o macchine senza `az`.
+3. **API key** della risorsa Foundry (ultima scelta: chiave statica).
+- **Endpoint**: in locale si usa l'**endpoint pubblico** della risorsa Foundry con RBAC Entra; il Private Endpoint è riservato alla produzione (dietro rete Azure).
+- **Dato**: in locale **solo dati sintetici / di test** — **nessun dato reale personale o giudiziario** deve uscire da una postazione di sviluppo verso Foundry (vincolo DPIA).
+
 ---
 
-## 11. Deployment su Azure (servizi gestiti)
+## 11. Ambienti di deployment (locale → produzione)
 
+Due ambienti con **parità di immagine**: si sviluppa e si valida in **locale su Docker Desktop**, poi si promuove in **produzione su Azure**. Cambia solo la configurazione (env + segreti + sorgente credenziale), non il codice.
+
+| Aspetto | Locale (Docker Desktop) | Produzione (Azure) |
+|---------|-------------------------|--------------------|
+| Orchestrazione | `docker compose` | AKS + Helm |
+| Database | container **Postgres + pgvector** | Azure DB for PostgreSQL Flexible |
+| Cache | container **Redis** | Azure Cache for Redis |
+| Object store | container **MinIO** (S3-compat.) | Azure Blob (immutability/WORM) |
+| Temporal | container `auto-setup` | self-hosted HA / Temporal Cloud |
+| **LLM/embedding** | **Azure AI Foundry** (endpoint pubblico) | **Azure AI Foundry** (Private Endpoint) |
+| Auth → Foundry | `az login` / dev SP (§10.4) | Workload Identity *keyless* (§10.2) |
+| Segreti | file `.env` (non committato) | Azure Key Vault |
+| SAS Viya / SVI | ambiente Viya di **test** *oppure* **mock** | Viya/SVI esterna (Private Link/VPN) |
+| Ingress | porte su `localhost` | Application Gateway / Front Door (TLS/WAF) |
+| Identità utenti | Entra ID (app registration dev) | Entra ID (prod) |
+| Dati | **solo sintetici / di test** | dati reali (perimetro governato) |
+
+### 11.1 Servizi gestiti in produzione (Azure)
 Deploy sull'**account Azure esistente** (stesso tenant di Foundry): identità e rete semplificate (stesso perimetro Entra, Private Endpoint).
 
 | Esigenza | Servizio Azure | Note |
@@ -317,11 +343,17 @@ Deploy sull'**account Azure esistente** (stesso tenant di Foundry): identità e 
 
 **Portabilità preservata**: Kubernetes/Helm standard; i servizi gestiti sono **sostituibili** (CloudNativePG/Redis/MinIO) senza cambiare il codice.
 
+### 11.2 Locale su Docker Desktop
+- Requisiti: **Docker Desktop** (Kubernetes non necessario), `az login` per Foundry (§10.4), un `.env` da `.env.example`.
+- Avvio: `docker compose -f docker-compose.dev.yml up` (Appendice A).
+- **SAS Viya/SVI non gira in locale** (piattaforma troppo pesante): si punta a un ambiente Viya di **test** (`VIYA_ENDPOINT`) oppure si usa il **mock** (`SAS_MODE=mock` / `SVI_MODE=mock`), abilitando i container SAS solo col profilo `sas` (`docker compose --profile sas ...`).
+- Promozione: **Compose in locale → Helm su AKS**, senza modifiche al codice.
+
 ---
 
 ## 12. Portabilità Docker → Kubernetes
 
-- **Parità di ambiente**: stessa immagine dev (Compose) e test/prod (AKS); cambia solo la config.
+- **Parità di ambiente**: stessa immagine in locale (Docker Desktop/Compose) e in test/prod (AKS); cambia solo la config (e la sorgente credenziale Foundry, §10).
 - **Immagini** multi-stage, slim/distroless, non-root, **pinnate a digest**.
 - **Config 12-factor**; `ConfigMap` + Key Vault.
 - **Probe** liveness/readiness/startup; **SIGTERM** per graceful shutdown dei worker.
@@ -373,12 +405,14 @@ La network analysis non è più un lavoro Rilascio 3 con Neo4j: è **nativa in S
 6. **Temporal** self-hosted vs Temporal Cloud.
 7. **Connettività a SAS Viya/SVI** (Private Link/peering vs VPN/ExpressRoute) e service account (scope/rotazione).
 8. **Scope console React al Rilascio 1**: config essenziale + prime viste observability.
+9. **Autenticazione locale a Foundry** (§10.4): `az login`/`DefaultAzureCredential` (consigliato) vs service principal di sviluppo.
+10. **SAS/SVI in locale**: ambiente Viya di test raggiungibile vs **mock** (`SAS_MODE`/`SVI_MODE`).
 
 ---
 
-## Appendice A — Compose di sviluppo (illustrativo)
+## Appendice A — Compose per Docker Desktop (ambiente locale)
 
-> Snippet di riferimento per l'ambiente locale (non ancora materializzato nel repo). `admin-console` e back-end sono separati; SVI è esterno (non si emula in locale: si usa un ambiente Viya di test).
+> Questo è l'**ambiente locale target** su Docker Desktop (verrà materializzato come `docker-compose.dev.yml` nello scaffolding). `admin-console` e back-end sono separati; **l'LLM è su Azure AI Foundry anche in locale** (auth via `az login`/dev SP, §10.4). SVI/Viya non gira in locale: endpoint Viya di **test** o **mock** (profilo `sas`).
 
 ```yaml
 # docker-compose.dev.yml (bozza illustrativa)
@@ -406,17 +440,20 @@ services:
     shm_size: "1gb"
 
   llm-gateway:
-    build: ./services/llm-gateway             # verso Azure AI Foundry
+    build: ./services/llm-gateway             # verso Azure AI Foundry (anche in locale)
+    env_file: .env                            # AZURE_FOUNDRY_ENDPOINT + credenziale dev
+    volumes: ["${HOME}/.azure:/home/app/.azure:ro"]   # opzione `az login` (DefaultAzureCredential)
 
-  sas-mcp-server:
+  sas-mcp-server:                             # solo con Viya di test: `docker compose --profile sas up`
     image: ghcr.io/sassoftware/sas-mcp-server:<digest>
+    profiles: ["sas"]
     environment: { VIYA_ENDPOINT: ${VIYA_ENDPOINT}, ALLOW_RAW_BEARER: "true", MCP_TIERS: "6", MCP_READ_ONLY: "true" }
     ports: ["8134:8134"]
 
   svi-publisher:
-    build: ./services/svi-publisher           # Data Hub + Alerts REST verso SVI
+    build: ./services/svi-publisher           # Data Hub + Alerts REST verso SVI (o mock)
     env_file: .env
-    environment: { VIYA_ENDPOINT: ${VIYA_ENDPOINT} }
+    environment: { VIYA_ENDPOINT: ${VIYA_ENDPOINT}, SVI_MODE: "${SVI_MODE:-mock}" }
 
   postgres:
     image: postgres:16                         # + pgvector
@@ -449,11 +486,17 @@ volumes: { pgdata: {}, minio: {} }
 
 **svi-publisher**: `VIYA_ENDPOINT`, `SVI_DATAHUB_BASE`, `SVI_ALERTS_BASE`, service account SASLogon (via broker).
 
-**llm-gateway (Azure AI Foundry)**: `AZURE_FOUNDRY_ENDPOINT` (region UE), Workload Identity (keyless), `LLM_MODEL_PRIMARY`/`LLM_MODEL_SECONDARY`, `EMBEDDING_MODEL`, `LLM_MAX_TPM`/`LLM_MAX_RPM`.
+**llm-gateway (Azure AI Foundry)**: `AZURE_FOUNDRY_ENDPOINT` (region UE), `LLM_MODEL_PRIMARY`/`LLM_MODEL_SECONDARY`, `EMBEDDING_MODEL`, `LLM_MAX_TPM`/`LLM_MAX_RPM`; **auth** risolta da `DefaultAzureCredential` — in prod Workload Identity (keyless), in locale `az login` oppure `AZURE_TENANT_ID`/`AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET` (dev SP).
 
 ---
 
 ## Appendice C — Changelog
+
+**v1.2 → v1.3**
+- **Deployment a due ambienti**: **locale su Docker Desktop** (docker-compose) → **produzione su Azure/AKS**, con matrice di parità (§11, §11.1, §11.2).
+- **LLM su Azure AI Foundry anche in locale**: autenticazione via `DefaultAzureCredential` (`az login`/dev SP in locale, Workload Identity in prod), §10.2/§10.4; endpoint pubblico in locale, Private Endpoint in prod; **solo dati sintetici** in locale.
+- **SAS Viya/SVI in locale**: endpoint di test o **mock** (`SAS_MODE`/`SVI_MODE`, profilo compose `sas`).
+- Appendice A elevata da illustrativa ad **ambiente locale target**; §12 e punti aperti aggiornati.
 
 **v1.1 → v1.2**
 - **Front-end ridefinito su due console**: **SAS Visual Investigator** per l'investigazione del I livello (triage, dossier, **network analysis**, case management, disposizione) e **console React** per amministrazione/configurazione/**observability** della piattaforma di scraping (§3, §4).

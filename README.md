@@ -10,7 +10,7 @@ Lo strumento è un **ausilio istruttorio** (decision-support) *explainable* e au
 |-----------|-----------|
 | [`docs/WebScraping_AdverseMedia_FSC_MASE.1.0.md`](docs/WebScraping_AdverseMedia_FSC_MASE.1.0.md) | Documento tecnico-funzionale **(baseline 1.0)**: architettura, modulo di scraping, fonti, modello dati, governance, piano di sviluppo — allineato alle decisioni su SVI, React admin, Azure/Foundry e integrazione SAS |
 | [`docs/NOTE_DI_REVISIONE.md`](docs/NOTE_DI_REVISIONE.md) | Memo di revisione esperta: rilievi ordinati per criticità, razionale e punti aperti |
-| [`docs/DEPLOYMENT_E_INTEGRAZIONE_SAS.md`](docs/DEPLOYMENT_E_INTEGRAZIONE_SAS.md) | Architettura di deployment a container (Docker→Kubernetes/AKS); due console (SAS Visual Investigator per l'investigazione, React per admin/config/observability); integrazione SAS Viya via SAS MCP server (scoring/decisioning) e `svi-publisher` (Data Hub/Alerts); LLM via Azure AI Foundry; mapping ai servizi gestiti Azure |
+| [`docs/DEPLOYMENT_E_INTEGRAZIONE_SAS.md`](docs/DEPLOYMENT_E_INTEGRAZIONE_SAS.md) | Architettura di deployment a container su **due ambienti** (locale su Docker Desktop → produzione Azure/AKS); due console (SAS Visual Investigator per l'investigazione, React per admin/config/observability); integrazione SAS Viya via SAS MCP server (scoring/decisioning) e `svi-publisher` (Data Hub/Alerts); LLM via Azure AI Foundry (anche in locale) |
 
 ## Pilastri di progetto
 
