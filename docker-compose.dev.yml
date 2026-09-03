@@ -1,0 +1,106 @@
+# Ambiente di sviluppo locale su Docker Desktop (§11.2 del doc di deployment).
+# Avvio:   cp .env.example .env  &&  docker compose -f docker-compose.dev.yml up --build
+# Con SAS: docker compose -f docker-compose.dev.yml --profile sas up --build
+#
+# Nota: SVI/Viya non gira in locale. svi-publisher usa SVI_MODE=mock; l'LLM è
+# comunque su Azure AI Foundry (configura AZURE_* nel .env per la classificazione).
+
+name: adverse-media
+
+services:
+  # ---- Front-end: console di amministrazione (React + Vite, hot-reload) ----
+  admin-console:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host"
+    environment:
+      VITE_API_BASE: "http://localhost:8000"
+    volumes:
+      - ./admin-console:/app
+      - /app/node_modules
+    ports: ["5173:5173"]
+    depends_on: [api]
+
+  # ---- Back-end edge ----
+  api:
+    build: ./services/api
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgresql://ams:ams@postgres:5432/ams"
+      REDIS_URL: "redis://redis:6379/0"
+      TEMPORAL_HOST: "temporal:7233"
+    ports: ["8000:8000"]
+    depends_on: [postgres, redis, temporal]
+
+  # ---- Orchestrazione durevole (dev server in-memory, single container) ----
+  temporal:
+    image: temporalio/temporal:latest
+    command: ["server", "start-dev", "--ip", "0.0.0.0"]
+    ports:
+      - "7233:7233"   # gRPC
+      - "8233:8233"   # Web UI
+
+  # ---- Worker di scraping (Temporal) ----
+  worker-scraping:
+    build: ./services/worker-scraping
+    env_file: .env
+    environment:
+      TEMPORAL_HOST: "temporal:7233"
+      REDIS_URL: "redis://redis:6379/0"
+    depends_on: [temporal, redis]
+
+  # ---- Gateway LLM verso Azure AI Foundry (anche in locale) ----
+  llm-gateway:
+    build: ./services/llm-gateway
+    env_file: .env   # AZURE_FOUNDRY_ENDPOINT + credenziale dev (AZURE_TENANT_ID/CLIENT_ID/CLIENT_SECRET)
+    ports: ["8080:8080"]
+
+  # ---- Publisher verso SAS Visual Investigator (mock in locale) ----
+  svi-publisher:
+    build: ./services/svi-publisher
+    env_file: .env
+    environment:
+      SVI_MODE: "${SVI_MODE:-mock}"
+    ports: ["8090:8090"]
+
+  # ---- SAS MCP server: solo con un ambiente Viya di test (profilo "sas") ----
+  sas-mcp-server:
+    image: ghcr.io/sassoftware/sas-mcp-server:latest
+    profiles: ["sas"]
+    environment:
+      VIYA_ENDPOINT: "${VIYA_ENDPOINT:-}"
+      VIYA_AUTH: "true"
+      ALLOW_RAW_BEARER: "true"
+      MCP_TIERS: "6"
+      MCP_READ_ONLY: "true"
+      MCP_LANDING_PAGE: "false"
+    ports: ["8134:8134"]
+
+  # ---- Store ----
+  postgres:
+    image: pgvector/pgvector:pg16   # PostgreSQL 16 con estensione pgvector
+    environment:
+      POSTGRES_USER: ams
+      POSTGRES_PASSWORD: ams
+      POSTGRES_DB: ams
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    ports: ["5432:5432"]
+
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio12345
+    volumes: ["minio:/data"]
+    ports:
+      - "9000:9000"   # S3 API (snapshot WARC/HTML)
+      - "9001:9001"   # console MinIO
+
+volumes:
+  pgdata: {}
+  minio: {}
