@@ -3,7 +3,7 @@
 
 > **Documento di architettura** · Deployment cloud-native e integrazione con SAS Viya / SAS Visual Investigator
 > Versione: **1.2** · Settembre 2026 · (modifiche in [Appendice C](#appendice-c--changelog))
-> Prerequisito: [documento tecnico-funzionale v1.1](WebScraping_AdverseMedia_FSC_MASE.md)
+> Prerequisito: [documento tecnico-funzionale (baseline 1.0)](WebScraping_AdverseMedia_FSC_MASE.1.0.md)
 
 ### Decisioni di base (fissate)
 - **Cloud target: Microsoft Azure** (stesso account/tenant di Foundry), orchestrazione con **AKS** → §11.

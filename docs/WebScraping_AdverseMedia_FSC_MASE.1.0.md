@@ -3,7 +3,8 @@
 
 > **Documento tecnico-funzionale** · Descrizione dell'applicazione e piano di sviluppo
 > Autore: Carmelo Garofalo · Principal Systems Engineer · Settembre 2026
-> **Versione: 1.1** — revisione tecnica esperta (adverse media / compliance PA). Le modifiche rispetto alla v1.0 sono elencate nell'[Appendice A — Changelog](#appendice-a--changelog-v10--v11).
+> **Versione: 1.0 (baseline consolidata)** — integra la revisione esperta di compliance e le decisioni architetturali della sessione: front-end su **SAS Visual Investigator** (investigazione + network analysis) e **console React** (amministrazione/configurazione/observability), deploy su **Azure/AKS**, LLM via **Azure AI Foundry**, integrazione SAS via **SAS MCP server** e **`svi-publisher`**. Le modifiche rispetto alla bozza iniziale sono in [Appendice A](#appendice-a--note-di-versione-baseline-10).
+> Architettura di deployment e integrazione in dettaglio: [DEPLOYMENT_E_INTEGRAZIONE_SAS.md](DEPLOYMENT_E_INTEGRAZIONE_SAS.md).
 > Ambito: interventi FSC di competenza del **MASE**, innesto nel **Sistema Informativo del Monitoraggio (SIM)**
 
 ---
@@ -21,7 +22,7 @@
 9. [Piano di sviluppo](#9-piano-di-sviluppo)
 10. [Rischi e mitigazioni](#10-rischi-e-mitigazioni)
 11. [Criteri di accettazione (Definition of Done)](#11-criteri-di-accettazione-definition-of-done)
-- [Appendice A — Changelog v1.0 → v1.1](#appendice-a--changelog-v10--v11)
+- [Appendice A — Note di versione (baseline 1.0)](#appendice-a--note-di-versione-baseline-10)
 - [Appendice B — Riferimenti normativi](#appendice-b--riferimenti-normativi)
 
 ---
@@ -31,14 +32,14 @@
 ### 1.1 Obiettivo
 Realizzare un'applicazione che automatizzi lo **screening di notizie negative (adverse media / bad news)** sui beneficiari, soggetti attuatori e imprese esecutrici degli interventi finanziati dal **FSC** di competenza del MASE, producendo alert spiegabili e auditabili a supporto dei **controlli desk (I livello)** del Si.Ge.Co. / SIM.
 
-Lo strumento è un **ausilio istruttorio** (decision-support): individua e ordina per priorità le verifiche, ma **non decide**. La determinazione resta in capo all'istruttore (cfr. §8 e giurisprudenza sull'algoritmo amministrativo).
+Lo strumento è un **ausilio istruttorio** (decision-support): individua e ordina per priorità le verifiche, ma **non decide**. La determinazione resta in capo all'istruttore, che opera nella console investigativa **SAS Visual Investigator** (cfr. §8 e giurisprudenza sull'algoritmo amministrativo).
 
 ### 1.2 In scope
 - Raccolta continua di notizie e atti da fonti aperte e feed licenziati.
 - Disambiguazione robusta dei soggetti (anti-omonimia).
 - Classificazione del rischio secondo tassonomia **FATF** e calcolo di un **Adverse Media Index (AMI)** ancorato alla **materialità rispetto allo specifico intervento (CUP)**.
 - Integrazione con i sistemi FSC/MASE (SIM, ReGiS, OpenCoesione, RNA, ARACHNE/PIAF via PDND).
-- Human-in-the-loop (HITL) con escalation al controllo di I livello.
+- Pubblicazione di alert, entità e relazioni in **SAS Visual Investigator** per triage, **network analysis**, case management e disposizione (Human-in-the-loop).
 
 ### 1.3 Out of scope
 - **Decisioni automatiche** sull'erogazione dei fondi (vietato lo scoring puramente automatizzato — cfr. AI Act e principio di non esclusività della decisione algoritmica).
@@ -50,7 +51,7 @@ Lo strumento è un **ausilio istruttorio** (decision-support): individua e ordin
 
 ## 2. Architettura dell'applicazione
 
-L'applicazione adotta un pattern **multi-agente orchestrato**, organizzato in tre layer.
+L'applicazione adotta un pattern **multi-agente orchestrato**, organizzato in tre layer. L'esperienza investigativa è demandata a **SAS Visual Investigator**; l'amministrazione/observability della piattaforma a una **console React** (dettaglio in [DEPLOYMENT_E_INTEGRAZIONE_SAS.md](DEPLOYMENT_E_INTEGRAZIONE_SAS.md)).
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -59,26 +60,28 @@ L'applicazione adotta un pattern **multi-agente orchestrato**, organizzato in tr
 └───────────────┬──────────────────────────────────────────────────────────┘
                 │
 ┌───────────────▼──────────────────────────────────────────────────────────┐
-│  LAYER 2 — CORE MULTI-AGENT (orchestrazione LangGraph / Temporal)          │
+│  LAYER 2 — CORE MULTI-AGENT (orchestrazione Temporal / LangGraph)          │
 │                                                                            │
 │   [1] Entity        [2] Search &      [3] Classifi-   [4] AMI    [5] Conf. │
-│       Resolution        Scraping          cazione FATF    Scoring    + HITL│
+│       Resolution        Scraping          cazione FATF    Scoring    +Escal│
 │         │                  │                  │            │          │    │
-│         └──────────── Knowledge Graph condiviso (alias, UBO, relazioni) ───┘│
+│         └─── Relazioni condivise (alias, UBO, CUP) → network analysis su SVI┘│
 └───────────────┬──────────────────────────────────────────────────────────┘
                 │
 ┌───────────────▼──────────────────────────────────────────────────────────┐
 │  LAYER 3 — OUTPUT & GOVERNANCE                                             │
-│  Alert + dossier per il I livello · Check-list & piste di controllo ·      │
-│  Audit trail (GDPR / AI Act) · Feedback loop → ricalibrazione modelli      │
+│  Alert + entità + evidenze → SAS Visual Investigator                       │
+│    (triage · network analysis · case management · disposizione HITL)       │
+│  Audit trail (GDPR / AI Act) · Feedback loop → ricalibrazione modelli       │
+│  Console React: amministrazione · configurazione · observability           │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Principi guida**
 - **Abstain by default**: auto-chiusura di un alert solo in presenza di prova; in dubbio si escala.
-- **Difesa in profondità**: regole + ML + knowledge graph.
+- **Difesa in profondità**: regole + ML + relazioni (network analysis su SVI).
 - **Full traceability**: ogni disposizione registra fonti, snippet, confidence, versione, decisione.
-- **Continuous learning**: il feedback dell'analista ricalibra regole e modelli.
+- **Continuous learning**: il feedback dell'analista (da SVI) ricalibra regole e modelli.
 - **Human agency**: nessun effetto giuridico o significativo da output automatico; la sorveglianza umana è effettiva (art. 14 AI Act), non un timbro.
 
 ---
@@ -89,9 +92,9 @@ L'applicazione adotta un pattern **multi-agente orchestrato**, organizzato in tr
 |---|--------|----------------|-----------------|
 | 1 | **Entity Resolution** | Elimina gli omonimi prima del giudizio | Normalizzazione, transliterazione, matching su CF/P.IVA/CUP, NER (BERT/DSPy), similarità su embedding |
 | 2 | **Search & Scraping** | Raccolta adattiva delle evidenze | Ricerca progressiva Broad → Targeted → Deep Dive → Alternative; early-termination sui soggetti "puliti" |
-| 3 | **Classificazione FATF** | Categorizza gli articoli sul rischio | Dual-LLM (primario + secondario), Victim-Bystander Analysis, individuazione del ruolo processuale |
-| 4 | **AMI Scoring** | Punteggio sintetico per soggetto | Severità × materialità (vs CUP/ruolo) × sentiment × credibilità fonte × freschezza × corroborazione |
-| 5 | **Conflict Resolution + HITL** | Concilia i disaccordi ed escala | Framework multi-livello, validazione esterna, revisione umana obbligatoria sull'alto rischio |
+| 3 | **Classificazione FATF** | Categorizza gli articoli sul rischio | Dual-LLM (primario + secondario) via Azure AI Foundry, Victim-Bystander Analysis, individuazione del ruolo processuale |
+| 4 | **AMI Scoring** | Punteggio sintetico per soggetto | Severità × materialità (vs CUP/ruolo) × sentiment × credibilità fonte × freschezza × corroborazione; scoring governato in SAS Viya |
+| 5 | **Conflict Resolution + Escalation** | Concilia i disaccordi ed escala | Framework multi-livello, validazione esterna; **pubblica l'alert in SAS Visual Investigator** dove avviene la revisione umana (HITL obbligatorio sull'alto rischio) |
 
 ---
 
@@ -150,7 +153,7 @@ L'applicazione adotta un pattern **multi-agente orchestrato**, organizzato in tr
 - **Rotazione di User-Agent e sessioni** per robustezza, non per elusione (User-Agent identificabile e, dove opportuno, pagina di contatto).
 - **Caching** dei contenuti già visti e **change detection** per il re-screening.
 - **Provenienza tracciata**: URL, timestamp di fetch, hash del contenuto e **marca temporale qualificata (eIDAS)** per il valore probatorio dell'evidenza.
-- **Politeness policy** centralizzata e configurabile per dominio (registro fonti con crawl-delay, quote, credibilità e livello di rischio legale).
+- **Politeness policy** centralizzata e configurabile per dominio (registro fonti con crawl-delay, quote, credibilità e livello di rischio legale), gestita dalla **console React di amministrazione**.
 
 ### 4.4 Anti-fragilità
 - Coda di lavori con retry idempotenti (Temporal/Celery).
@@ -178,28 +181,31 @@ L'applicazione adotta un pattern **multi-agente orchestrato**, organizzato in tr
 > **Punto di integrazione**: il **CUP** lega il dato finanziario (chi finanzia, quanto, milestone) al soggetto; la riconciliazione a livello di CUP è il principale lavoro di data engineering ed è **anche il pilastro della materialità** dell'alert (vedi §7.3).
 
 ### 5.1 Registro fonti e credibilità
-Ogni fonte è censita in un **registro** con: tipo (feed/API/scraping), **livello di credibilità** (alta/media/bassa, con criteri documentati — es. fonte primaria istituzionale vs aggregatore), **livello di rischio legale** (licenza, ToS, opt-out TDM), politeness policy (crawl-delay, quote) e note di conservazione. Il livello di credibilità alimenta l'AMI (§7.3) e la credibilità dichiarata in ogni `evidence` deriva da questo registro, non da stima ad-hoc.
+Ogni fonte è censita in un **registro** con: tipo (feed/API/scraping), **livello di credibilità** (alta/media/bassa, con criteri documentati — es. fonte primaria istituzionale vs aggregatore), **livello di rischio legale** (licenza, ToS, opt-out TDM), politeness policy (crawl-delay, quote) e note di conservazione. Il livello di credibilità alimenta l'AMI (§7.3) e la credibilità dichiarata in ogni `evidence` deriva da questo registro, non da stima ad-hoc. Il registro è amministrato dalla **console React**.
 
 ---
 
 ## 6. Stack tecnologico
 
-| Area | Tecnologie proposte |
-|------|---------------------|
-| **Orchestrazione agenti** | LangGraph / Temporal |
+| Area | Tecnologie |
+|------|------------|
+| **Orchestrazione agenti** | **Temporal** (esecuzione durevole, retry idempotenti) / LangGraph |
 | **Scraping** | Playwright (pagine dinamiche), HTTPX/requests, Scrapy (crawling strutturato) |
 | **Estrazione contenuti** | trafilatura / readability, BeautifulSoup, lxml |
 | **NLP / NER** | spaCy, transformer BERT, DSPy per moduli modulari |
-| **LLM** | Modelli via API/on-prem per classificazione FATF (dual-LLM) |
-| **Vector DB / RAG** | FAISS / pgvector per retrieval e near-duplicate detection |
-| **Knowledge graph** | Neo4j / grafo su Postgres per alias, UBO, relazioni |
-| **Storage** | PostgreSQL (dati strutturati), object store per snapshot WARC/HTML |
-| **Coda & scheduling** | Temporal / Celery + Redis |
-| **API & UI** | FastAPI (backend), interfaccia investigativa per HITL (accessibile — L. 4/2004) |
+| **LLM** | **Azure AI Foundry** (dual-LLM primario+secondario) tramite **`llm-gateway`** interno (routing, rate-limit, redazione PII, caching) |
+| **Vector DB / RAG** | pgvector (FAISS opzionale) per retrieval e near-duplicate detection |
+| **Network analysis / grafo** | **SAS Visual Investigator** — node-link diagram, link expansion, centralità (closeness/betweenness/influence), community detection *(nativo; Neo4j non più necessario)* |
+| **Storage** | PostgreSQL (dati strutturati, sistema di record) + object store **Azure Blob (WORM)** per snapshot WARC/HTML |
+| **Coda & scheduling** | Temporal (+ Redis) |
+| **Back-end & API** | FastAPI |
+| **Console investigativa (I livello)** | **SAS Visual Investigator**: triage, dossier, **network analysis**, case management, Viya Copilot |
+| **Console amministrazione/observability** | **React + TypeScript + Vite** (Refine, MUI, MSAL/Entra) — accessibile (L. 4/2004) |
 | **Explainability** | SHAP, tracciamento delle evidenze per ogni score |
-| **Piattaforma analitica** | SAS Viya (Agentic AI, Model Management) per integrazione nei flussi antifrode |
-| **Osservabilità** | OpenTelemetry, logging strutturato, audit log immutabile |
-| **Sicurezza / residenza dati** | Cifratura at-rest/in-transit, segregazione accessi (RBAC/ABAC), cloud qualificato ACN, dati in UE |
+| **Piattaforma analitica SAS** | **SAS Viya**: Model Management/Scoring + Intelligent Decisioning, integrata via **SAS MCP server** (scoring/decisioning) e **`svi-publisher`** (Data Hub/Alerts verso SVI) |
+| **Deployment** | Docker → **Kubernetes (Azure AKS)**; CI/CD GitHub Actions; ACR, Key Vault, identità keyless (vedi doc deployment) |
+| **Osservabilità** | OpenTelemetry, logging strutturato, audit log immutabile; Azure Monitor / Grafana |
+| **Sicurezza / residenza dati** | Cifratura at-rest/in-transit, RBAC/ABAC, **identità federata keyless (Entra + Workload Identity)**, **Private Endpoint**, cloud qualificato, dati in UE |
 
 ---
 
@@ -210,7 +216,9 @@ Ogni fonte è censita in un **registro** con: tipo (feed/API/scraping), **livell
 - **Evidence** — documento/notizia raccolto (URL, testata, data, snippet, hash, provenance, marca temporale).
 - **Classification** — categoria FATF, ruolo processuale (indagato/imputato/condannato · autore/vittima/menzionato), confidence.
 - **AMI Score** — punteggio sintetico + fattori esplicativi.
-- **Alert** — esito con stato workflow (aperto / auto-chiuso / escalato / disposto).
+- **Alert** — esito con stato workflow (aperto / auto-chiuso / escalato / disposto), **pubblicato in SVI** per la lavorazione del I livello.
+
+Entità, relazioni (UBO, CUP, co-occorrenze) e alert sono pubblicati in **SAS Visual Investigator** (Data Hub API per entità/relazioni, Alerts API per gli alert); Postgres resta il **sistema di record**.
 
 ### 7.2 Ruolo processuale (obbligatorio)
 Ogni evidenza penalmente rilevante è qualificata per **fase e ruolo**: *notizia di reato / indagine preliminare / rinvio a giudizio / condanna non definitiva / condanna definitiva / archiviazione-proscioglimento*. La distinzione è vincolante per la tutela della **presunzione di innocenza** (art. 27 Cost.) e governa retention e decadenza (§8.4): un'archiviazione o un proscioglimento nota deve **abbattere o azzerare** il contributo dell'evidenza.
@@ -225,7 +233,7 @@ AMI = f( severità_reato,
          corroborazione_multi-fonte,
          ruolo_processuale )            ← gate: perpetratore ≠ vittima/menzionato
 ```
-La **materialità** è ciò che rende l'alert azionabile e difendibile: non "il soggetto ha bad news", ma "questa bad news è **rilevante per *questo* intervento FSC**", tenuto conto del ruolo (esecutore vs beneficiario vs UBO) e dell'importo/fase del CUP.
+La **materialità** è ciò che rende l'alert azionabile e difendibile: non "il soggetto ha bad news", ma "questa bad news è **rilevante per *questo* intervento FSC**", tenuto conto del ruolo (esecutore vs beneficiario vs UBO) e dell'importo/fase del CUP. Lo scoring e la mappatura soglia→disposizione sono **governati in SAS Viya** (Model Management + Intelligent Decisioning).
 
 ### 7.4 Esempio di output alert (JSON)
 
@@ -265,6 +273,7 @@ La **materialità** è ciò che rende l'alert azionabile e difendibile: non "il 
     "livello": "alta"
   },
   "disposition": "ESCALATION_I_LIVELLO",
+  "svi": { "alert_id": "…", "coda": "I_livello_FSC" },
   "audit": {
     "modello_versione": "fatf-clf-1.4",
     "entity_resolution": { "match": "deterministico_CF", "confidence": 0.99 },
@@ -278,7 +287,7 @@ La **materialità** è ciò che rende l'alert azionabile e difendibile: non "il 
 
 ## 8. Governance, conformità e sicurezza
 
-> **Nota (revisione v1.1).** Questa sezione è il baricentro di rischio del progetto ed è stata rafforzata sui punti più esposti: base giuridica per i **dati giudiziari (art. 10 GDPR)**, **FRIA (art. 27 AI Act)**, sorveglianza umana effettiva, ciclo di vita del dato e conciliazione fra audit immutabile e diritto alla cancellazione.
+> Questa sezione è il baricentro di rischio del progetto: base giuridica per i **dati giudiziari (art. 10 GDPR)**, **FRIA (art. 27 AI Act)**, sorveglianza umana effettiva, ciclo di vita del dato e conciliazione fra audit immutabile e diritto alla cancellazione.
 
 ### 8.1 Basi giuridiche del trattamento
 - **Dati "comuni"** (PA): interesse pubblico / esercizio di pubblici poteri — **art. 6(1)(e) GDPR + art. 2-*ter* Codice Privacy** — non il consenso.
@@ -295,7 +304,7 @@ Coerentemente con la giurisprudenza del Consiglio di Stato (tra le altre, 2270/2
 - **Conoscibilità e comprensibilità** (spiegabilità dell'esito);
 - **Non esclusività** della decisione algoritmica (deve esservi un funzionario umano responsabile);
 - **Non discriminazione** algoritmica (controllo su bias e correttezza dei dati).
-Il design HITL + explainability + audit trail è la traduzione operativa di questi principi.
+Il design HITL (in SVI) + explainability + audit trail è la traduzione operativa di questi principi.
 
 ### 8.4 Ciclo di vita del dato e retention
 | Categoria | Esempio | Trattamento retention |
@@ -307,37 +316,44 @@ Il design HITL + explainability + audit trail è la traduzione operativa di ques
 | Audit trail (decisioni, versioni) | Log immutabile | Lungo termine per accountability/rendicontazione UE, con minimizzazione dei dati personali |
 
 ### 8.5 Audit immutabile vs diritto alla cancellazione
-L'audit trail è immutabile **per le decisioni e i metadati**, non per i contenuti personali. La conciliazione con gli artt. 16-17 GDPR (rettifica/cancellazione) avviene tenendo l'audit su **identificatori pseudonimizzati e hash**, e applicando la cancellazione del contenuto sottostante tramite *crypto-shredding* (distruzione della chiave) o *tombstoning*, preservando la tracciabilità della decisione senza trattenere il dato personale non più necessario.
+L'audit trail è immutabile **per le decisioni e i metadati**, non per i contenuti personali. La conciliazione con gli artt. 16-17 GDPR (rettifica/cancellazione) avviene tenendo l'audit su **identificatori pseudonimizzati e hash**, e applicando la cancellazione del contenuto sottostante tramite *crypto-shredding* (distruzione della chiave) o *tombstoning*, preservando la tracciabilità della decisione senza trattenere il dato personale non più necessario. L'audit **investigativo** (lavorazione del caso) risiede in **SVI** ed è correlato all'audit di piattaforma per `alert_id`/`case_id`.
 
 ### 8.6 Equità e non discriminazione
 Monitoraggio del **bias**: l'adverse media può sistematicamente sovra-segnalare nomi esteri, translitterazioni e alias. Si misurano tassi di falsi positivi per categorie a rischio e si documentano le mitigazioni (Entity Resolution deterministica, soglie calibrate, revisione umana).
 
-### 8.7 Altri presidi
-- **Screening, non prova**: gli alert sono priorità di verifica qualificate; la decisione resta all'istruttore.
+### 8.7 Minimizzazione differenziata verso l'esterno
+| Destinazione | Cosa esce | Nota |
+|--------------|-----------|------|
+| **Azure AI Foundry** | Testo articolo per classificazione/embedding | Provider esterno: **punto DPIA**; redazione PII + minimizzazione; region UE + Private Endpoint |
+| **SAS MCP (scoring/decisioning)** | Solo **feature derivate** | Nessun testo grezzo |
+| **SAS Visual Investigator** | Entità, relazioni, **evidenze/dossier**, AMI, alert | Più ricco, ma **dentro il perimetro governato SAS** dell'ente |
+
+### 8.8 Altri presidi
+- **Screening, non prova**: gli alert sono priorità di verifica qualificate; la decisione resta all'istruttore in SVI.
 - **Minimizzazione dei dati** e retention definita; pseudonimizzazione dove possibile.
-- **Sicurezza**: segregazione degli accessi (RBAC/ABAC), cifratura at-rest/in-transit, audit log immutabile, misure minime AgID, cloud qualificato ACN, **dati in UE**.
+- **Sicurezza**: segregazione degli accessi (RBAC/ABAC), cifratura at-rest/in-transit, audit log immutabile, misure minime AgID, cloud qualificato, identità keyless, **dati in UE**.
 - **Disambiguazione obbligatoria**: nessun giudizio senza Entity Resolution superata (tutela anti-omonimia).
-- **Sinergia, non duplicazione**: complementare ad ARACHNE/PIAF; aggiunge il segnale "notizie negative" oggi non coperto dalle piattaforme.
+- **Sinergia, non duplicazione**: complementare ad ARACHNE/PIAF e alla piattaforma SVI dell'ente; aggiunge il segnale "notizie negative" oggi non coperto.
 
 ---
 
 ## 9. Piano di sviluppo
 
-Il piano segue un **roll-out incrementale** allineato al pilota MASE, così da produrre valore già dalle prime settimane. Le richieste di accesso alle fonti esterne — **e la definizione della base giuridica ex art. 10 GDPR** — partono il **primo giorno** (percorso critico).
+Il piano segue un **roll-out incrementale** allineato al pilota MASE. Le richieste di accesso alle fonti esterne — **e la definizione della base giuridica ex art. 10 GDPR** — partono il **primo giorno** (percorso critico).
 
 ### 9.1 Fasi e milestone
 
 | Fase | Orizzonte | Contenuti | Esito atteso |
 |------|-----------|-----------|--------------|
-| **Avvio** | Settimana 1 | Onboarding PDND · e-service ANAC · accessi BDU-FSC/InfoCamere · avvio **DPIA + FRIA** · **base giuridica art. 10** con il legale · setup ambiente e CI/CD | Accessi avviati, guardrail impostati |
-| **Rilascio 1** | Sett. 6-10 | **Entity Resolution** beneficiari/attuatori · **Adverse Media MVP** (news + registri pubblici) · doppio finanziamento deterministico via CUP (ReGiS + OpenCoesione) | Primi alert in produzione |
-| **Rilascio 2** | Mesi 3-4 | **Search/Scraping a regime** + **AMI scoring** · consumo ARACHNE/PIAF · imprese esecutrici via PDND-ANAC | Copertura estesa, scoring completo |
-| **Rilascio 3** | Mesi 5-7 | OCR/NER operatori tecnici da PDF · **network analysis a grafo** (HITL) · piena operatività starting pack | Sistema completo e conforme |
+| **Avvio** | Settimana 1 | Onboarding PDND · e-service ANAC · accessi BDU-FSC/InfoCamere · avvio **DPIA + FRIA** · **base giuridica art. 10** con il legale · setup ambiente Azure e CI/CD | Accessi avviati, guardrail impostati |
+| **Rilascio 1** | Sett. 6-10 | **Entity Resolution** beneficiari/attuatori · **Adverse Media MVP** (news + registri pubblici) · doppio finanziamento deterministico via CUP (ReGiS + OpenCoesione) · console React (config/observability) · onboarding modello dati SVI | Primi alert prodotti |
+| **Rilascio 2** | Mesi 3-4 | **Search/Scraping a regime** + **AMI scoring** (SAS Viya) · classificazione FATF (Azure Foundry) · **integrazione SVI** (`svi-publisher`: alert + **network analysis**) · imprese esecutrici via PDND-ANAC · consumo ARACHNE/PIAF | Copertura estesa, alert e grafo in SVI |
+| **Rilascio 3** | Mesi 5-7 | OCR/NER operatori tecnici da PDF · hardening, drift/bias, tuning soglie · piena operatività starting pack | Sistema completo e conforme |
 
 ### 9.2 Backlog per fase (epiche → attività)
 
 **Avvio (Settimana 1)**
-- [ ] Setup repository, ambienti (dev/test/prod), pipeline CI/CD.
+- [ ] Setup repository, ambienti (dev/test/prod) su Azure, pipeline CI/CD (GitHub Actions → ACR → AKS).
 - [ ] Avvio pratiche di accesso: onboarding PDND, e-service ANAC, InfoCamere, BDU-FSC.
 - [ ] Kickoff **DPIA + FRIA** con il legale (compliance by design) e **individuazione della base giuridica ex art. 10 GDPR / art. 2-*octies***.
 - [ ] Definizione data contract e riconciliazione a livello di **CUP**.
@@ -348,19 +364,20 @@ Il piano segue un **roll-out incrementale** allineato al pilota MASE, così da p
 - [ ] **Scraper MVP** conforme (robots.txt, opt-out TDM, rate limiting, provenance, marca temporale) su fonti pubbliche e news licenziate.
 - [ ] Estrazione contenuti + deduplica + filtro pertinenza/lingua.
 - [ ] Regola deterministica **doppio finanziamento** via CUP (ReGiS + OpenCoesione).
-- [ ] UI investigativa base per HITL + audit log.
+- [ ] **Console React** base (config: registro fonti, scheduling; observability) + audit log.
+- [ ] **Onboarding SAS Visual Investigator**: definizione del modello dati (entity type Subject/UBO/Impresa/CUP/Evidence) e delle code del I livello.
 
 **Rilascio 2 (Mesi 3-4)**
 - [ ] Search adattiva completa (Broad→Targeted→Deep Dive→Alternative) + early-termination.
-- [ ] **Classificazione FATF dual-LLM** + Victim-Bystander Analysis + ruolo processuale.
-- [ ] **AMI scoring** con fattori esplicativi (SHAP), inclusa **materialità vs CUP** e decadimento.
-- [ ] Connettore **PDND-ANAC** (BDNCP) per imprese esecutrici.
-- [ ] Consumo segnali **ARACHNE/PIAF** per il perimetro PNRR.
+- [ ] **Classificazione FATF dual-LLM** (Azure AI Foundry via `llm-gateway`) + Victim-Bystander Analysis + ruolo processuale.
+- [ ] **AMI scoring** governato in SAS Viya (Model Management/Scoring), con fattori esplicativi (SHAP), materialità vs CUP e decadimento.
+- [ ] Regole e disposizioni in **SAS Intelligent Decisioning** (via SAS MCP server).
+- [ ] **`svi-publisher`**: pubblicazione di entità/relazioni (Data Hub) e alert (Alerts API) in **SVI**; **network analysis** disponibile agli investigatori.
+- [ ] Connettore **PDND-ANAC** (BDNCP) per imprese esecutrici; consumo segnali **ARACHNE/PIAF**.
 
 **Rilascio 3 (Mesi 5-7)**
 - [ ] Pipeline **OCR/NER** per operatori tecnici da PDF (determine, verbali).
-- [ ] **Network analysis a grafo** (Neo4j) con guardrail GDPR/AI Act e HITL.
-- [ ] Ricalibrazione modelli su feedback, tuning soglie, **monitoraggio bias**, hardening.
+- [ ] Ricalibrazione modelli su feedback (da SVI), tuning soglie, **monitoraggio bias**, hardening.
 - [ ] Documentazione, formazione utenti, passaggio in esercizio.
 
 ### 9.3 Gantt sintetico
@@ -372,16 +389,17 @@ Base giur. art.10 ████░ (blocca il trattamento dati giudiziari)
 Entity Res.        ██████░
 Scraper MVP          ██████░
 Doppio finanz.          ████░
+Console React          ████░░░░
 Search a regime               ████████░
-FATF + AMI                      ██████████░
+FATF + AMI (SAS)                ██████████░
+Integrazione SVI                   ████████░ (alert + network analysis)
 PDND-ANAC                          ████████░ (dipende da accesso)
 OCR/NER                                     ██████████░
-Network graph                                   ██████████░
 Hardening/esercizio                                    ████████
 ```
 
 ### 9.4 Team e capacità
-- **3-5 persone**: 1 tech lead, 1-2 data/ML engineer, 1 backend/scraping engineer, 1 esperto compliance (part-time con il legale).
+- **3-5 persone**: 1 tech lead, 1-2 data/ML engineer, 1 backend/scraping engineer, 1 esperto compliance (part-time con il legale). Competenza **SAS Viya/SVI** richiesta per l'integrazione (interna o affiancamento SAS).
 - Due flussi di lavoro in parallelo (SIM-native vs dipendenza esterna) per far scorrere il tempo amministrativo in sovrapposizione allo sviluppo.
 
 ---
@@ -394,9 +412,11 @@ Hardening/esercizio                                    ████████
 | **Tempi di accesso alle fonti esterne** (PDND, ANAC, InfoCamere, BDU) | Alto — percorso critico | Avvio pratiche il giorno 1, monitoraggio come rischio di programma |
 | **Falsi positivi da omonimia** | Alto (legale/reputazionale) | Entity Resolution obbligatoria prima del giudizio |
 | **Bias / discriminazione** (nomi esteri, alias) | Alto (giuridico/reputazionale) | Monitoraggio FP per categoria, soglie calibrate, HITL, documentazione |
+| **Dipendenza da SAS Viya/SVI** (onboarding, licenze, connettività, competenze) | Medio | Onboarding anticipato del modello dati SVI, service account e canali (MCP + REST) definiti, affiancamento SAS |
 | **Blocco/anti-bot e vincoli ToS/licenza delle fonti** | Medio | Preferenza per API/feed licenziati, opt-out TDM, politeness policy, back-off |
 | **Cambi di layout delle pagine** | Medio | Estrattori robusti (readability), test di regressione, alert su drift |
 | **Conformità AI Act/GDPR** | Alto | DPIA/FRIA anticipate, HITL, no scoring automatico, audit trail |
+| **Invio testo a LLM esterno (Foundry)** | Medio-Alto | Region UE + Private Endpoint, DPA no-training, redazione PII, fallback on-prem (astrazione gateway) |
 | **Valore probatorio dell'evidenza** contestabile | Medio | Snapshot WARC + hash + **marca temporale qualificata (eIDAS)**, provenienza |
 | **Qualità del dato** | Medio | Gateway di data cleaning, validazione, riconciliazione CUP |
 | **Sovrapposizione con ARACHNE/PIAF** | Basso | Consumo dei segnali esistenti, focus sul valore aggiunto "bad news" |
@@ -410,30 +430,36 @@ Hardening/esercizio                                    ████████
 - [ ] Esiste una **base giuridica documentata** per il trattamento dei dati ex art. 10 GDPR prima del go-live sui dati giudiziari.
 - [ ] **DPIA + FRIA** completate e approvate prima del passaggio in esercizio.
 - [ ] Ogni evidenza penalmente rilevante riporta il **ruolo processuale**; archiviazioni/proscioglimenti abbattono l'AMI.
-- [ ] **Audit trail** completo e immutabile per ogni disposizione, conciliato con i diritti di rettifica/cancellazione.
+- [ ] **Audit trail** completo e immutabile per ogni disposizione, conciliato con i diritti di rettifica/cancellazione; audit investigativo correlato in SVI.
 - [ ] Scraping conforme a robots.txt/ToS/opt-out TDM, con rate limiting e provenance.
 - [ ] Metriche di qualità: precision/recall sul set di validazione entro le soglie concordate; **metriche di bias** monitorate.
-- [ ] **HITL** operativo: gli alert ad alto rischio richiedono revisione umana con potere effettivo di override.
+- [ ] **HITL** operativo **in SAS Visual Investigator**: triage, network analysis, case management e disposizione degli alert ad alto rischio con revisione umana e potere effettivo di override.
 - [ ] Nessuna decisione automatica sull'erogazione (conformità AI Act e principio di non esclusività).
 - [ ] Documentazione tecnica, runbook operativo e materiale di formazione consegnati.
 
 ---
 
-## Appendice A — Changelog v1.0 → v1.1
+## Appendice A — Note di versione (baseline 1.0)
 
-Revisione tecnica esperta (adverse media / compliance PA). Modifiche materiali:
+Questa **baseline 1.0** consolida due filoni di lavoro sulla bozza tecnico-funzionale iniziale.
 
-1. **Base giuridica art. 10 GDPR / art. 2-*octies*** (dati giudiziari) resa esplicita come pre-condizione bloccante e inserita in §8.1, §9 (Avvio, giorno 1), §10 e §11. Nella v1.0 la compliance citava solo l'art. 6(1)(e) + art. 2-*ter*, insufficienti per i dati giudiziari.
-2. **Strategia *build-vs-buy* sulle fonti** (§4.3) con gerarchia esplicita: feed licenziati come spina dorsale, scraping ristretto alle fonti pubbliche/istituzionali ad alto valore e basso rischio; **opt-out TDM** (Dir. UE 2019/790, artt. 70-*ter*/70-*quater* L. 633/1941).
-3. **Materialità rispetto al CUP** integrata nell'AMI (§7.3, §5) e nell'output JSON: l'alert è ancorato al nesso con lo specifico intervento e al ruolo del soggetto.
-4. **Ruolo processuale e presunzione d'innocenza** (§7.2): distinzione indagato/imputato/condannato/archiviato, con decadenza dell'AMI su archiviazioni/proscioglimenti.
-5. **FRIA (art. 27 AI Act)** e **sorveglianza umana (art. 14)** esplicitate; chiarito DPIA (art. 35 GDPR) + FRIA in luogo del generico "AIA" (§8.2).
-6. **Principio dell'algoritmo amministrativo** (Consiglio di Stato) come fondamento del design HITL/explainability (§8.3).
-7. **Ciclo di vita del dato / retention** (§8.4) e **conciliazione audit immutabile vs diritto alla cancellazione** via crypto-shredding/tombstoning (§8.5).
-8. **Monitoraggio del bias** (§8.6, §10, §11).
-9. **Valore probatorio**: marca temporale qualificata eIDAS su ogni evidenza (§4.1, §4.3, §7, §10).
-10. **Registro fonti** con credibilità e rischio legale (§5.1), a monte del campo `fonte_credibilita`.
-11. **Sicurezza/residenza**: misure minime AgID, cloud qualificato ACN, dati in UE (§6, §8.7).
+**A) Revisione esperta di compliance/adverse media**
+1. **Base giuridica art. 10 GDPR / art. 2-*octies*** (dati giudiziari) come pre-condizione bloccante (§8.1, §9 Avvio, §10, §11).
+2. **Strategia *build-vs-buy* sulle fonti** (§4.3): feed licenziati come spina dorsale; scraping ristretto e conforme; **opt-out TDM**.
+3. **Materialità rispetto al CUP** nell'AMI (§7.3) e nell'output.
+4. **Ruolo processuale e presunzione d'innocenza** (§7.2), con decadenza dell'AMI su archiviazioni/proscioglimenti.
+5. **FRIA (art. 27 AI Act)** + **sorveglianza umana (art. 14)** (§8.2); **algoritmo amministrativo** (Cons. Stato) (§8.3).
+6. **Retention / ciclo di vita** (§8.4) e **audit immutabile vs cancellazione** (§8.5); **monitoraggio bias** (§8.6).
+7. **Valore probatorio** con marca temporale **eIDAS**; **registro fonti** (§5.1).
+
+**B) Decisioni architetturali (questa sessione)**
+8. **Front-end su due console**: **SAS Visual Investigator** per l'investigazione del I livello (triage, dossier, **network analysis**, case management, disposizione) e **console React** per amministrazione/configurazione/observability della piattaforma.
+9. **Neo4j rimosso**: la network analysis è nativa in SVI (§6).
+10. **Integrazione SAS a due canali**: **SAS MCP server** (scoring Tier 6 / decisioning Tier 7) e **`svi-publisher`** (Data Hub/Alerts) (§6, §7.1, §9).
+11. **LLM/embedding via Azure AI Foundry** attraverso `llm-gateway`; **minimizzazione differenziata** dei dati (§8.7).
+12. **Deploy su Azure/AKS** (ACR, Blob WORM, Azure PostgreSQL+pgvector, Key Vault), **identità keyless** (Entra + Workload Identity), **Private Endpoint**, CI/CD GitHub Actions.
+
+Il dettaglio di deployment e integrazione è in [DEPLOYMENT_E_INTEGRAZIONE_SAS.md](DEPLOYMENT_E_INTEGRAZIONE_SAS.md).
 
 ## Appendice B — Riferimenti normativi
 
@@ -445,7 +471,7 @@ Revisione tecnica esperta (adverse media / compliance PA). Modifiche materiali:
 - **Costituzione**: art. 27 (presunzione di innocenza).
 - **Giurisprudenza algoritmo amministrativo**: Cons. Stato 2270/2019, 8472/2019, 881/2020.
 - **Accessibilità**: L. 4/2004; linee guida AgID.
-- **Sicurezza PA**: misure minime AgID; qualificazione cloud ACN.
+- **Sicurezza PA**: misure minime AgID; qualificazione cloud.
 
 ---
 
