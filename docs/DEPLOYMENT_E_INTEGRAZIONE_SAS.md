@@ -266,6 +266,20 @@ Regole deterministiche (doppio finanziamento via CUP) e mappatura **soglia→dis
 ### 9.10 Audit
 Ogni chiamata MCP e ogni pubblicazione SVI è registrata nell'audit sink (operazione, hash input, versione modello/decisione, id alert/caso, timestamp).
 
+### 9.11 Confini di servizio: perché `sas-mcp-server` e `svi-publisher` sono microservizi dedicati
+Sì, è la scelta corretta ed è già quella adottata (container #14 e #16). Motivazioni:
+
+- **Adapter / Anti-Corruption Layer**: `svi-publisher` incapsula *tutta* la conoscenza specifica di SVI (mapping del data model, Data Hub/Alerts API, quirk di versione). Se l'API SVI cambia, cambia **solo** questo servizio; il core della pipeline resta disaccoppiato. Analogamente `sas-mcp-server` è il gateway governato verso Viya per scoring/decisioning.
+- **Componente di terze parti**: `sas-mcp-server` è l'**immagine ufficiale SAS** — si esegue *as-is*, pinnata a digest, aggiornata/scansionata per conto suo; non si incorpora nel nostro processo. Un container dedicato è l'unico modo sensato.
+- **Isolamento di sicurezza (blast radius)**: sono gli unici due servizi con **egress verso Viya/SVI**; isolarli rende netta la NetworkPolicy (solo `worker-ami`/`worker-conflict` → mcp; solo `worker-conflict` → publisher) e lo scoping delle credenziali (service account dedicati, token brevi). Il MCP gira a **privilegio minimo** con i due profili (§9.4).
+- **Scaling indipendente**: entrambi *stateless* → scalano sul proprio carico (RPS per l'MCP, profondità coda per il publisher), separati dai worker CPU/memory-bound.
+- **Resilienza**: `svi-publisher` è **guidato da coda con pattern *outbox*** — se SVI è lento o indisponibile, gli alert restano in coda e vengono ripubblicati in modo **idempotente**, senza bloccare la pipeline. L'`sas-mcp-server` è invocato in modo **sincrono dentro un'*activity* Temporal**, con timeout/retry/circuit breaker localizzati all'activity.
+- **Riuso e testabilità**: più worker condividono un unico gateway governato invece di incorporare un client ciascuno; l'integrazione SAS/SVI (competenza specialistica) diventa testabile in isolamento (mock) e assegnabile a chi ha lo skill SAS.
+
+**Raffinamenti**
+- **`sas-token-broker` come *sidecar*** (non servizio centrale): il token SASLogon viene coniato accanto al consumatore (mcp/publisher), evitando che i token attraversino la rete verso un broker condiviso — meno superficie, un hop in meno.
+- **No nanoservizi**: `svi-publisher` è un **singolo bounded context** (tutto l'I/O verso SVI), da non spezzare ulteriormente; l'obiettivo è un confine di integrazione pulito, non la frammentazione.
+
 ---
 
 ## 10. Integrazione LLM via Azure AI Foundry
