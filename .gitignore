@@ -1,0 +1,107 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Ambienti virtuali
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Gestori pacchetti / lock cache
+.pdm.toml
+.pdm-python
+__pypackages__/
+.uv/
+pip-wheel-metadata/
+
+# === Test / coverage / type-check ===
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# === Notebook ===
+.ipynb_checkpoints/
+
+# === Scraping / dati / artefatti (NON versionare dati e snapshot) ===
+data/
+datasets/
+snapshots/
+warc/
+*.warc
+*.warc.gz
+*.html.gz
+downloads_raw/
+.scrapy/
+.cache/
+playwright-report/
+test-results/
+
+# === Modelli / vettori / indici ===
+*.faiss
+*.index
+*.bin
+*.pt
+*.onnx
+models/local/
+
+# === Segreti e configurazione locale (MAI committare credenziali) ===
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+credentials*.json
+service-account*.json
+
+# === Log ===
+*.log
+logs/
+
+# === IDE / editor ===
+.idea/
+.vscode/
+!.vscode/extensions.json
+*.swp
+*.swo
+*~
+
+# === OS ===
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini

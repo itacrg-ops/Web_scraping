@@ -1,0 +1,33 @@
+# Normalizzazione dei fine-riga per sincronizzazione cross-OS (Windows/macOS/Linux).
+# Git memorizza LF nel repo e converte al checkout secondo la piattaforma.
+* text=auto eol=lf
+
+# File di testo di progetto (sempre LF)
+*.md        text eol=lf
+*.py        text eol=lf
+*.txt       text eol=lf
+*.json      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.toml      text eol=lf
+*.cfg       text eol=lf
+*.ini       text eol=lf
+*.sh        text eol=lf
+
+# Script Windows (mantengono CRLF)
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+
+# File binari (nessuna conversione)
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.pdf       binary
+*.warc      binary
+*.warc.gz   binary
+*.faiss     binary
+*.bin       binary
+*.pt        binary
+*.onnx      binary
