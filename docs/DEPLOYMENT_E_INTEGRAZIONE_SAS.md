@@ -2,315 +2,391 @@
 ## Adverse Media Screening FSC/MASE
 
 > **Documento di architettura** · Deployment cloud-native e integrazione con SAS Viya
-> Versione: 1.0 · Settembre 2026
+> Versione: **1.1** · Settembre 2026 · (modifiche v1.0→v1.1 in [Appendice C](#appendice-c--changelog))
 > Prerequisito: [documento tecnico-funzionale v1.1](WebScraping_AdverseMedia_FSC_MASE.md)
 
 ### Decisioni di base (fissate)
+- **Cloud target: Microsoft Azure** (stesso account/tenant di Foundry), orchestrazione con **AKS** (Azure Kubernetes Service) → vedi §11.
 - **Orchestrazione LLM/embedding → Microsoft Azure AI Foundry** (modelli gestiti; nessun node pool GPU nel nostro cluster).
 - **SAS Viya esterna/gestita**: integrazione *via rete*; nel nostro cluster gira il solo container **`sas-mcp-server`** che punta a `VIYA_ENDPOINT`.
-- **Runtime**: container Docker, **portabili su Kubernetes** (parità dev↔prod, 12-factor).
-- **Orchestratore workflow**: **Temporal** (esecuzione durevole, retry idempotenti, auditabilità) — vedi §3. Alternativa più leggera: Celery+Redis.
+- **Separazione netta front-end / back-end** (§3): il front-end è una SPA che parla **solo** con l'API; nessun accesso diretto a dati, LLM o SAS.
+- **Front-end: React + TypeScript**, avvio *admin-first* con **Refine**, crescita verso la console HITL investigativa (§4).
+- **Orchestratore workflow**: **Temporal** (esecuzione durevole, retry idempotenti, auditabilità). Alternativa leggera: Celery+Redis.
 
 ---
 
 ## Indice
 1. [Obiettivi e principi](#1-obiettivi-e-principi)
 2. [Vista d'insieme](#2-vista-dinsieme)
-3. [Catalogo dei container](#3-catalogo-dei-container)
-4. [Scalabilità](#4-scalabilità)
-5. [Dati, stato e storage](#5-dati-stato-e-storage)
-6. [Networking, sicurezza e segreti](#6-networking-sicurezza-e-segreti)
-7. [Integrazione SAS Viya via SAS MCP server](#7-integrazione-sas-viya-via-sas-mcp-server)
-8. [Integrazione LLM via Azure AI Foundry](#8-integrazione-llm-via-azure-ai-foundry)
-9. [Portabilità Docker → Kubernetes](#9-portabilità-docker--kubernetes)
-10. [Osservabilità e audit](#10-osservabilità-e-audit)
-11. [CI/CD e supply chain](#11-cicd-e-supply-chain)
-12. [Rollout dei container per fase](#12-rollout-dei-container-per-fase)
-13. [Punti aperti da confermare](#13-punti-aperti-da-confermare)
+3. [Separazione front-end / back-end](#3-separazione-front-end--back-end)
+4. [Framework front-end](#4-framework-front-end)
+5. [Catalogo dei container](#5-catalogo-dei-container)
+6. [Scalabilità](#6-scalabilità)
+7. [Dati, stato e storage](#7-dati-stato-e-storage)
+8. [Networking, sicurezza e segreti](#8-networking-sicurezza-e-segreti)
+9. [Integrazione SAS Viya via SAS MCP server](#9-integrazione-sas-viya-via-sas-mcp-server)
+10. [Integrazione LLM via Azure AI Foundry](#10-integrazione-llm-via-azure-ai-foundry)
+11. [Deployment su Azure (servizi gestiti)](#11-deployment-su-azure-servizi-gestiti)
+12. [Portabilità Docker → Kubernetes](#12-portabilità-docker--kubernetes)
+13. [Osservabilità e audit](#13-osservabilità-e-audit)
+14. [CI/CD e supply chain](#14-cicd-e-supply-chain)
+15. [Rollout dei container per fase](#15-rollout-dei-container-per-fase)
+16. [Punti aperti da confermare](#16-punti-aperti-da-confermare)
 - [Appendice A — Compose di sviluppo (illustrativo)](#appendice-a--compose-di-sviluppo-illustrativo)
 - [Appendice B — Variabili d'ambiente chiave](#appendice-b--variabili-dambiente-chiave)
+- [Appendice C — Changelog](#appendice-c--changelog)
 
 ---
 
 ## 1. Obiettivi e principi
 
 - **Un servizio = un container = un processo** (12-factor): configurazione via ambiente, segreti esterni, log su stdout, processi *stateless* dove possibile.
+- **Front-end e back-end disaccoppiati**: cicli di rilascio, scaling e superficie di sicurezza indipendenti; l'API è l'unico confine di fiducia (§3).
 - **Disaccoppiamento via coda**: produttori (ingestion) e consumatori (agenti) scalano in modo indipendente; la profondità della coda è il segnale di autoscaling primario.
-- **Isolamento per profilo di risorsa**: i componenti pesanti (browser headless, inferenza) hanno deployment e node pool dedicati, così un picco di scraping non affama l'API.
-- **Portabilità**: la stessa immagine gira in Docker Compose (dev) e in Kubernetes (test/prod); nessuna dipendenza dall'infrastruttura nel codice.
-- **Sicurezza e sovranità del dato (PA)**: default-deny di rete, egress su allow-list, identità federata al posto di chiavi statiche, dati in UE, cloud qualificato ACN.
-- **Minimizzazione verso l'esterno**: verso Azure e SAS escono solo i dati strettamente necessari (vedi §7.5 e §8.3); il testo giudiziario grezzo resta nel perimetro controllato.
+- **Isolamento per profilo di risorsa**: i componenti pesanti (browser headless, inferenza) hanno deployment e node pool dedicati.
+- **Portabilità prima del lock-in**: Kubernetes + Helm standard; i servizi gestiti Azure (§11) sono adottati per ridurre l'onere operativo ma restano **sostituibili** (documentati come tali).
+- **Sicurezza e sovranità del dato (PA)**: default-deny di rete, traffico su **Private Endpoint** (backbone Azure, non Internet), **identità federata** al posto di chiavi statiche, dati in UE, cloud qualificato.
+- **Minimizzazione verso l'esterno**: verso Azure e SAS escono solo i dati strettamente necessari (§9.6, §10.3).
 
 ---
 
 ## 2. Vista d'insieme
 
 ```
-                              INTERNET (egress allow-list)
-        ┌───────────────┬───────────────────────┬───────────────────────┐
-        │               │                       │                       │
-   Fonti web/news   Azure AI Foundry        SAS Viya (esterna)        PDND / ANAC /
-   (scraping)       (LLM + embedding)       (REST + CAS)              InfoCamere / BDU
-        ▲               ▲                       ▲                       ▲
-        │egress         │HTTPS                  │HTTPS                  │mTLS/OAuth
-╔═══════╪═══════════════╪═══════════════════════╪═══════════════════════╪═══════════════╗
-║  KUBERNETES CLUSTER (namespace: adverse-media-{env})     [cloud qualificato ACN/PSN]  ║
-║       │               │                       │                       │               ║
-║  ┌────┴─────┐   ┌──────┴──────┐         ┌──────┴───────┐        ┌──────┴───────┐       ║
-║  │ Ingress  │   │ llm-gateway │         │ sas-mcp-     │        │ ingestion-   │       ║
-║  │ (TLS)    │   │ (Foundry)   │         │ server (HTTP)│        │ connectors   │       ║
-║  └────┬─────┘   └──────┬──────┘         └──────┬───────┘        └──────┬───────┘       ║
-║       │                │                       │                       │               ║
-║  ┌────┴─────┐    ┌──────┴──────────────────────┴───────────────────────┴────────┐     ║
-║  │  api     │    │        TEMPORAL  (server + task queues)                       │     ║
-║  │ (FastAPI)│◀──▶│  workers per profilo di risorsa:                             │     ║
-║  │  + HITL  │    │  entity-res · scraping/browser · extraction · classification │     ║
-║  │   UI     │    │  · ami-scoring · conflict/HITL                               │     ║
-║  └────┬─────┘    └───────────────────────────────┬──────────────────────────────┘     ║
-║       │                                          │                                     ║
-║  ┌────┴──────────────── STATO (StatefulSet / operator / managed) ──────────────┐      ║
-║  │  PostgreSQL(+pgvector) · Neo4j · Redis · Object store WORM (WARC/HTML)        │      ║
-║  └──────────────────────────────────────────────────────────────────────────────┘      ║
-║  ┌──────────── OSSERVABILITÀ ────────────┐   ┌──────── AUDIT immutabile ────────┐      ║
-║  │ otel-collector · metrics · logs · trace│   │ append-only + WORM + eIDAS TS    │      ║
-║  └────────────────────────────────────────┘   └──────────────────────────────────┘      ║
-╚═══════════════════════════════════════════════════════════════════════════════════════╝
+   Operatori I livello / Amministratori (browser)      Fonti web/news · Azure AI Foundry · SAS Viya · PDND
+                    │ HTTPS + Entra ID                              ▲ (egress su allow-list / Private Endpoint)
+╔═══════════════════╪═══════════════════════════════════════════════╪══════════════════════════════════════╗
+║  AZURE  ·  AKS  ·  namespace adverse-media-{env}  ·  region UE (Italy North)                               ║
+║   ┌───────────────┴───────────────┐                                                                        ║
+║   │  FRONT-END TIER               │   Application Gateway / Front Door (WAF, TLS)                           ║
+║   │  frontend (SPA React, nginx)  │                                                                         ║
+║   └───────────────┬───────────────┘                                                                        ║
+║                   │ REST/JSON (OpenAPI) + JWT      ◀── UNICO confine di fiducia                             ║
+║   ┌───────────────┴───────────────────────────────────────────────────────────────────────────┐          ║
+║   │  BACK-END TIER                                                                               │          ║
+║   │  api (FastAPI: authz/RBAC, audit)  ·  TEMPORAL (server + task queues)                        │          ║
+║   │  workers: entity-res · scraping/browser · extraction · classification · ami · conflict-hitl  │          ║
+║   │  llm-gateway ─▶ Azure AI Foundry     sas-mcp-server ─▶ SAS Viya     ingestion-connectors ─▶ PDND        ║
+║   └───────────────┬───────────────────────────────────────────────────────────────────────────┘          ║
+║   ┌───────────────┴──── STATO (servizi gestiti Azure, §11) ─────────────────────────────────────┐         ║
+║   │  Azure DB for PostgreSQL(+pgvector) · Azure Cache for Redis · Blob Storage (WORM) · Neo4j     │         ║
+║   └───────────────────────────────────────────────────────────────────────────────────────────┘         ║
+║   Identità: Entra ID (operatori) + AKS Workload Identity (servizi→Azure)   Segreti: Key Vault              ║
+╚═══════════════════════════════════════════════════════════════════════════════════════════════════════════╝
 ```
 
-Confini chiave: **niente GPU nel cluster** (l'inferenza è su Azure Foundry); **SAS Viya è fuori** (dentro c'è solo il suo gateway MCP); **gli store con stato** sono gestiti/operator, non processi effimeri.
+---
+
+## 3. Separazione front-end / back-end
+
+### 3.1 Perché separarli (non è solo estetica)
+Con dati potenzialmente giudiziari (art. 10 GDPR), la separazione è un **requisito di sicurezza**, non una preferenza:
+
+- **L'API è l'unico confine di fiducia.** La SPA gira nel browser dell'operatore → è codice **non fidato**. Può parlare *solo* con l'API REST del back-end, che: autentica (JWT Entra ID), autorizza (RBAC), valida gli input, applica minimizzazione/redazione e **scrive l'audit trail** di ogni accesso al dato.
+- **Il front-end non tocca mai** direttamente database, coda, object store, `llm-gateway` o `sas-mcp-server`. Questi sono interni al back-end e raggiungibili solo da esso (imposto via NetworkPolicy, §8). Il browser vede solo risposte API già governate.
+- **Cicli e scaling indipendenti**: il front-end è un artefatto statico (build una volta, servito da nginx/CDN, cache all'edge); il back-end scala sulla computazione. Rilasci disaccoppiati.
+
+### 3.2 Il confine
+```
+      Operatore I livello (browser)                 Amministratore (browser)
+              │  HTTPS + Entra ID (MSAL)                    │
+              ▼                                             ▼
+   ┌────────────────────────── FRONT-END TIER ───────────────────────────┐
+   │  frontend  (SPA React/TS · build statica servita da nginx)           │
+   │   • Console HITL investigativa (alert, dossier, evidenze, grafo)     │
+   │   • Console di amministrazione/configurazione                        │
+   │  NESSUN accesso diretto a dati/DB/LLM/SAS — solo chiamate all'API    │
+   └────────────────────────────────┬─────────────────────────────────────┘
+                                     │  REST/JSON (contratto OpenAPI) + Bearer JWT
+                                     ▼   ◀── qui si applicano authz, RBAC, validazione, AUDIT
+   ┌────────────────────────── BACK-END TIER ────────────────────────────┐
+   │  api (FastAPI)  →  Temporal, worker, llm-gateway, sas-mcp-server,     │
+   │                    Postgres/pgvector, Neo4j, Redis, object store      │
+   └──────────────────────────────────────────────────────────────────────┘
+```
+
+### 3.3 Autenticazione (due flussi distinti)
+- **Operatori → front-end/API**: SSO con **Entra ID** (OIDC) via **MSAL** nella SPA; l'API valida il JWT e mappa i ruoli (I livello, amministratore, auditor). Se l'ente federa SASLogon con Entra, si ottiene un'unica identità end-to-end.
+- **Servizi → Azure/SAS**: **Workload Identity** (federata) e token SASLogon di servizio — nessuna credenziale nel browser, nessuna chiave statica (§8, §9.3).
+- **Opzione BFF**: per non esporre alcun token nel browser si può usare un *Backend-for-Frontend* con Authorization Code Flow + PKCE lato server (i cookie di sessione restano `HttpOnly`). Consigliato se la postura di sicurezza lo richiede.
+
+### 3.4 Deployment del front-end
+Tre opzioni, in ordine di portabilità:
+1. **Container `frontend` (nginx) in AKS** — massima parità con il resto (stesso Helm/registry); ingress instrada `/` → frontend, `/api` → api. *Consigliato* per coerenza.
+2. **Azure Static Web Apps** — hosting gestito della SPA + CDN/WAF integrati; meno da gestire, ma componente Azure a sé.
+3. **Blob static hosting + Front Door** — statico su Blob dietro CDN/WAF.
 
 ---
 
-## 3. Catalogo dei container
+## 4. Framework front-end
 
-Legenda scaling: **SL** = stateless (scala in orizzontale) · **ST** = stateful (scala in verticale / repliche gestite).
+### 4.1 Serve un front-end dedicato?
+**Sì.** Il documento tecnico pone l'**HITL** e il **dossier per il I livello** al centro: serve un'interfaccia investigativa vera (triage alert, lettura evidenze con provenienza, grafo relazioni, azioni di disposizione). Anche partendo da sole funzioni di amministrazione/configurazione, conviene una base che cresca fino alla console HITL **senza riscritture**.
 
-| # | Container | Ruolo | Tipo | Autoscaling |
-|---|-----------|-------|------|-------------|
-| 1 | **ingress** | Terminazione TLS, routing (nginx/Contour) | SL | HPA su connessioni |
-| 2 | **api** | Backend FastAPI: alert, gestione workflow, azioni HITL, API per la UI | SL | HPA su CPU/RPS |
-| 3 | **hitl-ui** | Interfaccia investigativa per il I livello (SPA servita statica) | SL | HPA su CPU |
-| 4 | **temporal-server** | Orchestratore durevole (frontend/history/matching) | ST¹ | Repliche fisse / Temporal Cloud |
-| 5 | **worker-entity-resolution** | Anti-omonimia: normalizzazione, matching CF/P.IVA/CUP, NER (spaCy/BERT) | SL | KEDA su coda |
-| 6 | **worker-scraping** | Fetcher HTTP (IO-bound), rispetto robots/ToS/opt-out TDM, politeness | SL | KEDA su coda |
-| 7 | **browser-pool** | Chromium headless (Playwright) per pagine dinamiche — pesante | SL² | KEDA su coda, cap repliche |
-| 8 | **worker-extraction** | Boilerplate removal, estrazione testo/metadati, deduplica, filtro lingua/pertinenza | SL | KEDA su coda |
-| 9 | **worker-classification** | Classificazione FATF dual-LLM via llm-gateway; ruolo processuale | SL | KEDA su coda (cap = quota Foundry) |
-| 10 | **worker-ami-scoring** | Calcolo AMI; chiama SAS Viya (`score_data`) via sas-mcp-server; SHAP | SL | KEDA su coda |
-| 11 | **worker-conflict-hitl** | Conflict resolution, soglie, escalation al I livello | SL | KEDA su coda |
-| 12 | **ingestion-connectors** | Connettori PDND/ANAC/InfoCamere/OpenCoesione/BDU (batch e API) | SL | CronJob / KEDA |
-| 13 | **llm-gateway** | Gateway verso Azure AI Foundry: routing dual-LLM, rate-limit, retry/backoff, **redazione PII**, logging, caching, token accounting | SL | HPA su RPS |
-| 14 | **sas-mcp-server** | Immagine ufficiale `ghcr.io/sassoftware/sas-mcp-server` (HTTP mode) verso SAS Viya | SL | HPA su RPS |
-| 15 | **sas-token-broker** | Ottiene/rinnova il token SASLogon (service account) per le chiamate MCP | SL³ | 1-2 repliche |
-| 16 | **postgresql (+pgvector)** | Dati strutturati + vettori (near-duplicate / retrieval) | ST | Operator (CloudNativePG) / managed |
-| 17 | **neo4j** | Knowledge graph (alias, UBO, relazioni) — da Rilascio 3 | ST | Verticale / cluster causale |
-| 18 | **redis** | Cache, rate-limit counters, hash di dedup (broker se Celery) | ST | Verticale / repliche |
-| 19 | **object-store (MinIO/S3)** | Snapshot WARC/HTML immutabili (WORM/object-lock) | ST | Managed S3 / MinIO operator |
-| 20 | **otel-collector** | Raccolta trace/metric/log (OpenTelemetry) | SL | DaemonSet/Deployment |
-| 21 | **audit-sink** | Log immutabile append-only delle disposizioni (WORM, marca temporale eIDAS) | ST | Managed / operator |
+### 4.2 Raccomandazione
+| Livello | Scelta | Perché |
+|---------|--------|--------|
+| **Base** | **React + TypeScript + Vite** | Bacino di competenze più ampio (conta per handover/formazione in PA), ecosistema più ricco per UI dense di dati, supporto Entra ID di prima classe (MSAL) |
+| **Acceleratore admin** | **Refine** (refine.dev) | Meta-framework React per tool interni: auth provider (MSAL/Entra), **RBAC**, data provider REST/OpenAPI, CRUD scaffolding. Fa uscire *subito* la console di config (registro fonti, soglie AMI, versioni modello, utenti/ruoli, viewer audit) e poi si estende con pagine custom per l'HITL — **stesso codebase** |
+| **Libreria UI** | **MUI + MUI X (DataGrid)** | Maturo, accessibile (WCAG/AGID/L.4/2004), componenti enterprise (tabelle, filtri). AG Grid se il carico tabellare è molto pesante |
+| **Dati/form** | **TanStack Query** · React Hook Form + Zod | Fetch/caching robusti; validazione tipizzata |
+| **HITL (fase 2)** | Cytoscape.js / react-force-graph · viewer evidenze in iframe sandboxed · viewer PDF/OCR | Network analysis a grafo e lettura snapshot WARC in sicurezza |
 
-¹ *Temporal* richiede un datastore proprio (Postgres/Cassandra); in alternativa **Temporal Cloud** (gestito) azzera l'onere operativo.
-² il *browser-pool* è stateless ma **memory-heavy**: limiti risorse stringenti, `PodDisruptionBudget`, node pool dedicato.
-³ può essere una *sidecar*/libreria anziché un servizio a sé; isolato per contenere le credenziali SAS.
+**Percorso consigliato**: *admin-first con Refine → console HITL*. Si consegna valore amministrativo presto e si evita il big-bang della UI investigativa.
 
-> **Nota di semplificazione MVP.** Il Rilascio 1 non richiede tutto: bastano `api`, `hitl-ui`, `temporal-server`, `worker-entity-resolution`, `worker-scraping`+`browser-pool`, `worker-extraction`, `postgresql`, `redis`, `object-store`, `otel-collector`. Classificazione/AMI/SAS/Neo4j entrano nei rilasci successivi (§12).
+### 4.3 Alternativa minima (solo configurazione)
+Se lo scope fosse **esclusivamente** configurazione/CRUD, si può evitare del tutto una SPA separata usando un admin **nativo FastAPI** — **Starlette-Admin** o **SQLAdmin** (server-rendered, zero build front-end). Meno parti in movimento, ma **non** copre l'HITL investigativo: adatto solo come stopgap. Data la centralità dell'HITL, **non è la scelta target**.
+
+### 4.4 Perché non Angular/Vue
+Entrambi validi. Angular è ottimo per grandi gestionali ma più pesante e con curva più ripida; Vue è snello ma con ecosistema "data-heavy" e integrazione Entra meno estesi di React. Per un prodotto che deve diventare una **console investigativa** e integrarsi con Entra, React è il compromesso migliore. La scelta può flettere sulle competenze del team.
 
 ---
 
-## 4. Scalabilità
+## 5. Catalogo dei container
 
-### 4.1 Principio: scalare sulla coda, non solo sulla CPU
-Il carico di screening è **bursty** (arrivi a lotti per CUP/programma). L'autoscaling su CPU reagisce tardi; usiamo **KEDA** con trigger sulla **profondità della task queue Temporal** (o della coda Celery). Ogni tipo di lavoro ha la sua coda → i pool scalano indipendentemente.
+Legenda scaling: **SL** = stateless (scala in orizzontale) · **ST** = stateful (managed/operator).
 
-### 4.2 Profili di risorsa e node pool
-| Profilo | Container | Node pool |
-|---------|-----------|-----------|
-| Generale (IO-bound) | api, worker-scraping, classification, ami, connectors, gateway, mcp | `general` |
+| # | Container | Tier | Ruolo | Tipo | Autoscaling |
+|---|-----------|------|-------|------|-------------|
+| 1 | **frontend** | FE | SPA React (HITL + admin) servita da nginx | SL | HPA su CPU / o CDN |
+| 2 | **ingress/WAF** | — | Application Gateway o Front Door (TLS, WAF, routing FE/BE) | — | gestito |
+| 3 | **api** | BE | FastAPI: authz/RBAC, validazione, audit, API per la UI, avvio workflow | SL | HPA su CPU/RPS |
+| 4 | **temporal-server** | BE | Orchestratore durevole | ST¹ | repliche fisse / Temporal Cloud |
+| 5 | **worker-entity-resolution** | BE | Anti-omonimia: matching CF/P.IVA/CUP, NER | SL | KEDA su coda |
+| 6 | **worker-scraping** | BE | Fetcher HTTP, robots/ToS/opt-out TDM, politeness | SL | KEDA su coda |
+| 7 | **browser-pool** | BE | Chromium headless (Playwright) — memory-heavy | SL² | KEDA su coda, cap repliche |
+| 8 | **worker-extraction** | BE | Estrazione testo/metadati, deduplica, filtro lingua/pertinenza | SL | KEDA su coda |
+| 9 | **worker-classification** | BE | FATF dual-LLM via llm-gateway; ruolo processuale | SL | KEDA su coda (cap = quota Foundry) |
+| 10 | **worker-ami-scoring** | BE | AMI; chiama SAS Viya (`score_data`) via sas-mcp-server; SHAP | SL | KEDA su coda |
+| 11 | **worker-conflict-hitl** | BE | Conflict resolution, soglie, escalation | SL | KEDA su coda |
+| 12 | **ingestion-connectors** | BE | Connettori PDND/ANAC/InfoCamere/OpenCoesione/BDU | SL | CronJob / KEDA |
+| 13 | **llm-gateway** | BE | Gateway Azure Foundry: routing dual-LLM, rate-limit, redazione PII, cache, audit | SL | HPA su RPS |
+| 14 | **sas-mcp-server** | BE | Immagine ufficiale `ghcr.io/sassoftware/sas-mcp-server` (HTTP) verso SAS Viya | SL | HPA su RPS |
+| 15 | **sas-token-broker** | BE | Ottiene/rinnova token SASLogon di servizio | SL³ | 1-2 repliche |
+| 16 | **postgresql (+pgvector)** | BE | Dati strutturati + vettori | ST | Azure DB for PostgreSQL |
+| 17 | **neo4j** | BE | Knowledge graph (da Rilascio 3) | ST | operator / VM gestita |
+| 18 | **redis** | BE | Cache, rate-limit, hash dedup | ST | Azure Cache for Redis |
+| 19 | **object-store** | BE | Snapshot WARC/HTML immutabili | ST | Azure Blob (immutability policy) |
+| 20 | **otel-collector** | BE | Trace/metric/log (OpenTelemetry) | SL | Deployment/DaemonSet |
+| 21 | **audit-sink** | BE | Log immutabile append-only (WORM, marca temporale eIDAS) | ST | Blob WORM / ledger |
+
+¹ Temporal richiede un datastore proprio; alternativa **Temporal Cloud**. ² memory-heavy: limiti stringenti, `PodDisruptionBudget`, node pool dedicato. ³ può essere sidecar/libreria.
+
+> **MVP (Rilascio 1)**: `frontend`, `api`, `temporal-server`, `worker-entity-resolution`, `worker-scraping`+`browser-pool`, `worker-extraction`, Postgres, Redis, object-store, otel-collector. LLM/AMI/SAS/Neo4j nei rilasci successivi (§15).
+
+---
+
+## 6. Scalabilità
+
+### 6.1 Scalare sulla coda, non solo sulla CPU
+Il carico è **bursty** (arrivi a lotti per CUP/programma). Usiamo **KEDA** con trigger sulla **profondità della task queue** Temporal; ogni tipo di lavoro ha la sua coda → i pool scalano indipendentemente. L'HPA su CPU resta per i servizi sincroni (`frontend`, `api`, `llm-gateway`, `sas-mcp-server`).
+
+### 6.2 Profili di risorsa e node pool AKS
+| Profilo | Container | Node pool AKS |
+|---------|-----------|---------------|
+| Front-end/edge | frontend, api | `system`/`general` |
+| Generale (IO-bound) | scraping, classification, ami, connectors, gateway, mcp | `general` |
 | Memory-heavy | **browser-pool** | `browser` (limiti alti, cap repliche) |
 | CPU-bound | entity-resolution (NER), extraction | `compute` |
-| Stateful | postgres, neo4j, redis, object-store | `data` (dischi veloci) |
+| Stateful in-cluster | neo4j (gli altri store sono managed) | `data` (dischi premium) |
 
-**Niente node pool GPU**: l'inferenza LLM/embedding è su Azure Foundry. Questo è un risparmio operativo diretto della scelta Foundry.
+**Niente node pool GPU**: inferenza su Azure Foundry.
 
-### 4.3 Backpressure e limiti
-- **worker-classification**: la concorrenza massima è vincolata dalle **quote TPM/RPM di Azure Foundry**; il `llm-gateway` applica rate-limit e coda in ingresso per non superare la quota (evita 429 a cascata).
-- **browser-pool**: cap sulle repliche (Chromium consuma ~centinaia di MB per contesto); oltre il cap, la coda assorbe il picco.
-- **sas-mcp-server / SAS Viya**: la capacità di scoring lato Viya è finita; rate-limit lato gateway e circuit breaker sul worker-ami.
-- **Cluster autoscaler** aggiunge nodi quando i pool saturano; `PodDisruptionBudget` protegge i lavori in corso durante gli upgrade.
+### 6.3 Backpressure
+- **worker-classification**: concorrenza max vincolata dalle **quote TPM/RPM Foundry**; il `llm-gateway` fa rate-limit e coda in ingresso (evita 429 a cascata).
+- **browser-pool**: cap repliche; oltre, assorbe la coda.
+- **sas-mcp/Viya**: rate-limit lato gateway + circuit breaker sul worker-ami.
+- **Cluster autoscaler** AKS aggiunge nodi a saturazione; `PodDisruptionBudget` protegge i lavori in volo.
 
-### 4.4 Idempotenza (prerequisito per scalare)
-Ogni attività è **idempotente** (chiave = hash del contenuto + versione modello) così i retry di Temporal e le repliche concorrenti non duplicano evidenze o alert. È già un requisito del documento tecnico (§4.4).
+### 6.4 Idempotenza
+Ogni attività è idempotente (chiave = hash contenuto + versione modello): retry e repliche concorrenti non duplicano evidenze o alert.
 
 ---
 
-## 5. Dati, stato e storage
+## 7. Dati, stato e storage
 
-| Store | Contenuto | Note di deployment |
+| Store | Contenuto | Deployment (Azure) |
 |-------|-----------|--------------------|
-| **PostgreSQL** | Subject, Evidence, Classification, AMI, Alert, audit strutturato | Operator (CloudNativePG) con repliche read + backup PITR, oppure DB managed |
-| **pgvector** | Embedding per near-duplicate e retrieval | Estensione su Postgres (evita un DB vettoriale separato all'inizio) |
-| **Neo4j** | Grafo alias/UBO/relazioni | Solo da Rilascio 3; cluster causale se serve HA |
-| **Redis** | Cache, contatori rate-limit, hash dedup | Persistenza opzionale; se Celery, anche broker |
-| **Object store (MinIO/S3)** | Snapshot WARC/HTML (evidenza) | **Object-lock/WORM** + retention; immutabilità probatoria |
-| **Audit sink** | Disposizioni, versioni modello/decisione, chi/quando | Append-only, WORM, marca temporale **eIDAS** |
+| **PostgreSQL** | Subject, Evidence, Classification, AMI, Alert | **Azure DB for PostgreSQL Flexible Server** (HA zonale, backup PITR) |
+| **pgvector** | Embedding (near-duplicate/retrieval) | Estensione su Azure PostgreSQL (evita un DB vettoriale separato all'inizio) |
+| **Neo4j** | Grafo alias/UBO/relazioni | Solo da Rilascio 3; operator/VM |
+| **Redis** | Cache, rate-limit, hash dedup | **Azure Cache for Redis** |
+| **Object store** | Snapshot WARC/HTML | **Azure Blob** con **immutability policy** (WORM) + retention |
+| **Audit sink** | Disposizioni, versioni, chi/quando | Blob WORM / ledger append-only, marca temporale **eIDAS** |
 
-**Regola**: gli store con stato **non** sono processi effimeri del deployment applicativo — vanno su operator o servizi gestiti, con backup e disaster recovery propri. Le immagini applicative restano interamente stateless.
-
----
-
-## 6. Networking, sicurezza e segreti
-
-- **NetworkPolicy default-deny**; aperture esplicite: solo `worker-ami` e `worker-conflict` raggiungono `sas-mcp-server`; solo i worker LLM raggiungono `llm-gateway`; solo `llm-gateway` ha egress verso Azure; solo `sas-mcp-server`/`sas-token-broker` hanno egress verso `VIYA_ENDPOINT` e SASLogon.
-- **Egress allow-list** (egress gateway): endpoint Azure Foundry, SAS Viya, PDND/ANAC/InfoCamere, e i domini di scraping autorizzati. Tutto il resto è bloccato.
-- **Identità federata, non chiavi statiche**: verso Azure Foundry si usa **Workload Identity Federation** (il ServiceAccount K8s ottiene token Azure senza secret persistiti). Verso SAS, service account SASLogon con token a vita breve gestiti dal `sas-token-broker`.
-- **Segreti**: External Secrets Operator / Vault / KMS del cloud; nessun segreto in immagini o `ConfigMap`.
-- **TLS ovunque**: ingress (cert-manager) e, dove supportato, mTLS interno (service mesh opzionale, es. Linkerd) per i percorsi che toccano dati giudiziari.
-- **Immagini**: non-root, filesystem read-only, `securityContext` restrittivo, `seccomp`; il browser-pool gira in sandbox con capacità minime.
-- **Dati in UE**, cloud qualificato ACN/PSN; classificazione del dato e misure minime AgID.
+Regola: gli store con stato sono **managed/operator** con backup e DR propri; le immagini applicative restano interamente stateless.
 
 ---
 
-## 7. Integrazione SAS Viya via SAS MCP server
+## 8. Networking, sicurezza e segreti
 
-### 7.1 Componente
-Immagine ufficiale **`ghcr.io/sassoftware/sas-mcp-server`** eseguita in **HTTP mode** (endpoint `/mcp`, porta 8134). È *stateless* → scalabile in orizzontale dietro il Service. SAS fornisce anche Helm chart/manifests di riferimento (ingress Contour/nginx, TLS).
+- **NetworkPolicy default-deny**; aperture esplicite: solo `worker-ami`/`worker-conflict` → `sas-mcp-server`; solo i worker LLM → `llm-gateway`; il `frontend` raggiunge **solo** l'`api`.
+- **Private Endpoint** per Azure Foundry, Blob, PostgreSQL, Key Vault → il traffico resta sul **backbone Azure**, non su Internet (forte guadagno di compliance/sovranità).
+- **Egress allow-list** (Azure Firewall): endpoint Foundry, `VIYA_ENDPOINT`, PDND/ANAC/InfoCamere, domini di scraping autorizzati. Tutto il resto bloccato.
+- **Identità federata, non chiavi**: **AKS Workload Identity** per accesso *keyless* a Foundry (ruolo Entra "Cognitive Services OpenAI User"), Key Vault e Blob; verso SAS, service account SASLogon con token brevi (§9.3).
+- **Segreti**: **Azure Key Vault** (CSI Secrets Store / External Secrets); nessun segreto in immagini o `ConfigMap`.
+- **TLS ovunque**; mTLS interno opzionale (service mesh) sui percorsi con dati giudiziari.
+- **Container**: non-root, filesystem read-only, `securityContext`/`seccomp`; browser-pool in sandbox con capacità minime.
+- **Dati in UE** (Italy North), cloud qualificato, misure minime AgID.
 
-### 7.2 Chi chiama chi
+---
+
+## 9. Integrazione SAS Viya via SAS MCP server
+
+### 9.1 Componente
+Immagine ufficiale **`ghcr.io/sassoftware/sas-mcp-server`** in **HTTP mode** (`/mcp`, porta 8134), *stateless* → scalabile in orizzontale. SAS fornisce Helm chart/manifests di riferimento (ingress Contour/nginx, TLS).
+
+### 9.2 Chi chiama chi
 ```
-worker-ami-scoring / worker-conflict-hitl   (MCP client)
-                    │  HTTP /mcp  (in-cluster, mTLS)
-                    ▼
-             sas-mcp-server            ── Authorization: Bearer <token SASLogon> (ALLOW_RAW_BEARER)
-                    │  REST + CAS
-                    ▼
-              SAS Viya (esterna)  →  Model Manager · Intelligent Decisioning · CAS
+worker-ami-scoring / worker-conflict-hitl (MCP client)
+        │ HTTP /mcp (in-cluster, mTLS)
+        ▼
+   sas-mcp-server  ── Authorization: Bearer <token SASLogon> (ALLOW_RAW_BEARER)
+        │ REST + CAS
+        ▼
+   SAS Viya (esterna) → Model Manager · Intelligent Decisioning · CAS
 ```
 
-### 7.3 Autenticazione (service-to-service, non interattiva)
-Il flusso OAuth2/PKCE del MCP server è pensato per un umano con browser. Per un servizio usiamo il pattern **raw bearer**:
-1. `sas-token-broker` si autentica a **SASLogon** con un **service account** (client credentials / technical user) e ottiene un access token OAuth a vita breve.
-2. Il worker chiama `sas-mcp-server` con `Authorization: Bearer <token>`; il server, avviato con **`ALLOW_RAW_BEARER=true`**, lo inoltra a SAS Viya.
-3. Il broker rinnova i token prima della scadenza; nessuna password persistita.
+### 9.3 Autenticazione (service-to-service)
+Pattern **raw bearer** (il flusso OAuth/PKCE del MCP server è pensato per un umano con browser):
+1. `sas-token-broker` si autentica a **SASLogon** con un **service account** e ottiene un access token OAuth breve.
+2. Il worker chiama `sas-mcp-server` con `Authorization: Bearer <token>`; il server (`ALLOW_RAW_BEARER=true`) lo inoltra a Viya.
+3. Il broker rinnova prima della scadenza; nessuna password persistita.
 
-### 7.4 Privilegio minimo (due profili di deployment)
-Il MCP server espone 75 tool su 9 tier: li restringiamo con `MCP_TIERS` e `MCP_READ_ONLY`.
+### 9.4 Privilegio minimo (due profili)
+| Istanza | Uso | Config |
+|---------|-----|--------|
+| **`sas-mcp-runtime`** | Hot path: solo scoring/lettura | `MCP_TIERS=6` + `MCP_READ_ONLY=true` |
+| **`sas-mcp-govops`** | Solo governance/deploy: registrazione modelli, pubblicazione decisioni | `MCP_TIERS=5,6,7`, credenziali separate |
 
-| Istanza | Uso | Configurazione |
-|---------|-----|----------------|
-| **`sas-mcp-runtime`** | Hot path in produzione: solo scoring/lettura | `MCP_TIERS=6` + `MCP_READ_ONLY=true` (es. `score_data`, `list_registered_models`) |
-| **`sas-mcp-govops`** | Solo a tempo di governance/deploy: registrazione modelli e pubblicazione decisioni | `MCP_TIERS=5,6,7`, credenziali separate, accesso ristretto agli operatori |
+Il runtime **non può** modificare modelli o regole: solo consumarli.
 
-Così il percorso runtime **non può** modificare modelli o regole: può solo **consumare** decisioni e scoring già governati.
+### 9.5 Cosa fa SAS Viya
+- **Model Management & Scoring (Tier 6)**: registra/versiona/**monitora** il modello AMI e i modelli di supporto FATF (drift, champion/challenger, accuratezza — art. 15 AI Act); `score_data` sul campione governato.
+- **Intelligent Decisioning (Tier 7)**: regole deterministiche (doppio finanziamento via CUP) e mappatura **soglia→disposizione** come ruleset/decision flow versionati e auditabili; innesto nei flussi antifrode.
+- **HITL preservato**: SAS produce una **raccomandazione**; la determinazione resta all'istruttore.
 
-### 7.5 Cosa fa SAS Viya nell'architettura
-- **Model Management & Scoring (Tier 6)**: registra, versiona e **monitora** il modello di **AMI scoring** e i modelli di supporto/monitoraggio del classificatore FATF (drift, champion/challenger, accuratezza — art. 15 AI Act). Il worker-ami invoca `score_data` sul modello campione governato.
-- **Intelligent Decisioning (Tier 7)**: le **regole deterministiche** (doppio finanziamento via CUP, red flag) e la **mappatura soglia→disposizione** (auto-chiusura vs escalation) vivono come **business ruleset / decision flow** versionati e auditabili in Viya. È la traduzione governata del requisito "niente scoring black-box: spiegabile e tracciabile", e il punto di innesto nei flussi antifrode esistenti.
-- **HITL preservato**: la decisione SAS produce una **raccomandazione** di disposizione; la determinazione resta all'istruttore (nessun effetto giuridico automatico).
+### 9.6 Minimizzazione verso SAS
+Verso Viya inviamo **feature derivate** (categoria FATF, severità, confidence, materialità vs CUP, ruolo, red flag), **non** il testo grezzo. Confine di compliance netto.
 
-### 7.6 Minimizzazione dei dati verso SAS
-Verso SAS Viya inviamo **feature e segnali derivati** (categoria FATF, severità, confidence, materialità vs CUP, ruolo, flag red-flag), **non** il testo grezzo degli articoli giudiziari. La lettura del testo avviene nel `worker-classification` via Azure gateway; a valle, solo l'output strutturato attraversa il confine. Confine di compliance netto e difendibile.
-
-### 7.7 Audit
-Ogni chiamata MCP è registrata nell'audit sink: tool invocato, hash degli input, **versione del modello/decisione**, risposta, timestamp. Si somma alla natura "governata e auditabile" già propria del MCP server.
+### 9.7 Audit
+Ogni chiamata MCP registrata nell'audit sink (tool, hash input, versione modello/decisione, risposta, timestamp).
 
 ---
 
-## 8. Integrazione LLM via Azure AI Foundry
+## 10. Integrazione LLM via Azure AI Foundry
 
-### 8.1 llm-gateway (punto unico di governo)
-Tutti i worker che usano LLM/embedding passano dal **`llm-gateway`** interno (può basarsi su un proxy tipo LiteLLM). Responsabilità:
-- **Routing dual-LLM**: modello primario e secondario per la classificazione FATF (il gateway astrae i deployment Foundry).
-- **Rate-limit e backpressure** allineati alle quote TPM/RPM di Foundry; retry con backoff su 429/5xx.
-- **Redazione/minimizzazione PII** prima dell'invio; **logging** dei prompt/risposte (hash) per audit e riproducibilità.
-- **Caching** semantico per abbattere costi e latenza sui near-duplicate.
-- **Token/cost accounting** per soggetto/CUP.
+### 10.1 llm-gateway (punto unico di governo)
+Tutti i worker LLM/embedding passano dal **`llm-gateway`** (può basarsi su un proxy tipo LiteLLM): routing **dual-LLM**, rate-limit/backpressure sulle quote, **redazione PII**, logging (hash) per audit, caching semantico, cost accounting per soggetto/CUP.
 
-### 8.2 Autenticazione
-**Workload Identity Federation**: il ServiceAccount K8s del gateway ottiene token Azure senza chiavi statiche in cluster (niente API key da ruotare a mano).
+### 10.2 Autenticazione
+**AKS Workload Identity** verso Foundry: accesso *keyless* con ruolo Entra ("Cognitive Services OpenAI User"); nessuna API key da ruotare (§11).
 
-### 8.3 Residenza dati e compliance (da validare in DPIA)
-- **Regione UE** (es. *Italy North* / *Sweden Central*) e adesione all'**EU Data Boundary** di Microsoft; DPA con impegno di **non addestramento** sui nostri input.
-- **Dato sensibile (art. 10 GDPR)**: l'invio di testo potenzialmente giudiziario a un provider cloud non-UE (ancorché con hosting UE) è un punto da **valutare esplicitamente in DPIA/FRIA**; la redazione PII (§8.1) e la minimizzazione riducono l'esposizione. Alternativa di fallback: inferenza on-prem se la DPIA lo richiede (l'astrazione del gateway rende il cambio a costo contenuto).
-- **Egress** solo verso gli endpoint Foundry (allow-list).
+### 10.3 Residenza dati e compliance (da validare in DPIA/FRIA)
+- **Regione UE** (Italy North) + **Private Endpoint** verso Foundry; DPA con impegno di **non addestramento** sui nostri input.
+- **Dato sensibile (art. 10 GDPR)**: l'invio di testo potenzialmente giudiziario a un servizio cloud va valutato in **DPIA/FRIA**; redazione PII + minimizzazione riducono l'esposizione. Fallback on-prem reso a basso costo dall'astrazione del gateway.
+- **Egress** solo verso gli endpoint Foundry (allow-list / Private Endpoint).
 
 ---
 
-## 9. Portabilità Docker → Kubernetes
+## 11. Deployment su Azure (servizi gestiti)
 
-- **Parità di ambiente**: stessa immagine per dev (Docker Compose) e test/prod (Kubernetes); solo la configurazione cambia (env + segreti).
-- **Immagini**: multi-stage, base *slim*/distroless, non-root, versioni **pinnate a digest**, un processo per container.
-- **Config**: 12-factor — nessun valore d'ambiente hard-coded; `ConfigMap` per la config non sensibile, secret manager per il resto.
-- **Probe**: `liveness`/`readiness`/`startup` per ogni servizio; i worker gestiscono **SIGTERM** per completare i task in volo (graceful shutdown).
-- **Manifests**: **Helm** (o Kustomize) con `values` per ambiente; il chart del `sas-mcp-server` fornito da SAS si innesta come dipendenza.
-- **Ambienti**: namespace separati `adverse-media-{dev,test,prod}`; RBAC e quote per namespace.
-- **Storage**: `PVC` per gli stateful; bucket con object-lock per gli snapshot.
+Il deploy avviene sull'**account Azure esistente** (stesso tenant di Foundry), semplificando identità e rete: Foundry, storage, DB e segreti stanno nello stesso perimetro Entra, raggiungibili via Private Endpoint.
 
-Il percorso è: **Compose in locale → Helm su Kubernetes** senza modifiche al codice, solo ai valori.
+| Esigenza | Servizio Azure | Note |
+|----------|----------------|------|
+| Kubernetes | **AKS** | node pool multipli (§6.2), cluster autoscaler, zone di disponibilità |
+| Registry immagini | **Azure Container Registry (ACR)** | scansione (Defender), firma, pull *keyless* da AKS |
+| LLM/embedding | **Azure AI Foundry** | region UE, Private Endpoint, accesso keyless Entra |
+| Object store | **Azure Blob Storage** | immutability policy (WORM) per WARC/audit |
+| Database | **Azure DB for PostgreSQL Flexible** | estensione pgvector, HA zonale, PITR |
+| Cache | **Azure Cache for Redis** | — |
+| Segreti | **Azure Key Vault** | CSI Secrets Store / External Secrets |
+| Identità servizi | **Entra ID + AKS Workload Identity** | federazione, **nessuna chiave statica** |
+| Identità operatori | **Entra ID (OIDC/MSAL)** | SSO + RBAC; federabile con SASLogon |
+| Ingress/WAF | **Application Gateway (AGIC)** o **Front Door** | TLS, WAF, routing FE/BE |
+| Osservabilità | **Azure Monitor / App Insights** (via OTel) | o stack Grafana/Loki |
+| Rete verso SAS Viya | **VNet peering / Private Link** (se Viya su Azure) o **VPN/ExpressRoute** (se on-prem) | mantiene il traffico privato |
+
+**Portabilità preservata**: restano Kubernetes e Helm standard. I servizi gestiti sono adottati per ridurre l'ops ma sono **sostituibili** con equivalenti in-cluster (CloudNativePG, Redis, MinIO) senza cambiare il codice applicativo — solo la configurazione.
 
 ---
 
-## 10. Osservabilità e audit
+## 12. Portabilità Docker → Kubernetes
 
-- **OpenTelemetry** end-to-end: un `trace_id` segue il soggetto lungo tutta la pipeline (scraping → estrazione → classificazione → AMI → disposizione), incluse le chiamate a `llm-gateway` e `sas-mcp-server`.
+- **Parità di ambiente**: stessa immagine per dev (Docker Compose) e test/prod (AKS); cambia solo la configurazione.
+- **Immagini**: multi-stage, base slim/distroless, non-root, versioni **pinnate a digest**.
+- **Config 12-factor**: `ConfigMap` per la config, Key Vault per i segreti.
+- **Probe** `liveness`/`readiness`/`startup`; i worker gestiscono **SIGTERM** (graceful shutdown).
+- **Manifests**: **Helm** con `values` per ambiente; il chart `sas-mcp-server` di SAS come dipendenza.
+- **Ambienti**: namespace `adverse-media-{dev,test,prod}`; RBAC e quote per namespace.
+
+Percorso: **Compose in locale → Helm su AKS**, senza modifiche al codice.
+
+---
+
+## 13. Osservabilità e audit
+
+- **OpenTelemetry** end-to-end: un `trace_id` segue il soggetto (scraping → estrazione → classificazione → AMI → disposizione), incluse le chiamate a `llm-gateway` e `sas-mcp-server`; export verso **Azure Monitor/App Insights** o Grafana.
 - **Metriche**: profondità code, latenza per stadio, tasso 429 Foundry, tempi Viya, throughput soggetti/ora.
-- **Log strutturati** su stdout → collector → backend (Loki/managed).
-- **Audit immutabile** separato dai log operativi: append-only, **WORM**, marca temporale eIDAS; contiene ogni disposizione con evidenze, versioni e (se presente) operatore.
+- **Audit immutabile** separato dai log operativi: append-only, WORM (Blob), marca temporale eIDAS; ogni disposizione con evidenze, versioni e operatore.
 
 ---
 
-## 11. CI/CD e supply chain
+## 14. CI/CD e supply chain
 
-Per una PA che tratta dati giudiziari la **catena di fornitura** è essa stessa un requisito di sicurezza:
-- Build riproducibili; **SBOM** per immagine; scansione vulnerabilità (Trivy/Grype) in CI con gate.
-- **Firma immagini** (cosign) e verifica in admission (policy) — solo immagini firmate girano in cluster.
-- Registry privato; nessun `latest`, solo digest.
-- Pipeline per ambiente (dev/test/prod) con promozione controllata; migrazioni DB come job idempotenti.
-- Il `sas-mcp-server` si consuma dall'immagine ufficiale `ghcr.io/sassoftware/...` **pinnata a digest** e ri-scansionata.
+- **GitHub Actions** (il repo è su GitHub) con **OIDC federato ad Azure** (nessuna credenziale cloud memorizzata) → build, push su **ACR**, deploy su **AKS** via Helm.
+- **SBOM** per immagine; scansione vulnerabilità in CI con gate; **firma immagini** (cosign/notation) e verifica in admission (solo immagini firmate girano).
+- Il `frontend` ha la sua pipeline (build statica, lint, test) separata dal back-end.
+- Migrazioni DB come job idempotenti; promozione controllata dev→test→prod.
+- `sas-mcp-server` consumato dall'immagine ufficiale **pinnata a digest** e ri-scansionata.
 
 ---
 
-## 12. Rollout dei container per fase
-
-Allineato al piano di sviluppo del documento tecnico (§9):
+## 15. Rollout dei container per fase
 
 | Fase | Container introdotti |
 |------|----------------------|
-| **Avvio** | CI/CD, registry, ambienti; scheletro `api`; `postgres`, `redis`, `object-store`, `otel-collector` |
-| **Rilascio 1** (MVP) | `hitl-ui`, `temporal-server`, `worker-entity-resolution`, `worker-scraping`, `browser-pool`, `worker-extraction`, `ingestion-connectors`, `audit-sink` |
-| **Rilascio 2** | `llm-gateway` (Azure Foundry), `worker-classification`, `worker-ami-scoring`, `worker-conflict-hitl`, `sas-mcp-server` (+`sas-token-broker`) |
-| **Rilascio 3** | `neo4j` e worker di network analysis; hardening, monitoraggio drift/bias |
-
-Così l'infrastruttura cresce col valore: l'MVP non paga il costo operativo di SAS, LLM o grafo finché non servono.
+| **Avvio** | CI/CD (GitHub Actions→ACR→AKS), ambienti; scheletro `api` e `frontend`; Postgres, Redis, Blob, otel |
+| **Rilascio 1** (MVP) | `frontend` (admin-first Refine + prime viste HITL), `temporal-server`, `worker-entity-resolution`, `worker-scraping`, `browser-pool`, `worker-extraction`, `ingestion-connectors`, `audit-sink` |
+| **Rilascio 2** | `llm-gateway` (Foundry), `worker-classification`, `worker-ami-scoring`, `worker-conflict-hitl`, `sas-mcp-server` (+`sas-token-broker`); UI HITL completa |
+| **Rilascio 3** | `neo4j` + network analysis; hardening, drift/bias |
 
 ---
 
-## 13. Punti aperti da confermare
+## 16. Punti aperti da confermare
 
-1. **Temporal self-hosted vs Temporal Cloud** — Cloud riduce l'onere operativo (no datastore Temporal da gestire) ma è un servizio esterno da valutare per residenza/qualificazione.
-2. **Regione Azure Foundry** (Italy North vs Sweden Central) e conferma **EU Data Boundary** + DPA no-training, in DPIA/FRIA.
-3. **Ammissibilità dell'invio di testo giudiziario a Foundry** (§8.3): esito della DPIA; eventuale fallback on-prem.
-4. **Cloud target** (PSN/ACN-qualificato) e vincoli di rete verso SAS Viya e PDND.
-5. **Service account SASLogon**: creazione del technical user, tier e scope concessi, policy di rotazione token.
-6. **Object store**: MinIO in-cluster vs S3 gestito (per WORM/retention e DR).
-7. **Service mesh** (mTLS interno) sì/no per i percorsi con dati giudiziari.
+1. **Scope del front-end al Rilascio 1**: sola amministrazione/configurazione, o già prime viste HITL? (cambia l'effort UI, non l'architettura)
+2. **Hosting front-end**: container nginx in AKS (consigliato) vs Azure Static Web Apps.
+3. **Region Azure** (Italy North) e conferma **EU Data Boundary** + DPA no-training, in DPIA/FRIA.
+4. **Ammissibilità invio testo giudiziario a Foundry** (§10.3): esito DPIA; eventuale fallback on-prem.
+5. **Temporal self-hosted vs Temporal Cloud**.
+6. **Managed vs in-cluster** per gli store (Azure PostgreSQL/Redis/Blob vs CloudNativePG/Redis/MinIO).
+7. **Connettività a SAS Viya** (Private Link/peering vs VPN/ExpressRoute) e service account SASLogon (tier/scope/rotazione).
+8. **BFF sì/no** per non esporre token nel browser (§3.3).
 
 ---
 
 ## Appendice A — Compose di sviluppo (illustrativo)
 
-> Snippet di riferimento per l'ambiente locale (non ancora materializzato nel repo: lo scaffolding sarà un passo successivo). Le immagini reali dei worker verranno costruite dal progetto.
+> Snippet di riferimento per l'ambiente locale (non ancora materializzato nel repo). Il `frontend` è un servizio a sé, separato dal back-end.
 
 ```yaml
 # docker-compose.dev.yml (bozza illustrativa)
 services:
+  frontend:
+    build: ./frontend                       # SPA React/TS (Refine)
+    ports: ["5173:80"]                       # nginx serve la build
+    environment: { VITE_API_BASE: "http://localhost:8000", VITE_ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID} }
+
   api:
-    build: ./services/api
+    build: ./services/api                    # FastAPI (back-end edge)
     env_file: .env
     ports: ["8000:8000"]
     depends_on: [postgres, redis, temporal]
 
   temporal:
-    image: temporalio/auto-setup:1.25.0   # dev; in prod: server + datastore dedicato
+    image: temporalio/auto-setup:1.25.0
     ports: ["7233:7233"]
 
   worker-scraping:
@@ -319,13 +395,11 @@ services:
     depends_on: [temporal, redis]
 
   browser-pool:
-    build: ./services/browser-pool         # Playwright/Chromium
+    build: ./services/browser-pool           # Playwright/Chromium
     shm_size: "1gb"
-    env_file: .env
 
   llm-gateway:
-    build: ./services/llm-gateway          # verso Azure AI Foundry
-    env_file: .env
+    build: ./services/llm-gateway            # verso Azure AI Foundry
 
   sas-mcp-server:
     image: ghcr.io/sassoftware/sas-mcp-server:<digest>
@@ -337,15 +411,14 @@ services:
     ports: ["8134:8134"]
 
   postgres:
-    image: postgres:16                      # + estensione pgvector
+    image: postgres:16                        # + pgvector
     environment: { POSTGRES_PASSWORD: ${POSTGRES_PASSWORD} }
     volumes: ["pgdata:/var/lib/postgresql/data"]
 
-  redis:
-    image: redis:7
+  redis: { image: redis:7 }
 
   minio:
-    image: minio/minio                      # object store S3-compatibile (WARC)
+    image: minio/minio                        # object store S3-compatibile (WARC)
     command: server /data
     volumes: ["minio:/data"]
 
@@ -354,12 +427,18 @@ volumes: { pgdata: {}, minio: {} }
 
 ## Appendice B — Variabili d'ambiente chiave
 
+**frontend**
+| Variabile | Note |
+|-----------|------|
+| `VITE_API_BASE` | base URL dell'API back-end |
+| `VITE_ENTRA_CLIENT_ID` / `VITE_ENTRA_AUTHORITY` | SSO Entra ID (MSAL) |
+
 **sas-mcp-server**
 | Variabile | Valore tipico | Note |
 |-----------|---------------|------|
-| `VIYA_ENDPOINT` | `https://viya.ente.it` | URL della Viya esterna |
+| `VIYA_ENDPOINT` | `https://viya.ente.it` | Viya esterna |
 | `VIYA_AUTH` | `true` | **mai** `false` in PA |
-| `ALLOW_RAW_BEARER` | `true` | abilita il pattern service-to-service |
+| `ALLOW_RAW_BEARER` | `true` | pattern service-to-service |
 | `MCP_TIERS` | `6` (runtime) / `5,6,7` (govops) | privilegio minimo |
 | `MCP_READ_ONLY` | `true` (runtime) | 43 tool read-only |
 | `MCP_LANDING_PAGE` | `false` | nessuna landing non autenticata |
@@ -367,12 +446,22 @@ volumes: { pgdata: {}, minio: {} }
 **llm-gateway (Azure AI Foundry)**
 | Variabile | Note |
 |-----------|------|
-| `AZURE_FOUNDRY_ENDPOINT` | endpoint del progetto Foundry (regione UE) |
-| `AZURE_TENANT_ID` / federated identity | Workload Identity Federation (no chiavi statiche) |
+| `AZURE_FOUNDRY_ENDPOINT` | endpoint del progetto Foundry (region UE) |
+| federated identity (Workload Identity) | accesso keyless; nessuna API key statica |
 | `LLM_MODEL_PRIMARY` / `LLM_MODEL_SECONDARY` | deployment dual-LLM |
 | `EMBEDDING_MODEL` | modello di embedding |
 | `LLM_MAX_TPM` / `LLM_MAX_RPM` | allineati alla quota Foundry (backpressure) |
 
 ---
 
-*Documento di architettura — uso interno. I riferimenti a componenti di terze parti (SAS MCP server, Azure AI Foundry) vanno verificati sulle versioni effettivamente adottate; le scelte di residenza e trattamento dati vanno validate in DPIA/FRIA con legale/DPO.*
+## Appendice C — Changelog
+
+**v1.0 → v1.1**
+- **Separazione front-end / back-end** come sezione dedicata (§3): API unico confine di fiducia, il front-end non tocca dati/DB/LLM/SAS.
+- **Framework front-end** (§4): React+TypeScript, admin-first con Refine → console HITL; MUI, MSAL/Entra; alternativa minima FastAPI-admin; motivazione vs Angular/Vue.
+- **Deployment su Azure** (§11): cloud target fissato (account esistente), mapping ai servizi gestiti (AKS, ACR, Blob WORM, Azure PostgreSQL+pgvector, Redis, Key Vault), identità **keyless** (Entra + Workload Identity), rete con **Private Endpoint**, CI/CD GitHub Actions con OIDC.
+- Diagrammi, catalogo container (aggiunto `frontend`/WAF, store→managed Azure), node pool AKS, punti aperti e rollout aggiornati di conseguenza.
+
+---
+
+*Documento di architettura — uso interno. I riferimenti a componenti di terze parti (SAS MCP server, Azure AI Foundry) vanno verificati sulle versioni adottate; le scelte di residenza e trattamento dati vanno validate in DPIA/FRIA con legale/DPO.*
