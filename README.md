@@ -19,6 +19,30 @@ Lo strumento è un **ausilio istruttorio** (decision-support) *explainable* e au
 - **Fonti sostenibili** — feed licenziati come spina dorsale, scraping conforme (robots.txt / ToS / opt-out TDM) sulle fonti pubbliche istituzionali.
 - **Sinergia, non duplicazione** — complementare ad ARACHNE/PIAF; aggiunge il segnale "notizie negative".
 
+## Sincronizzazione e modello di branch
+
+| Branch | Ruolo |
+|--------|-------|
+| `main` | Branch **stabile** — target di sincronizzazione del repo locale |
+| `claude/web-scraping-reputation-pa-c8r9rq` | Branch di **sviluppo** — le modifiche vengono poi consolidate su `main` |
+
+**Repo locale (clone):**
+```bash
+git clone https://github.com/itacrg-ops/Web_scraping.git
+cd Web_scraping
+cp .env.example .env        # poi valorizzare le variabili (mai committare .env)
+```
+
+**Flusso quotidiano:**
+```bash
+git pull origin main                 # allineamento alla base stabile
+# ...lavoro sul branch di sviluppo...
+git add -A && git commit -m "..."
+git push origin <branch-di-sviluppo>
+```
+
+L'ambiente Claude Code sul web è **effimero**: l'unica copia durevole è su GitHub. Il repo locale si sincronizza esclusivamente via `git pull`/`push`.
+
 ## Stato
 
 Repository in fase di **avvio**: al momento contiene la documentazione tecnico-funzionale. Le fasi implementative (Entity Resolution, scraper MVP, classificazione FATF, AMI scoring) sono descritte nel piano di sviluppo del documento tecnico.
