@@ -40,6 +40,38 @@ class ScreeningOut(BaseModel):
     created_at: datetime
 
 
+class EvidenceItem(BaseModel):
+    """Evidenza esposta (risposta)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    url: str | None = None
+    testata: str | None = None
+    title: str | None = None
+    data: str | None = None
+    snippet: str | None = None
+    content_hash: str | None = None
+    fetch_ts: str | None = None
+    warc_key: str | None = None
+    fonte_credibilita: str | None = None
+
+
+class EvidenceCreate(BaseModel):
+    """Evidenza in ingresso (dal worker), con riferimenti allo snapshot."""
+
+    url: str | None = None
+    testata: str | None = None
+    title: str | None = None
+    data: str | None = None
+    snippet: str | None = None
+    content_hash: str | None = None
+    fetch_ts: str | None = None
+    bucket: str | None = None
+    raw_key: str | None = None
+    warc_key: str | None = None
+    fonte_credibilita: str | None = None
+
+
 class AlertCreate(BaseModel):
     """Payload di persistenza alert (chiamato dal worker a fine pipeline)."""
 
@@ -54,6 +86,7 @@ class AlertCreate(BaseModel):
     disposition: str = "ESCALATION_I_LIVELLO"
     svi_alert_id: str | None = None
     entity_resolution: dict | None = None
+    evidence: list[EvidenceCreate] = []
 
 
 class Alert(BaseModel):
@@ -71,4 +104,5 @@ class Alert(BaseModel):
     disposition: str
     svi_alert_id: str | None = None
     entity_resolution: dict | None = None
+    evidence: list[EvidenceItem] = []
     created_at: datetime

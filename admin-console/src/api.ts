@@ -22,6 +22,18 @@ export interface EntityResolution {
   identifier_valid?: boolean;
 }
 
+export interface EvidenceItem {
+  url?: string | null;
+  testata?: string | null;
+  title?: string | null;
+  data?: string | null;
+  snippet?: string | null;
+  content_hash?: string | null;
+  fetch_ts?: string | null;
+  warc_key?: string | null;
+  fonte_credibilita?: string | null;
+}
+
 export interface Alert {
   id: string;
   subject: string;
@@ -32,6 +44,7 @@ export interface Alert {
   disposition: string;
   svi_alert_id?: string | null;
   entity_resolution?: EntityResolution | null;
+  evidence?: EvidenceItem[];
   created_at: string;
 }
 

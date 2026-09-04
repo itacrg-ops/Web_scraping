@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from urllib.parse import urlparse
 
 import httpx
 from temporalio import activity
@@ -63,19 +64,22 @@ async def fetch_source(seed_url: str) -> dict:
 @activity.defn
 async def extract_content(raw: dict) -> dict:
     """Estrazione testo/metadati dallo snapshot (trafilatura)."""
+    src = raw.get("final_url") or raw.get("url")
+    testata = urlparse(src or "").netloc
     if not raw.get("raw_key"):
         return {"text": "", "title": None, "date": None, "author": None,
-                "source": raw.get("final_url") or raw.get("url"),
+                "source": src, "testata": testata,
                 "provenance": {"error": raw.get("error"), "allowed": raw.get("allowed")}}
     html = await asyncio.to_thread(snapshot.load_html, raw["bucket"], raw["raw_key"])
-    meta = await asyncio.to_thread(extractor.extract, html, raw.get("final_url") or raw.get("url"))
+    meta = await asyncio.to_thread(extractor.extract, html, src)
     activity.logger.info("Estratti %d caratteri di testo", len(meta.get("text") or ""))
     return {
         "text": meta.get("text", ""),
         "title": meta.get("title"),
         "date": meta.get("date"),
         "author": meta.get("author"),
-        "source": raw.get("final_url") or raw.get("url"),
+        "source": src,
+        "testata": testata,
         "provenance": {
             "content_hash": raw.get("content_hash"),
             "fetch_ts": raw.get("fetch_ts"),

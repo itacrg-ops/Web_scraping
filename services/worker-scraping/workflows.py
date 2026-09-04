@@ -100,11 +100,31 @@ class ScreeningWorkflow:
             publish_svi, alert_payload, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
         )
 
+        # Evidenza ancorata all'alert (URL, snippet, hash, timestamp, WARC).
+        prov = doc.get("provenance") or {}
+        text = doc.get("text") or ""
+        evidence = []
+        if prov.get("content_hash"):
+            evidence.append({
+                "url": doc.get("source"),
+                "testata": doc.get("testata"),
+                "title": doc.get("title"),
+                "data": doc.get("date"),
+                "snippet": text[:300],
+                "content_hash": prov.get("content_hash"),
+                "fetch_ts": prov.get("fetch_ts"),
+                "bucket": prov.get("bucket"),
+                "raw_key": prov.get("raw_key"),
+                "warc_key": prov.get("warc_key"),
+                "fonte_credibilita": None,
+            })
+
         alert_create = {
             **alert_payload,
             "screening_id": req["screening_id"],
             "svi_alert_id": svi_alert_id,
             "entity_resolution": resolution,
+            "evidence": evidence,
         }
         alert_id = await workflow.execute_activity(
             persist_alert, alert_create, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY

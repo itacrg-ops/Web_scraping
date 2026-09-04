@@ -4,8 +4,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
 
@@ -59,4 +59,30 @@ class Alert(Base):
     disposition: Mapped[str] = mapped_column(String)
     svi_alert_id: Mapped[str | None] = mapped_column(String, nullable=True)
     entity_resolution: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    evidence: Mapped[list["Evidence"]] = relationship(
+        cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class Evidence(Base):
+    """Evidenza ancorata all'alert (§7.1): URL, testata, data, snippet, hash,
+    provenance (WARC), timestamp — base della spiegabilità dell'alert."""
+
+    __tablename__ = "evidence"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    alert_id: Mapped[str] = mapped_column(ForeignKey("alerts.id"))
+    url: Mapped[str | None] = mapped_column(String, nullable=True)
+    testata: Mapped[str | None] = mapped_column(String, nullable=True)
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
+    data: Mapped[str | None] = mapped_column(String, nullable=True)
+    snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    fetch_ts: Mapped[str | None] = mapped_column(String, nullable=True)
+    bucket: Mapped[str | None] = mapped_column(String, nullable=True)
+    raw_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    warc_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    fonte_credibilita: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
