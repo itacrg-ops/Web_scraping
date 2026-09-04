@@ -30,6 +30,11 @@ REGISTRY: list[dict] = [
         "id": "R-BETA", "denominazione": "Beta Infrastrutture S.p.A.",
         "cf_piva": "12345670159", "cup": ["B22C21000000002"], "ruolo": "beneficiario",
     },
+    {
+        # Soggetto di test (fixture): in produzione arriva da ReGiS/OpenCoesione/InfoCamere.
+        "id": "R-TRON", "denominazione": "Tron Group Holding S.r.l.",
+        "cf_piva": "12345678903", "cup": ["G29J24000000003"], "ruolo": "impresa esecutrice",
+    },
 ]
 
 
