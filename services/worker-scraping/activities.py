@@ -14,6 +14,19 @@ from temporalio import activity
 LLM_GATEWAY_URL = os.getenv("LLM_GATEWAY_URL", "http://llm-gateway:8080")
 SVI_PUBLISHER_URL = os.getenv("SVI_PUBLISHER_URL", "http://svi-publisher:8090")
 API_BASE = os.getenv("API_BASE", "http://api:8000")
+ENTITY_RESOLUTION_URL = os.getenv("ENTITY_RESOLUTION_URL", "http://entity-resolution:8070")
+
+
+@activity.defn
+async def resolve_entity(subject: dict) -> dict:
+    """Gate anti-omonimia: risolve il soggetto contro il registro (§8)."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(f"{ENTITY_RESOLUTION_URL}/resolve", json=subject)
+        resp.raise_for_status()
+        result = resp.json()
+    activity.logger.info("resolve_entity: status=%s method=%s conf=%.2f",
+                         result.get("status"), result.get("method"), result.get("confidence", 0.0))
+    return result
 
 
 @activity.defn

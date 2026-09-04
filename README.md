@@ -38,7 +38,8 @@ Console admin su http://localhost:5173 · API su http://localhost:8000/docs · T
 admin-console/          Console React (admin / configurazione / observability)
 services/
   api/                  Back-end FastAPI (edge, unico confine di fiducia)
-  worker-scraping/      Worker Temporal (scraping) — activity/workflow stub
+  worker-scraping/      Worker Temporal: pipeline di screening (gate ER incluso)
+  entity-resolution/    Gate anti-omonimia (normalizzazione, CF/P.IVA, matching)
   llm-gateway/          Gateway verso Azure AI Foundry (DefaultAzureCredential)
   svi-publisher/        Pubblicazione in SAS Visual Investigator (mock | live)
 docker-compose.dev.yml  Ambiente locale (Docker Desktop)

@@ -8,7 +8,7 @@ import { getScreening, startScreening, type Screening } from "../api";
 // avvia uno screening → workflow Temporal → pipeline → alert persistito.
 export default function ScreeningPage() {
   const [denominazione, setDenominazione] = useState("ACME Costruzioni S.r.l.");
-  const [cfPiva, setCfPiva] = useState("01234567890");
+  const [cfPiva, setCfPiva] = useState("00743110157");
   const [cup, setCup] = useState("E51B21000000001");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Screening | null>(null);

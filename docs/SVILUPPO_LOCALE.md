@@ -24,6 +24,7 @@ Servizi esposti:
 | admin-console (React) | http://localhost:5173 | config/observability |
 | api (FastAPI) | http://localhost:8000/docs | back-end edge |
 | llm-gateway | http://localhost:8080/healthz | verso Azure AI Foundry |
+| entity-resolution | http://localhost:8070/healthz | gate anti-omonimia (CF/P.IVA) |
 | svi-publisher | http://localhost:8090/healthz | `SVI_MODE=mock` in locale |
 | Temporal UI | http://localhost:8233 | orchestratore (dev server) |
 | MinIO console | http://localhost:9001 | object store (WARC) |
@@ -58,7 +59,8 @@ SVI/Viya **non gira** su Docker Desktop. Due modalità:
 admin-console/          Console React (admin/config/observability)
 services/
   api/                  Back-end FastAPI (edge, unico confine di fiducia)
-  worker-scraping/      Worker Temporal (scraping) — activity/workflow stub
+  worker-scraping/      Worker Temporal: pipeline di screening (gate ER incluso)
+  entity-resolution/    Gate anti-omonimia (normalizzazione, CF/P.IVA, matching)
   llm-gateway/          Gateway verso Azure AI Foundry (DefaultAzureCredential)
   svi-publisher/        Pubblicazione in SAS Visual Investigator (mock|live)
 docker-compose.dev.yml  Ambiente locale

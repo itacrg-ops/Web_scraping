@@ -53,6 +53,7 @@ class AlertCreate(BaseModel):
     drivers: list[str] = []
     disposition: str = "ESCALATION_I_LIVELLO"
     svi_alert_id: str | None = None
+    entity_resolution: dict | None = None
 
 
 class Alert(BaseModel):
@@ -69,4 +70,5 @@ class Alert(BaseModel):
     drivers: list[str] = []
     disposition: str
     svi_alert_id: str | None = None
+    entity_resolution: dict | None = None
     created_at: datetime

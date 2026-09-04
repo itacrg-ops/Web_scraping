@@ -9,6 +9,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -46,6 +47,11 @@ async def init_db() -> None:
         try:
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+                # Dev shim (finché non c'è Alembic): aggiunge colonne nuove a
+                # tabelle già esistenti, così non serve ricreare il volume DB.
+                await conn.execute(
+                    text("ALTER TABLE alerts ADD COLUMN IF NOT EXISTS entity_resolution JSONB")
+                )
             break
         except Exception as exc:  # noqa: BLE001 — attesa disponibilità DB in dev
             logger.warning("DB non pronto (%s): retry tra %ss", exc, delay)

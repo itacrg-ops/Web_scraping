@@ -15,6 +15,13 @@ export interface Source {
   attiva: boolean;
 }
 
+export interface EntityResolution {
+  status: string;
+  method: string;
+  confidence: number;
+  identifier_valid?: boolean;
+}
+
 export interface Alert {
   id: string;
   subject: string;
@@ -24,6 +31,7 @@ export interface Alert {
   risk_level: string;
   disposition: string;
   svi_alert_id?: string | null;
+  entity_resolution?: EntityResolution | null;
   created_at: string;
 }
 

@@ -1,8 +1,12 @@
-"""Workflow di screening (walking skeleton).
+"""Workflow di screening (walking skeleton) con gate di Entity Resolution.
 
-Orchestrazione durevole con Temporal: fetch → extract → classify FATF → AMI →
-pubblicazione SVI → persistenza. La pipeline reale (ricerca progressiva,
-Victim-Bystander, materialità CUP, ecc.) si costruisce estendendo questa.
+Orchestrazione durevole con Temporal:
+  Entity Resolution (gate) → [se superata] fetch → extract → classify FATF →
+  AMI → pubblicazione SVI → persistenza.
+Se il gate NON è superato (soggetto ambiguo/irrisolto), NON si produce alcun
+giudizio: si persiste un esito "da disambiguare" per la revisione umana
+(abstain by default). La pipeline reale (ricerca progressiva, Victim-Bystander,
+materialità CUP, ecc.) estende questa.
 """
 from __future__ import annotations
 
@@ -19,6 +23,7 @@ with workflow.unsafe.imports_passed_through():
         fetch_source,
         persist_alert,
         publish_svi,
+        resolve_entity,
     )
 
 _RETRY = RetryPolicy(maximum_attempts=3)
@@ -29,6 +34,43 @@ _TIMEOUT = timedelta(seconds=60)
 class ScreeningWorkflow:
     @workflow.run
     async def run(self, req: dict) -> dict:
+        subject = {
+            "denominazione": req["denominazione"],
+            "cf_piva": req.get("cf_piva"),
+            "cup": req.get("cup", []),
+        }
+
+        # --- GATE: Entity Resolution (obbligatoria prima del giudizio) ---
+        resolution = await workflow.execute_activity(
+            resolve_entity, subject, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
+        )
+
+        if not resolution.get("resolved"):
+            # Abstain by default: nessun giudizio, escalation alla disambiguazione umana.
+            held = {
+                "screening_id": req["screening_id"],
+                "subject": subject["denominazione"],
+                "cf_piva": subject["cf_piva"],
+                "cup": subject["cup"],
+                "ami_score": 0,
+                "risk_level": "N/D",
+                "fatf_categories": [],
+                "drivers": ["Entity Resolution non superata: richiede disambiguazione umana"],
+                "disposition": "HITL_ENTITY_RESOLUTION",
+                "svi_alert_id": None,
+                "entity_resolution": resolution,
+            }
+            alert_id = await workflow.execute_activity(
+                persist_alert, held, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
+            )
+            return {"alert_id": alert_id, "gate": resolution.get("status"), "resolved": False}
+
+        # Soggetto disambiguato: arricchisco con l'identità risolta.
+        matched = resolution.get("matched") or {}
+        if matched.get("cup"):
+            subject["cup"] = subject["cup"] or matched.get("cup", [])
+
+        # --- Pipeline di screening ---
         raw = await workflow.execute_activity(
             fetch_source, req["seed_url"], start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
         )
@@ -38,11 +80,6 @@ class ScreeningWorkflow:
         classification = await workflow.execute_activity(
             classify_fatf, doc["text"], start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
         )
-        subject = {
-            "denominazione": req["denominazione"],
-            "cf_piva": req.get("cf_piva"),
-            "cup": req.get("cup", []),
-        }
         ami = await workflow.execute_activity(
             compute_ami, args=[subject, classification],
             start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
@@ -63,9 +100,19 @@ class ScreeningWorkflow:
             publish_svi, alert_payload, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
         )
 
-        alert_create = {**alert_payload, "screening_id": req["screening_id"], "svi_alert_id": svi_alert_id}
+        alert_create = {
+            **alert_payload,
+            "screening_id": req["screening_id"],
+            "svi_alert_id": svi_alert_id,
+            "entity_resolution": resolution,
+        }
         alert_id = await workflow.execute_activity(
             persist_alert, alert_create, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
         )
 
-        return {"alert_id": alert_id, "svi_alert_id": svi_alert_id, "ami_score": ami["ami_score"]}
+        return {
+            "alert_id": alert_id,
+            "svi_alert_id": svi_alert_id,
+            "ami_score": ami["ami_score"],
+            "resolved": True,
+        }

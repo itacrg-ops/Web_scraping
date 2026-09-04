@@ -30,6 +30,7 @@ export default function Alerts() {
               <TableCell>CUP</TableCell>
               <TableCell align="right">AMI</TableCell>
               <TableCell>Rischio</TableCell>
+              <TableCell>Entity Resolution</TableCell>
               <TableCell>Disposizione</TableCell>
               <TableCell>SVI</TableCell>
             </TableRow>
@@ -44,6 +45,11 @@ export default function Alerts() {
                 <TableCell>
                   <Chip size="small" label={a.risk_level}
                     color={a.risk_level === "ALTO" ? "error" : "warning"} />
+                </TableCell>
+                <TableCell>
+                  {a.entity_resolution
+                    ? `${a.entity_resolution.method} (${a.entity_resolution.confidence.toFixed(2)})`
+                    : "—"}
                 </TableCell>
                 <TableCell>{a.disposition}</TableCell>
                 <TableCell>{a.svi_alert_id ?? "—"}</TableCell>

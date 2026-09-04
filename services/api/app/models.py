@@ -58,4 +58,5 @@ class Alert(Base):
     drivers: Mapped[list] = mapped_column(JSON, default=list)
     disposition: Mapped[str] = mapped_column(String)
     svi_alert_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    entity_resolution: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
