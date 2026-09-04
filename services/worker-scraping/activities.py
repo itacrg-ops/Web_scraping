@@ -92,23 +92,23 @@ async def extract_content(raw: dict) -> dict:
 
 @activity.defn
 async def classify_fatf(text: str) -> dict:
-    """Classificazione FATF. Chiama il llm-gateway (best-effort, output conservato
-    in `llm_raw`; parsing strutturato TODO) e categorizza intanto con un'euristica
-    a keyword sul testo realmente estratto — nessuna fabbricazione."""
-    llm_raw = None
+    """Classificazione FATF strutturata via llm-gateway (dual-LLM su Foundry:
+    categorie, ruolo processuale, Victim-Bystander, severità, confidence,
+    motivazione). Fallback onesto all'euristica a keyword se il gateway non è
+    configurato/raggiungibile."""
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(f"{LLM_GATEWAY_URL}/v1/classify", json={"text": text, "dual": True})
         if resp.status_code == 200:
-            llm_raw = resp.json()
-        else:
-            activity.logger.info("llm-gateway ha risposto %s: categorie via euristica", resp.status_code)
+            data = resp.json()
+            data.setdefault("method", "llm")
+            activity.logger.info("classify_fatf via LLM: %s (%s)", data.get("fatf_categories"), data.get("method"))
+            return data
+        activity.logger.info("llm-gateway %s: categorie via euristica", resp.status_code)
     except Exception as exc:  # noqa: BLE001
         activity.logger.info("llm-gateway non disponibile (%s): categorie via euristica", exc)
 
-    result = classifier.classify_text(text)
-    result["llm_raw"] = llm_raw
-    return result
+    return classifier.classify_text(text)
 
 
 @activity.defn
@@ -120,17 +120,31 @@ async def compute_ami(subject: dict, classification: dict) -> dict:
     """
     categories = classification.get("fatf_categories", [])
     ruolo = classification.get("ruolo_processuale")
-    has_signal = bool(categories)
-    ami = 82 if has_signal else 8
-    risk = "ALTO" if has_signal else "BASSO"
-    disposition = "ESCALATION_I_LIVELLO" if has_signal else "AUTO_CHIUSO"
-    if has_signal:
-        drivers = [f"Categorie FATF rilevate: {', '.join(categories)}"]
-        if ruolo:
-            drivers.append(f"Ruolo processuale: {ruolo}")
-        drivers.append("Materialità da valutare rispetto al CUP dell'intervento")
-    else:
-        drivers = ["Nessun segnale adverse-media rilevante (early-termination)"]
+    severity = classification.get("severity")
+    role_analysis = classification.get("role_analysis")
+    rationale = classification.get("rationale")
+
+    if not categories:
+        return {"ami_score": 8, "risk_level": "BASSO", "disposition": "AUTO_CHIUSO",
+                "drivers": ["Nessun segnale adverse-media rilevante (early-termination)"]}
+
+    ami = {"alta": 88, "media": 68, "bassa": 45}.get(severity, 78)
+    # Victim-Bystander Analysis: se il soggetto non è il perpetratore, l'AMI cala.
+    if role_analysis in ("vittima", "menzionato"):
+        ami = min(ami, 25)
+    risk = "ALTO" if ami >= 75 else "MEDIO" if ami >= 45 else "BASSO"
+    disposition = "ESCALATION_I_LIVELLO" if risk in ("ALTO", "MEDIO") else "AUTO_CHIUSO"
+
+    drivers = [f"Categorie FATF: {', '.join(categories)}"]
+    if ruolo:
+        drivers.append(f"Ruolo processuale: {ruolo}")
+    if role_analysis:
+        drivers.append(f"Ruolo del soggetto: {role_analysis}")
+    if classification.get("secondary_agreement") is False:
+        drivers.append("Disaccordo dual-LLM sulle categorie → revisione consigliata")
+    if rationale:
+        drivers.append(f"Motivazione: {rationale}")
+    drivers.append("Materialità da valutare rispetto al CUP dell'intervento")
     return {"ami_score": ami, "risk_level": risk, "disposition": disposition, "drivers": drivers}
 
 

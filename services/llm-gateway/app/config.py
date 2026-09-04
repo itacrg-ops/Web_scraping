@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     llm_max_rpm: int = 60
     llm_max_tpm: int = 60000
 
+    # Cap del testo inviato al modello (controllo token/costo).
+    max_input_chars: int = 8000
+
     # Redazione PII prima dell'invio all'LLM (default: attiva).
     pii_redaction: bool = True
 

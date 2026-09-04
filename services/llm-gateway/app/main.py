@@ -1,13 +1,20 @@
-"""Gateway LLM: punto unico di governo verso Azure AI Foundry (§10)."""
+"""Gateway LLM: punto unico di governo verso Azure AI Foundry (§10).
+
+Espone la classificazione FATF strutturata (dual-LLM) come JSON tipizzato.
+"""
 from __future__ import annotations
+
+import logging
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from app.config import settings
 from app import foundry
+from app.config import settings
 
-app = FastAPI(title="LLM Gateway — Azure AI Foundry", version="0.1.0")
+logger = logging.getLogger("llm-gateway")
+
+app = FastAPI(title="LLM Gateway — Azure AI Foundry", version="0.2.0")
 
 
 class ClassifyRequest(BaseModel):
@@ -16,21 +23,28 @@ class ClassifyRequest(BaseModel):
 
 
 class ClassifyResponse(BaseModel):
-    primary: str
-    secondary: str | None = None
+    fatf_categories: list[str] = []
+    ruolo_processuale: str | None = None
+    role_analysis: str | None = None
+    severity: str | None = None
+    confidence: float = 0.0
+    rationale: str | None = None
+    secondary_agreement: bool | None = None
+    method: str
+    models: dict
 
 
 @app.get("/healthz")
-def healthz() -> dict[str, str]:
-    # Health non dipende dalla credenziale: il servizio parte comunque.
+def healthz() -> dict:
     return {"status": "ok", "endpoint_configured": bool(settings.azure_foundry_endpoint)}
 
 
 @app.post("/v1/classify", response_model=ClassifyResponse)
-def classify(req: ClassifyRequest) -> ClassifyResponse:
+def classify(req: ClassifyRequest) -> dict:
     try:
-        primary = foundry.classify(req.text, secondary=False)
-        secondary = foundry.classify(req.text, secondary=True) if req.dual else None
-    except RuntimeError as exc:  # configurazione mancante / credenziale assente
+        return foundry.classify(req.text, dual=req.dual)
+    except RuntimeError as exc:  # configurazione/credenziale mancante
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return ClassifyResponse(primary=primary, secondary=secondary)
+    except Exception as exc:  # noqa: BLE001 — errore modello/parsing JSON
+        logger.warning("Classificazione fallita: %s", exc)
+        raise HTTPException(status_code=502, detail=f"classificazione non riuscita: {exc}") from exc

@@ -4,17 +4,19 @@ Usa `DefaultAzureCredential`, così lo *stesso codice* funziona:
   - in locale : service principal di sviluppo (variabili AZURE_*), endpoint pubblico;
   - in prod   : AKS Workload Identity (managed identity), Private Endpoint.
 
-Il client è creato *lazy* al primo utilizzo: il servizio parte comunque
-(health OK) anche senza credenziali configurate, e in tal caso `classify`
-restituisce un errore chiaro.
+Classificazione FATF **dual-LLM** con output **JSON strutturato** e riconciliazione.
+Il client è creato *lazy*: il servizio parte comunque (health OK) anche senza
+credenziali; in tal caso `classify` solleva un errore chiaro (→ 503).
 """
 from __future__ import annotations
 
+import json
 import logging
 from functools import lru_cache
 
 from openai import AzureOpenAI
 
+from app import fatf
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -27,7 +29,6 @@ def _client() -> AzureOpenAI:
             "AZURE_FOUNDRY_ENDPOINT non configurato: imposta l'endpoint Foundry "
             "e la credenziale (dev SP in locale, Workload Identity in prod)."
         )
-    # Import ritardato per non richiedere azure-identity al solo avvio/health.
     from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
     token_provider = get_bearer_token_provider(
@@ -40,38 +41,50 @@ def _client() -> AzureOpenAI:
     )
 
 
-def _redact(text: str) -> str:
-    """Placeholder di redazione PII prima dell'invio all'LLM (§8.7/§10.1).
-
-    TODO: sostituire con un redattore reale (CF, P.IVA, nomi, indirizzi).
-    """
-    if not settings.pii_redaction:
-        return text
-    return text  # no-op nello scaffold
-
-
-def classify(text: str, *, secondary: bool = False) -> str:
-    """Classificazione FATF dual-LLM (scaffold: ritorna il contenuto grezzo).
-
-    `secondary=True` instrada sul modello secondario (validazione incrociata).
-    """
-    model = settings.llm_model_secondary if secondary else settings.llm_model_primary
+def _classify_one(client: AzureOpenAI, model: str, text: str) -> dict:
     if not model:
         raise RuntimeError("Deployment LLM non configurato (LLM_MODEL_PRIMARY/SECONDARY).")
-
-    prompt = _redact(text)
-    resp = _client().chat.completions.create(
+    resp = client.chat.completions.create(
         model=model,
         messages=[
-            {
-                "role": "system",
-                "content": (
-                    "Sei un classificatore di adverse media secondo tassonomia FATF. "
-                    "Restituisci categorie, ruolo processuale e confidence in JSON."
-                ),
-            },
-            {"role": "user", "content": prompt},
+            {"role": "system", "content": fatf.SYSTEM_PROMPT},
+            {"role": "user", "content": text},
         ],
         temperature=0,
+        response_format={"type": "json_object"},
     )
-    return resp.choices[0].message.content or ""
+    content = resp.choices[0].message.content or "{}"
+    return fatf.normalize(json.loads(content))
+
+
+def classify(text: str, *, dual: bool = True) -> dict:
+    """Classifica il testo con il modello primario e (se dual) lo valida col
+    secondario, riconciliando le categorie e segnalando l'eventuale disaccordo."""
+    client = _client()
+    text = (text or "")[: settings.max_input_chars]
+
+    primary = _classify_one(client, settings.llm_model_primary, text)
+    out = dict(primary)
+    out["method"] = "llm_single"
+    out["secondary_agreement"] = None
+    out["models"] = {"primary": settings.llm_model_primary, "secondary": None}
+
+    if dual and settings.llm_model_secondary:
+        secondary = _classify_one(client, settings.llm_model_secondary, text)
+        pc, sc = set(primary["fatf_categories"]), set(secondary["fatf_categories"])
+        agreement = pc == sc
+        # Recall-oriented: in disaccordo si prende l'unione e si segnala (revisione umana).
+        out["fatf_categories"] = sorted(pc | sc)
+        out["confidence"] = round(
+            (primary["confidence"] + secondary["confidence"]) / 2 if agreement
+            else min(primary["confidence"], secondary["confidence"]),
+            3,
+        )
+        # severità: prendi la più alta tra i due
+        order = {"bassa": 0, "media": 1, "alta": 2}
+        out["severity"] = max(primary["severity"], secondary["severity"], key=lambda s: order.get(s, 0))
+        out["secondary_agreement"] = agreement
+        out["method"] = "llm_dual"
+        out["models"]["secondary"] = settings.llm_model_secondary
+
+    return out
