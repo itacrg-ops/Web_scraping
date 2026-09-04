@@ -34,6 +34,34 @@ async function getJSON<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+export interface ScreeningRequest {
+  denominazione: string;
+  cf_piva?: string;
+  cup: string[];
+  seed_url?: string;
+}
+
+export interface Screening {
+  id: string;
+  denominazione: string;
+  status: string;
+  alert_id?: string | null;
+  created_at: string;
+}
+
+async function postJSON<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return (await res.json()) as T;
+}
+
 export const listSources = () => getJSON<Source[]>("/api/sources");
 export const listAlerts = () => getJSON<Alert[]>("/api/alerts");
+export const startScreening = (body: ScreeningRequest) =>
+  postJSON<Screening>("/api/screening", body);
+export const getScreening = (id: string) => getJSON<Screening>(`/api/screening/${id}`);
 export { API_BASE };

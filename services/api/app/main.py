@@ -6,16 +6,27 @@ La SPA non accede mai direttamente a DB/coda/LLM/SAS.
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import alerts, health, sources
+from app.db import init_db
+from app.routers import alerts, health, screening, sources
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    yield
+
 
 app = FastAPI(
     title="Adverse Media Screening — API",
-    version="0.1.0",
+    version="0.2.0",
     summary="Back-end edge (config, observability, orchestrazione) — pilota MASE/FSC",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -28,6 +39,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(sources.router)
 app.include_router(alerts.router)
+app.include_router(screening.router)
 
 
 @app.get("/")

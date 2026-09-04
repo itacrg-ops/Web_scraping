@@ -1,7 +1,7 @@
-"""Entrypoint del worker Temporal per lo scraping.
+"""Entrypoint del worker Temporal per lo scraping/screening.
 
 Si connette a Temporal con retry (in dev il server può non essere ancora
-pronto) e registra workflow e activity sulla task queue "scraping".
+pronto) e registra il workflow e le activity sulla task queue "scraping".
 """
 from __future__ import annotations
 
@@ -12,7 +12,14 @@ import os
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from activities import extract_content, fetch_source
+from activities import (
+    classify_fatf,
+    compute_ami,
+    extract_content,
+    fetch_source,
+    persist_alert,
+    publish_svi,
+)
 from workflows import ScreeningWorkflow
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -40,7 +47,14 @@ async def main() -> None:
         client,
         task_queue=TASK_QUEUE,
         workflows=[ScreeningWorkflow],
-        activities=[fetch_source, extract_content],
+        activities=[
+            fetch_source,
+            extract_content,
+            classify_fatf,
+            compute_ami,
+            publish_svi,
+            persist_alert,
+        ],
     )
     await worker.run()
 

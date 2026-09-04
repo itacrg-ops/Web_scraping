@@ -4,9 +4,11 @@ import { useCurrentUser } from "./auth";
 import Sources from "./pages/Sources";
 import Alerts from "./pages/Alerts";
 import Observability from "./pages/Observability";
+import ScreeningPage from "./pages/Screening";
 
 const NAV = [
   { to: "/sources", label: "Fonti" },
+  { to: "/screening", label: "Screening" },
   { to: "/alerts", label: "Alert" },
   { to: "/observability", label: "Observability" },
 ];
@@ -31,6 +33,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/sources" replace />} />
           <Route path="/sources" element={<Sources />} />
+          <Route path="/screening" element={<ScreeningPage />} />
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/observability" element={<Observability />} />
         </Routes>

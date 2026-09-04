@@ -10,9 +10,12 @@ class Settings(BaseSettings):
     app_env: str = "development"
     log_level: str = "INFO"
 
-    # Store (opzionali in dev: gli endpoint di health non li richiedono)
-    database_url: str | None = None
+    # Store (default coerente col docker-compose.dev.yml)
+    database_url: str = "postgresql://ams:ams@postgres:5432/ams"
     redis_url: str | None = None
+
+    # Task queue Temporal su cui gira il worker di scraping
+    scraping_task_queue: str = "scraping"
 
     # Servizi interni
     llm_gateway_url: str = "http://llm-gateway:8080"
