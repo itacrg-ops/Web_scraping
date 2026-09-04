@@ -71,6 +71,27 @@ dominio è a placeholder (activity di scraping, classificazione FATF, AMI,
 persistenza su Postgres, mapping reale del Data Hub/Alerts SVI). I punti da
 completare sono marcati con `TODO` nel codice.
 
+## Troubleshooting
+
+**La console non riflette le modifiche al codice.**
+La `admin-console` in locale **non è un'immagine buildata**: gira come **Vite
+dev server** (`node:20-alpine`) con la sorgente montata come volume. Quindi
+`docker compose up --build` **non** la rigenera (ricostruisce solo i servizi
+Python). Se le modifiche non compaiono:
+1. Verifica di avere il codice aggiornato: `git log --oneline -1` nel repo.
+2. Ricrea il container della console:
+   ```bash
+   docker compose -f docker-compose.dev.yml up -d --force-recreate admin-console
+   ```
+3. **Hard refresh** del browser (Ctrl/Cmd+Shift+R).
+
+L'HMR su bind mount di Docker Desktop usa il **polling** (`vite.config.ts`,
+`server.watch.usePolling`): senza, le modifiche potrebbero non essere rilevate.
+
+**Il back-end mostra codice vecchio dopo un `git pull`.** I servizi Python sono
+immagini buildate: dopo un pull rigenera con `--build`
+(`docker compose -f docker-compose.dev.yml up --build`).
+
 ## Promozione in produzione
 Stesse immagini, su **Azure/AKS** via Helm (§11.1): store gestiti (Azure
 PostgreSQL, Cache for Redis, Blob WORM), identità keyless (Entra + Workload
