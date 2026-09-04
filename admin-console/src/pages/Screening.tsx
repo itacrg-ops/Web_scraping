@@ -10,6 +10,7 @@ export default function ScreeningPage() {
   const [denominazione, setDenominazione] = useState("ACME Costruzioni S.r.l.");
   const [cfPiva, setCfPiva] = useState("00743110157");
   const [cup, setCup] = useState("E51B21000000001");
+  const [seedUrl, setSeedUrl] = useState("https://example.com");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Screening | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -23,6 +24,7 @@ export default function ScreeningPage() {
         denominazione,
         cf_piva: cfPiva || undefined,
         cup: cup ? cup.split(",").map((c) => c.trim()) : [],
+        seed_url: seedUrl || undefined,
       });
       setResult(s);
       // Polling breve dello stato (il worker completa la pipeline in modo asincrono).
@@ -56,6 +58,9 @@ export default function ScreeningPage() {
             onChange={(e) => setCfPiva(e.target.value)} fullWidth />
           <TextField label="CUP (separati da virgola)" value={cup}
             onChange={(e) => setCup(e.target.value)} fullWidth />
+          <TextField label="URL sorgente (seed)" value={seedUrl}
+            onChange={(e) => setSeedUrl(e.target.value)} fullWidth
+            helperText="Fetch conforme (robots.txt). Per un alert ALTO usa un articolo con contenuti adverse che consenta lo scraping." />
           <Box>
             <Button variant="contained" onClick={submit} disabled={busy || !denominazione}>
               {busy ? "In corso…" : "Avvia screening"}

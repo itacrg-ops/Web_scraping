@@ -43,7 +43,7 @@ async def start_screening(
         "denominazione": req.denominazione,
         "cf_piva": req.cf_piva,
         "cup": req.cup,
-        "seed_url": req.seed_url or "https://esempio-testata.it/articolo",
+        "seed_url": req.seed_url or "https://example.com",
     }
     try:
         client = await get_client()

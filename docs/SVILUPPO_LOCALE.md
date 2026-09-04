@@ -68,10 +68,17 @@ docs/                   Documentazione tecnico-funzionale e di architettura
 ```
 
 ## Stato dello scaffold
-È uno **scheletro eseguibile**: i servizi partono e comunicano, ma la logica di
-dominio è a placeholder (activity di scraping, classificazione FATF, AMI,
-persistenza su Postgres, mapping reale del Data Hub/Alerts SVI). I punti da
-completare sono marcati con `TODO` nel codice.
+Scheletro **eseguibile e in crescita**. Già reali: persistenza su PostgreSQL,
+**Entity Resolution** (gate anti-omonimia con validazione CF/P.IVA), **fetch
+conforme** (robots.txt + crawl-delay, User-Agent identificabile, rate-limiting
+per dominio, snapshot **WARC** su object store con hash SHA-256 e provenance) ed
+estrazione con trafilatura. Placeholder / da completare (marcati `TODO`):
+classificazione FATF via LLM (oggi euristica a keyword sul testo estratto),
+AMI scoring governato in SAS Viya, mapping reale del Data Hub/Alerts SVI,
+headless browser per pagine dinamiche, Evidence come entità persistita.
+
+Gli snapshot delle pagine (HTML + WARC) sono su MinIO (console http://localhost:9001,
+bucket `adverse-media-snapshots`).
 
 ## Troubleshooting
 

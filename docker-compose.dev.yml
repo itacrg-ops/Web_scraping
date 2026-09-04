@@ -51,7 +51,7 @@ services:
       SVI_PUBLISHER_URL: "http://svi-publisher:8090"
       ENTITY_RESOLUTION_URL: "http://entity-resolution:8070"
       API_BASE: "http://api:8000"
-    depends_on: [temporal, redis, llm-gateway, svi-publisher, entity-resolution, api]
+    depends_on: [temporal, redis, minio, llm-gateway, svi-publisher, entity-resolution, api]
 
   # ---- Gateway LLM verso Azure AI Foundry (anche in locale) ----
   llm-gateway:
