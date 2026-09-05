@@ -10,6 +10,10 @@ import { listAlerts, type Alert } from "../api";
 const erColor = (s?: string): "success" | "warning" | "default" =>
   s === "resolved" ? "success" : s === "unresolved" ? "default" : "warning";
 
+// Persona fisica (PF) vs persona giuridica (PG): etichetta compatta col titolo esteso.
+const tipoLabel = (t?: string) => (t === "persona_fisica" ? "PF" : "PG");
+const tipoTitle = (t?: string) => (t === "persona_fisica" ? "persona fisica" : "persona giuridica");
+
 function ResolutionDetail({ a }: { a: Alert }) {
   const er = a.entity_resolution;
   if (!er) return null;
@@ -76,7 +80,14 @@ function AlertRow({ a }: { a: Alert }) {
             {open ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
           </IconButton>
         </TableCell>
-        <TableCell>{a.subject}</TableCell>
+        <TableCell>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+            <Chip size="small" variant="outlined" label={tipoLabel(a.tipo_soggetto)}
+              title={tipoTitle(a.tipo_soggetto)}
+              color={a.tipo_soggetto === "persona_fisica" ? "info" : "default"} />
+            {a.subject}
+          </Box>
+        </TableCell>
         <TableCell>{a.cf_piva ?? "—"}</TableCell>
         <TableCell>{a.cup.join(", ")}</TableCell>
         <TableCell align="right">{a.ami_score}</TableCell>

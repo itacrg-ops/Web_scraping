@@ -36,6 +36,7 @@ class Screening(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     denominazione: Mapped[str] = mapped_column(String)
+    tipo_soggetto: Mapped[str] = mapped_column(String, default="persona_giuridica")
     cf_piva: Mapped[str | None] = mapped_column(String, nullable=True)
     cup: Mapped[list] = mapped_column(JSON, default=list)
     seed_url: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -50,6 +51,7 @@ class Alert(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     screening_id: Mapped[str | None] = mapped_column(ForeignKey("screenings.id"), nullable=True)
     subject: Mapped[str] = mapped_column(String)
+    tipo_soggetto: Mapped[str] = mapped_column(String, default="persona_giuridica")
     cf_piva: Mapped[str | None] = mapped_column(String, nullable=True)
     cup: Mapped[list] = mapped_column(JSON, default=list)
     ami_score: Mapped[int] = mapped_column(Integer)

@@ -76,10 +76,12 @@ async def run_migrations() -> None:
 
     cfg = _alembic_config()
     if has_alerts and not has_alembic:
-        logger.info("DB preesistente: adozione con 'alembic stamp head'")
-        await asyncio.to_thread(command.stamp, cfg, "head")
-    else:
-        await asyncio.to_thread(command.upgrade, cfg, "head")
+        # DB creato in passato con create_all (schema = baseline 0001): lo
+        # "adotto" marcando 0001 come applicata, POI applico le migrazioni
+        # successive (0002, ...). Stampare "head" salterebbe le ALTER.
+        logger.info("DB preesistente (create_all): stamp baseline 0001 + upgrade head")
+        await asyncio.to_thread(command.stamp, cfg, "0001")
+    await asyncio.to_thread(command.upgrade, cfg, "head")
 
 
 async def init_db() -> None:

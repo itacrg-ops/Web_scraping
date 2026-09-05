@@ -49,6 +49,7 @@ export interface EvidenceItem {
 export interface Alert {
   id: string;
   subject: string;
+  tipo_soggetto?: string;
   cf_piva?: string | null;
   cup: string[];
   ami_score: number;
@@ -66,8 +67,14 @@ async function getJSON<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+export type TipoSoggetto = "persona_giuridica" | "persona_fisica";
+
 export interface ScreeningRequest {
-  denominazione: string;
+  tipo_soggetto?: TipoSoggetto;
+  denominazione?: string;
+  nome?: string;       // solo persona fisica
+  cognome?: string;    // solo persona fisica
+  data_nascita?: string; // ISO YYYY-MM-DD, disambiguante (persona fisica)
   cf_piva?: string;
   cup: string[];
   seed_url?: string;
@@ -76,6 +83,7 @@ export interface ScreeningRequest {
 export interface Screening {
   id: string;
   denominazione: string;
+  tipo_soggetto?: TipoSoggetto;
   status: string;
   alert_id?: string | null;
   created_at: string;

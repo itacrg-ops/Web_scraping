@@ -17,8 +17,13 @@ app = FastAPI(title="Entity Resolution", version="0.1.0")
 
 
 class SubjectIn(BaseModel):
-    denominazione: str
-    cf_piva: str | None = None
+    # tipo_soggetto: "persona_giuridica" (default) | "persona_fisica"
+    tipo_soggetto: str = "persona_giuridica"
+    denominazione: str | None = None      # denominazione (PG) o "Cognome Nome" (PF)
+    nome: str | None = None               # solo persona fisica
+    cognome: str | None = None            # solo persona fisica
+    data_nascita: str | None = None       # ISO YYYY-MM-DD, disambiguante (PF)
+    cf_piva: str | None = None            # CF 16 (PF) o CF/P.IVA 11 (PG)
     cup: list[str] = []
     sede: str | None = None
     alias: list[str] = []
@@ -26,9 +31,12 @@ class SubjectIn(BaseModel):
 
 class MatchOut(BaseModel):
     id: str
+    tipo: str | None = None
     denominazione: str
     cf_piva: str | None = None
     cup: list[str] = []
+    ruolo: str | None = None
+    data_nascita: str | None = None
     score: float | None = None
 
 

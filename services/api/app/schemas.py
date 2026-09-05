@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Source(BaseModel):
@@ -22,12 +22,34 @@ class Source(BaseModel):
 
 
 class ScreeningRequest(BaseModel):
-    """Richiesta di avvio screening (dalla console)."""
+    """Richiesta di avvio screening (dalla console).
 
-    denominazione: str
+    Supporta due tipi di soggetto:
+      - `persona_giuridica` (default): si indica la `denominazione`;
+      - `persona_fisica`: si indicano `nome` e `cognome` (e, per disambiguare
+        l'omonimia, il Codice Fiscale a 16 caratteri o la `data_nascita`).
+    Per la persona fisica la `denominazione` viene composta come "Cognome Nome".
+    """
+
+    tipo_soggetto: str = Field(default="persona_giuridica",
+                               description="persona_giuridica | persona_fisica")
+    denominazione: str | None = None
+    nome: str | None = None            # solo persona fisica
+    cognome: str | None = None         # solo persona fisica
+    data_nascita: str | None = None    # ISO YYYY-MM-DD, disambiguante (persona fisica)
     cf_piva: str | None = None
     cup: list[str] = []
     seed_url: str | None = None
+
+    @model_validator(mode="after")
+    def _compose_denominazione(self) -> "ScreeningRequest":
+        if self.tipo_soggetto == "persona_fisica" and not self.denominazione:
+            self.denominazione = " ".join(p for p in (self.cognome, self.nome) if p).strip()
+        if not (self.denominazione and self.denominazione.strip()):
+            raise ValueError(
+                "indicare la denominazione (persona giuridica) oppure nome e cognome (persona fisica)"
+            )
+        return self
 
 
 class ScreeningOut(BaseModel):
@@ -35,6 +57,7 @@ class ScreeningOut(BaseModel):
 
     id: str
     denominazione: str
+    tipo_soggetto: str = "persona_giuridica"
     status: str
     alert_id: str | None = None
     created_at: datetime
@@ -77,6 +100,7 @@ class AlertCreate(BaseModel):
 
     screening_id: str | None = None
     subject: str
+    tipo_soggetto: str = "persona_giuridica"
     cf_piva: str | None = None
     cup: list[str] = []
     ami_score: int
@@ -95,6 +119,7 @@ class Alert(BaseModel):
     id: str
     screening_id: str | None = None
     subject: str
+    tipo_soggetto: str = "persona_giuridica"
     cf_piva: str | None = None
     cup: list[str] = []
     ami_score: int

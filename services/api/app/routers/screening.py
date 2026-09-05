@@ -29,6 +29,7 @@ async def start_screening(
 ) -> ScreeningModel:
     screening = ScreeningModel(
         denominazione=req.denominazione,
+        tipo_soggetto=req.tipo_soggetto,
         cf_piva=req.cf_piva,
         cup=req.cup,
         seed_url=req.seed_url,
@@ -40,7 +41,11 @@ async def start_screening(
 
     payload = {
         "screening_id": screening.id,
+        "tipo_soggetto": req.tipo_soggetto,
         "denominazione": req.denominazione,
+        "nome": req.nome,
+        "cognome": req.cognome,
+        "data_nascita": req.data_nascita,
         "cf_piva": req.cf_piva,
         "cup": req.cup,
         "seed_url": req.seed_url or "https://example.com",

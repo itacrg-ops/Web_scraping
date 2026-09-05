@@ -24,7 +24,7 @@ Servizi esposti:
 | admin-console (React) | http://localhost:5173 | config/observability |
 | api (FastAPI) | http://localhost:8000/docs | back-end edge |
 | llm-gateway | http://localhost:8080/healthz | verso Azure AI Foundry |
-| entity-resolution | http://localhost:8070/healthz | gate anti-omonimia (CF/P.IVA) |
+| entity-resolution | http://localhost:8070/healthz | gate anti-omonimia (entità **e persone fisiche**) |
 | svi-publisher | http://localhost:8090/healthz | `SVI_MODE=mock` in locale |
 | Temporal UI | http://localhost:8233 | orchestratore (dev server) |
 | MinIO console | http://localhost:9001 | object store (WARC) |
@@ -43,6 +43,31 @@ e in produzione, cambia solo la sorgente della credenziale.
 
 Senza credenziali configurate i servizi partono comunque (gli `/healthz`
 rispondono); solo la classificazione LLM restituirà un 503 esplicito.
+
+## Provare lo screening — persona giuridica e persona fisica
+Dalla console (tab **Screening**) si sceglie il tipo di soggetto:
+
+- **Persona giuridica**: `denominazione` + eventuale `CF/P.IVA`. Il match forte è
+  la P.IVA (11 cifre) o il CF (11/16) in registro.
+- **Persona fisica** (ricerca per **nome e cognome**): `cognome` + `nome`, con
+  `Codice Fiscale` (16) o `data di nascita` per disambiguare l'**omonimia**.
+
+Regola anti-omonimia (gate §8): **solo un identificatore forte supera il gate**
+di default; il solo nome porta a `needs_review`/`ambiguous` (revisione umana),
+la data di nascita restringe i candidati ma non risolve da sola.
+
+Soggetti nel registro seed (`services/entity-resolution/app/resolver.py`) utili a provare i vari esiti:
+
+| Soggetto | Tipo | Identificatore | Esito atteso (senza/con identificatore) |
+|----------|------|----------------|------------------------------------------|
+| ACME Costruzioni S.r.l. | giuridica | P.IVA `00743110157` | nome-only → *ambiguous* (c'è anche "ACME … Generali"); con P.IVA → *resolved* |
+| Rossi Mario | fisica | CF `RSSMRA75C15H501P` (nato 1975-03-15) | nome-only → *ambiguous* (**omonimo**); con CF → *resolved* |
+| Rossi Mario | fisica | CF `RSSMRA80E20F205I` (nato 1980-05-20) | l'omonimo: la data di nascita `1975-03-15` riduce a 1 candidato → *needs_review* |
+| Bianchi Giulia | fisica | CF `BNCGLI82S43H501W` | nome-only → *needs_review*; con CF → *resolved* |
+
+> I CF del seed sono **fittizi ma formalmente validi** (checksum). In produzione
+> il registro proviene da ReGiS/OpenCoesione/InfoCamere (beneficiari/attuatori e
+> relativi UBO/RUP/rappresentanti).
 
 ## SAS Viya / SVI in locale
 SVI/Viya **non gira** su Docker Desktop. Due modalità:
@@ -69,7 +94,9 @@ docs/                   Documentazione tecnico-funzionale e di architettura
 
 ## Stato dello scaffold
 Scheletro **eseguibile e in crescita**. Già reali: persistenza su PostgreSQL,
-**Entity Resolution** (gate anti-omonimia con validazione CF/P.IVA), **fetch
+**Entity Resolution** (gate anti-omonimia con validazione CF/P.IVA, per **entità
+e persone fisiche** — ricerca per nome e cognome con disambiguazione per CF/data
+di nascita), **fetch
 conforme** (robots.txt + crawl-delay, User-Agent identificabile, rate-limiting
 per dominio, snapshot **WARC** su object store con hash SHA-256 e provenance) ed
 estrazione con trafilatura, **Evidence** persistita e ancorata all'alert, e

@@ -95,9 +95,29 @@ def valid_identifier(value: str | None) -> bool:
 
 
 def name_similarity(a: str, b: str) -> float:
-    """Similarità 0..1 su nomi normalizzati (token-sort + ratio)."""
+    """Similarità 0..1 su denominazioni (persone giuridiche): rimuove le forme
+    societarie e confronta con token-sort + ratio."""
     ta = " ".join(sorted(normalize_name(a).split()))
     tb = " ".join(sorted(normalize_name(b).split()))
+    if not ta or not tb:
+        return 0.0
+    return difflib.SequenceMatcher(None, ta, tb).ratio()
+
+
+def normalize_person_name(name: str) -> str:
+    """Normalizza nome+cognome di una persona fisica: translitterazione,
+    maiuscolo, rimozione punteggiatura. NON rimuove forme societarie (un
+    cognome potrebbe coincidere con un token come 'Sas'/'Coop')."""
+    s = _strip_accents((name or "").upper())
+    s = _NON_ALNUM.sub(" ", s)
+    return _SPACES.sub(" ", s).strip()
+
+
+def person_name_similarity(a: str, b: str) -> float:
+    """Similarità 0..1 su nomi di persona (token-sort: l'ordine
+    nome/cognome non conta)."""
+    ta = " ".join(sorted(normalize_person_name(a).split()))
+    tb = " ".join(sorted(normalize_person_name(b).split()))
     if not ta or not tb:
         return 0.0
     return difflib.SequenceMatcher(None, ta, tb).ratio()

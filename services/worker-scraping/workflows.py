@@ -36,7 +36,11 @@ class ScreeningWorkflow:
     @workflow.run
     async def run(self, req: dict) -> dict:
         subject = {
+            "tipo_soggetto": req.get("tipo_soggetto", "persona_giuridica"),
             "denominazione": req["denominazione"],
+            "nome": req.get("nome"),
+            "cognome": req.get("cognome"),
+            "data_nascita": req.get("data_nascita"),
             "cf_piva": req.get("cf_piva"),
             "cup": req.get("cup", []),
         }
@@ -51,6 +55,7 @@ class ScreeningWorkflow:
             held = {
                 "screening_id": req["screening_id"],
                 "subject": subject["denominazione"],
+                "tipo_soggetto": subject["tipo_soggetto"],
                 "cf_piva": subject["cf_piva"],
                 "cup": subject["cup"],
                 "ami_score": 0,
@@ -100,6 +105,7 @@ class ScreeningWorkflow:
 
         alert_payload = {
             "subject": subject["denominazione"],
+            "tipo_soggetto": subject["tipo_soggetto"],
             "cf_piva": subject["cf_piva"],
             "cup": subject["cup"],
             "ami_score": ami["ami_score"],
