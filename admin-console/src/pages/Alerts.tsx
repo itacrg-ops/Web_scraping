@@ -7,6 +7,30 @@ import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
 import { listAlerts, type Alert } from "../api";
 
+const erColor = (s?: string): "success" | "warning" | "default" =>
+  s === "resolved" ? "success" : s === "unresolved" ? "default" : "warning";
+
+function ResolutionDetail({ a }: { a: Alert }) {
+  const er = a.entity_resolution;
+  if (!er) return null;
+  return (
+    <Box sx={{ p: 2, pb: 1 }}>
+      <Typography variant="subtitle2" gutterBottom>Entity Resolution</Typography>
+      <Typography variant="body2">
+        stato: <strong>{er.status}</strong> · metodo: {er.method} · confidence: {er.confidence.toFixed(2)}
+        {er.identifier_valid !== undefined && <> · identificatore valido: {er.identifier_valid ? "sì" : "no"}</>}
+      </Typography>
+      {er.warnings && er.warnings.length > 0 && (
+        <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+          {er.warnings.map((w, i) => (
+            <li key={i}><Typography variant="caption" color="text.secondary">{w}</Typography></li>
+          ))}
+        </ul>
+      )}
+    </Box>
+  );
+}
+
 function EvidenceDetail({ a }: { a: Alert }) {
   const ev = a.evidence ?? [];
   if (ev.length === 0) {
@@ -61,9 +85,15 @@ function AlertRow({ a }: { a: Alert }) {
             color={a.risk_level === "ALTO" ? "error" : a.risk_level === "BASSO" ? "success" : "warning"} />
         </TableCell>
         <TableCell>
-          {a.entity_resolution
-            ? `${a.entity_resolution.method} (${a.entity_resolution.confidence.toFixed(2)})`
-            : "—"}
+          {a.entity_resolution ? (
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+              <Chip size="small" label={a.entity_resolution.status}
+                color={erColor(a.entity_resolution.status)} />
+              <Typography variant="caption" color="text.secondary">
+                {a.entity_resolution.method} ({a.entity_resolution.confidence.toFixed(2)})
+              </Typography>
+            </Box>
+          ) : "—"}
         </TableCell>
         <TableCell>{a.disposition}</TableCell>
         <TableCell align="right">{evCount}</TableCell>
@@ -72,6 +102,7 @@ function AlertRow({ a }: { a: Alert }) {
       <TableRow>
         <TableCell sx={{ py: 0 }} colSpan={10}>
           <Collapse in={open} timeout="auto" unmountOnExit>
+            <ResolutionDetail a={a} />
             <EvidenceDetail a={a} />
           </Collapse>
         </TableCell>

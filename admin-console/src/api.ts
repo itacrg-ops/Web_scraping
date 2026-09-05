@@ -20,6 +20,7 @@ export interface EntityResolution {
   method: string;
   confidence: number;
   identifier_valid?: boolean;
+  warnings?: string[];
 }
 
 export interface EvidenceItem {
