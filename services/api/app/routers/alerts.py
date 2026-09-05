@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.auth import require_internal, require_user
 from app.db import get_session
 from app.models import Alert as AlertModel
 from app.models import Evidence as EvidenceModel
@@ -21,7 +22,7 @@ from app.schemas import Alert, AlertCreate
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
 
-@router.get("", response_model=list[Alert])
+@router.get("", response_model=list[Alert], dependencies=[Depends(require_user)])
 async def list_alerts(session: AsyncSession = Depends(get_session)) -> list[AlertModel]:
     stmt = (
         select(AlertModel)
@@ -31,7 +32,7 @@ async def list_alerts(session: AsyncSession = Depends(get_session)) -> list[Aler
     return list((await session.execute(stmt)).scalars().all())
 
 
-@router.get("/{alert_id}", response_model=Alert)
+@router.get("/{alert_id}", response_model=Alert, dependencies=[Depends(require_user)])
 async def get_alert(alert_id: str, session: AsyncSession = Depends(get_session)) -> AlertModel:
     stmt = select(AlertModel).options(selectinload(AlertModel.evidence)).where(AlertModel.id == alert_id)
     row = (await session.execute(stmt)).scalar_one_or_none()
@@ -40,7 +41,7 @@ async def get_alert(alert_id: str, session: AsyncSession = Depends(get_session))
     return row
 
 
-@router.post("", response_model=Alert, status_code=201)
+@router.post("", response_model=Alert, status_code=201, dependencies=[Depends(require_internal)])
 async def create_alert(payload: AlertCreate, session: AsyncSession = Depends(get_session)) -> AlertModel:
     data = payload.model_dump()
     evidence_items = data.pop("evidence", [])

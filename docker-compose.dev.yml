@@ -15,6 +15,11 @@ services:
     command: sh -c "npm install && npm run dev -- --host"
     environment:
       VITE_API_BASE: "http://localhost:8000"
+      # Auth SPA: "disabled" in dev (default). "entra" attiva il login MSAL.
+      VITE_AUTH_MODE: "${VITE_AUTH_MODE:-disabled}"
+      VITE_ENTRA_CLIENT_ID: "${VITE_ENTRA_CLIENT_ID:-}"
+      VITE_ENTRA_TENANT_ID: "${VITE_ENTRA_TENANT_ID:-}"
+      VITE_ENTRA_API_SCOPE: "${VITE_ENTRA_API_SCOPE:-}"
     volumes:
       - ./admin-console:/app
       - /app/node_modules
@@ -29,6 +34,12 @@ services:
       DATABASE_URL: "postgresql://ams:ams@postgres:5432/ams"
       REDIS_URL: "redis://redis:6379/0"
       TEMPORAL_HOST: "temporal:7233"
+      # Auth: "disabled" in dev (default). Metti "entra" nel .env per validare i JWT MSAL.
+      AUTH_MODE: "${AUTH_MODE:-disabled}"
+      ENTRA_TENANT_ID: "${ENTRA_TENANT_ID:-}"
+      ENTRA_API_AUDIENCE: "${ENTRA_API_AUDIENCE:-}"
+      # Token di servizio worker->API (POST /api/alerts). Vuoto in dev = endpoint aperto.
+      INTERNAL_API_TOKEN: "${INTERNAL_API_TOKEN:-}"
     ports: ["8000:8000"]
     depends_on: [postgres, redis, temporal]
 
@@ -51,6 +62,8 @@ services:
       SVI_PUBLISHER_URL: "http://svi-publisher:8090"
       ENTITY_RESOLUTION_URL: "http://entity-resolution:8070"
       API_BASE: "http://api:8000"
+      # Deve combaciare con l'INTERNAL_API_TOKEN dell'api per superare il gate interno.
+      INTERNAL_API_TOKEN: "${INTERNAL_API_TOKEN:-}"
     depends_on: [temporal, redis, minio, llm-gateway, svi-publisher, entity-resolution, api]
 
   # ---- Gateway LLM verso Azure AI Foundry (anche in locale) ----

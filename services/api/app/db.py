@@ -1,15 +1,21 @@
-"""Persistenza: engine SQLAlchemy async + inizializzazione con retry + seed.
+"""Persistenza: engine async + migrazioni Alembic + seed.
 
-Postgres è il **sistema di record**. In dev le tabelle sono create con
-`create_all`; in produzione si passerà ad **Alembic** (migrazioni versionate).
+Postgres è il **sistema di record**. Lo schema è gestito con **Alembic**
+(`alembic/versions`). All'avvio:
+- DB nuovo → `alembic upgrade head` crea lo schema;
+- DB preesistente creato in passato con `create_all` (senza `alembic_version`)
+  → `alembic stamp head` lo adotta senza ricrearlo (transizione trasparente).
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 from collections.abc import AsyncIterator
+from pathlib import Path
 
-from sqlalchemy import text
+import sqlalchemy as sa
+from alembic import command
+from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -17,13 +23,14 @@ from app.config import settings
 
 logger = logging.getLogger("api.db")
 
+_APP_ROOT = Path(__file__).resolve().parent.parent  # /app
+
 
 class Base(DeclarativeBase):
     pass
 
 
 def _async_url(url: str) -> str:
-    # asyncpg richiede il driver esplicito nell'URL.
     if url.startswith("postgresql://"):
         return url.replace("postgresql://", "postgresql+asyncpg://", 1)
     return url
@@ -38,29 +45,45 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         yield session
 
 
-async def init_db() -> None:
-    """Crea le tabelle (con retry: Postgres può non essere ancora pronto) e semina le fonti."""
+def _alembic_config() -> Config:
+    cfg = Config(str(_APP_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(_APP_ROOT / "alembic"))
+    return cfg
+
+
+async def _db_state() -> tuple[bool, bool]:
+    async with engine.connect() as conn:
+        has_alembic = await conn.run_sync(lambda c: sa.inspect(c).has_table("alembic_version"))
+        has_alerts = await conn.run_sync(lambda c: sa.inspect(c).has_table("alerts"))
+    return has_alembic, has_alerts
+
+
+async def run_migrations() -> None:
     from app import models  # noqa: F401  (registra i modelli sul metadata)
 
     delay = 2
-    for attempt in range(6):
+    for _ in range(6):
         try:
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
-                # Dev shim (finché non c'è Alembic): aggiunge colonne nuove a
-                # tabelle già esistenti, così non serve ricreare il volume DB.
-                await conn.execute(
-                    text("ALTER TABLE alerts ADD COLUMN IF NOT EXISTS entity_resolution JSONB")
-                )
+            has_alembic, has_alerts = await _db_state()
             break
         except Exception as exc:  # noqa: BLE001 — attesa disponibilità DB in dev
             logger.warning("DB non pronto (%s): retry tra %ss", exc, delay)
             await asyncio.sleep(delay)
             delay = min(delay * 2, 30)
     else:
-        logger.error("Impossibile inizializzare il DB dopo i tentativi previsti")
+        logger.error("DB non raggiungibile: migrazioni saltate")
         return
 
+    cfg = _alembic_config()
+    if has_alerts and not has_alembic:
+        logger.info("DB preesistente: adozione con 'alembic stamp head'")
+        await asyncio.to_thread(command.stamp, cfg, "head")
+    else:
+        await asyncio.to_thread(command.upgrade, cfg, "head")
+
+
+async def init_db() -> None:
+    await run_migrations()
     await _seed_sources()
 
 

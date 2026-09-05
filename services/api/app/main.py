@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.auth import require_user
 from app.config import settings
 from app.db import init_db
 from app.routers import alerts, health, screening, sources
@@ -37,9 +38,9 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
-app.include_router(sources.router)
-app.include_router(alerts.router)
-app.include_router(screening.router)
+app.include_router(sources.router, dependencies=[Depends(require_user)])
+app.include_router(alerts.router)  # auth per-route (GET: utente, POST: interno)
+app.include_router(screening.router, dependencies=[Depends(require_user)])
 
 
 @app.get("/")

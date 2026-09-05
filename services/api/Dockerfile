@@ -10,6 +10,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY alembic.ini .
+COPY alembic ./alembic
 
 # utente non-root (12-factor / hardening PA)
 RUN useradd -r -u 10001 appuser

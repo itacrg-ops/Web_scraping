@@ -25,5 +25,14 @@ class Settings(BaseSettings):
     # CORS: origini ammesse per la console di amministrazione React
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
+    # Autenticazione: "disabled" (dev) | "entra" (valida i JWT Entra ID/MSAL).
+    auth_mode: str = "disabled"
+    entra_tenant_id: str = ""
+    entra_api_audience: str = ""   # audience atteso nei token (client id dell'app API o api://...)
+
+    # Token condiviso per le chiamate service-to-service (worker -> API /api/alerts).
+    # Vuoto in dev = endpoint interno aperto; valorizzalo per bloccarlo.
+    internal_api_token: str = ""
+
 
 settings = Settings()

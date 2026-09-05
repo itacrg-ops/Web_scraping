@@ -49,6 +49,13 @@ htmlcov/
 coverage.xml
 *.cover
 
+# === Node / front-end (console React) ===
+node_modules/
+admin-console/dist/
+.npm/
+npm-debug.log*
+.vite/
+
 # === Notebook ===
 .ipynb_checkpoints/
 

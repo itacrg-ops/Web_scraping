@@ -1,8 +1,19 @@
 // Client minimale verso l'API back-end (unico confine di fiducia).
 // La console non parla mai direttamente con DB/LLM/SAS.
 
+import { getToken } from "./auth";
+
 const API_BASE: string =
   (import.meta.env.VITE_API_BASE as string | undefined) ?? "http://localhost:8000";
+
+// Header comuni: aggiunge il Bearer token MSAL quando l'auth è attiva.
+// In dev `getToken()` ritorna null e l'header non viene aggiunto.
+async function authHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { ...(extra ?? {}) };
+  const token = await getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
 
 export interface Source {
   id: string;
@@ -50,8 +61,7 @@ export interface Alert {
 }
 
 async function getJSON<T>(path: string): Promise<T> {
-  // TODO: aggiungere Authorization: Bearer <token Entra ID/MSAL>.
-  const res = await fetch(`${API_BASE}${path}`);
+  const res = await fetch(`${API_BASE}${path}`, { headers: await authHeaders() });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return (await res.json()) as T;
 }
@@ -74,7 +84,7 @@ export interface Screening {
 async function postJSON<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);

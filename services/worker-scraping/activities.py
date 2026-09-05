@@ -23,6 +23,7 @@ LLM_GATEWAY_URL = os.getenv("LLM_GATEWAY_URL", "http://llm-gateway:8080")
 SVI_PUBLISHER_URL = os.getenv("SVI_PUBLISHER_URL", "http://svi-publisher:8090")
 API_BASE = os.getenv("API_BASE", "http://api:8000")
 ENTITY_RESOLUTION_URL = os.getenv("ENTITY_RESOLUTION_URL", "http://entity-resolution:8070")
+INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "")
 
 
 @activity.defn
@@ -169,8 +170,14 @@ async def publish_svi(alert_payload: dict) -> str:
 
 @activity.defn
 async def persist_alert(alert_create: dict) -> str:
-    """Persiste l'alert richiamando l'API (sistema di record)."""
+    """Persiste l'alert richiamando l'API (sistema di record).
+
+    L'endpoint `POST /api/alerts` è interno: se l'API richiede un token di
+    servizio (INTERNAL_API_TOKEN valorizzato), lo inviamo nell'header
+    `X-Internal-Token`. In dev il token è vuoto e l'endpoint è aperto.
+    """
+    headers = {"X-Internal-Token": INTERNAL_API_TOKEN} if INTERNAL_API_TOKEN else None
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(f"{API_BASE}/api/alerts", json=alert_create)
+        resp = await client.post(f"{API_BASE}/api/alerts", json=alert_create, headers=headers)
         resp.raise_for_status()
         return resp.json()["id"]
