@@ -40,8 +40,9 @@ services:
       ENTRA_API_AUDIENCE: "${ENTRA_API_AUDIENCE:-}"
       # Token di servizio worker->API (POST /api/alerts). Vuoto in dev = endpoint aperto.
       INTERNAL_API_TOKEN: "${INTERNAL_API_TOKEN:-}"
+      SEARCH_GATEWAY_URL: "http://search-gateway:8095"
     ports: ["8000:8000"]
-    depends_on: [postgres, redis, temporal]
+    depends_on: [postgres, redis, temporal, search-gateway]
 
   # ---- Orchestrazione durevole (dev server in-memory, single container) ----
   temporal:
@@ -61,10 +62,11 @@ services:
       LLM_GATEWAY_URL: "http://llm-gateway:8080"
       SVI_PUBLISHER_URL: "http://svi-publisher:8090"
       ENTITY_RESOLUTION_URL: "http://entity-resolution:8070"
+      SEARCH_GATEWAY_URL: "http://search-gateway:8095"
       API_BASE: "http://api:8000"
       # Deve combaciare con l'INTERNAL_API_TOKEN dell'api per superare il gate interno.
       INTERNAL_API_TOKEN: "${INTERNAL_API_TOKEN:-}"
-    depends_on: [temporal, redis, minio, llm-gateway, svi-publisher, entity-resolution, api]
+    depends_on: [temporal, redis, minio, llm-gateway, svi-publisher, entity-resolution, search-gateway, api]
 
   # ---- Gateway LLM verso Azure AI Foundry (anche in locale) ----
   llm-gateway:
@@ -77,6 +79,14 @@ services:
     build: ./services/entity-resolution
     env_file: .env
     ports: ["8070:8070"]
+
+  # ---- Search gateway (ricerca articoli adverse media) ----
+  search-gateway:
+    build: ./services/search-gateway
+    env_file: .env   # SEARCH_PROVIDER=mock (default) | gdelt (keyless)
+    environment:
+      SEARCH_PROVIDER: "${SEARCH_PROVIDER:-mock}"
+    ports: ["8095:8095"]
 
   # ---- Publisher verso SAS Visual Investigator (mock in locale) ----
   svi-publisher:

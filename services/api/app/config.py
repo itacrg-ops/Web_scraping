@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     # Servizi interni
     llm_gateway_url: str = "http://llm-gateway:8080"
     svi_publisher_url: str = "http://svi-publisher:8090"
+    search_gateway_url: str = "http://search-gateway:8095"
     temporal_host: str = "temporal:7233"
 
     # CORS: origini ammesse per la console di amministrazione React

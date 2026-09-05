@@ -39,7 +39,10 @@ class ScreeningRequest(BaseModel):
     data_nascita: str | None = None    # ISO YYYY-MM-DD, disambiguante (persona fisica)
     cf_piva: str | None = None
     cup: list[str] = []
-    seed_url: str | None = None
+    # Sorgenti da screenare (precedenza: seed_url → seed_urls → ricerca automatica):
+    seed_url: str | None = None         # URL singolo (override manuale)
+    seed_urls: list[str] = []           # articoli scelti in console (web search)
+    max_articles: int | None = None     # max articoli in modalità ricerca automatica
 
     @model_validator(mode="after")
     def _compose_denominazione(self) -> "ScreeningRequest":

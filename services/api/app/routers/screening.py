@@ -48,7 +48,11 @@ async def start_screening(
         "data_nascita": req.data_nascita,
         "cf_piva": req.cf_piva,
         "cup": req.cup,
-        "seed_url": req.seed_url or "https://example.com",
+        # Precedenza: seed_url (override) → seed_urls (candidati console) →
+        # ricerca automatica nel workflow (se entrambi vuoti).
+        "seed_url": req.seed_url or None,
+        "seed_urls": req.seed_urls,
+        "max_articles": req.max_articles,
     }
     try:
         client = await get_client()

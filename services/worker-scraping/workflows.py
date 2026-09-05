@@ -1,12 +1,15 @@
 """Workflow di screening (walking skeleton) con gate di Entity Resolution.
 
 Orchestrazione durevole con Temporal:
-  Entity Resolution (gate) → [se superata] fetch → extract → classify FATF →
-  AMI → pubblicazione SVI → persistenza.
-Se il gate NON è superato (soggetto ambiguo/irrisolto), NON si produce alcun
-giudizio: si persiste un esito "da disambiguare" per la revisione umana
-(abstain by default). La pipeline reale (ricerca progressiva, Victim-Bystander,
-materialità CUP, ecc.) estende questa.
+  Entity Resolution (gate) → [se superata] web search (o URL forniti) →
+  per ogni articolo: fetch → extract → verifica di menzione → classify FATF
+  (sul testo aggregato) → AMI → pubblicazione SVI → persistenza (un alert con
+  più evidenze).
+Gli URL da screenare si scelgono in quest'ordine: `seed_url` singolo (override
+manuale) → `seed_urls` (candidati scelti in console) → ricerca automatica via
+search-gateway. Se il gate NON è superato (soggetto ambiguo/irrisolto), NON si
+produce alcun giudizio: si persiste un esito "da disambiguare" per la revisione
+umana (abstain by default).
 """
 from __future__ import annotations
 
@@ -24,11 +27,15 @@ with workflow.unsafe.imports_passed_through():
         persist_alert,
         publish_svi,
         resolve_entity,
+        search_articles,
         verify_subject_mention,
     )
 
 _RETRY = RetryPolicy(maximum_attempts=3)
 _TIMEOUT = timedelta(seconds=60)
+
+_DEFAULT_MAX_ARTICLES = 3      # quanti articoli screenare al massimo in modalità auto
+_MAX_CLASSIFY_CHARS = 12000    # cap del testo aggregato inviato alla classificazione
 
 
 @workflow.defn
@@ -76,31 +83,67 @@ class ScreeningWorkflow:
         if matched.get("cup"):
             subject["cup"] = subject["cup"] or matched.get("cup", [])
 
-        # --- Pipeline di screening ---
-        raw = await workflow.execute_activity(
-            fetch_source, req["seed_url"], start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
-        )
-        doc = await workflow.execute_activity(
-            extract_content, raw, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
-        )
-        classification = await workflow.execute_activity(
-            classify_fatf, doc["text"], start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
-        )
+        # --- Selezione degli URL da screenare ---
+        # Precedenza: seed_url singolo (override) → seed_urls (candidati scelti in
+        # console) → ricerca automatica via search-gateway (web search).
+        max_articles = int(req.get("max_articles") or _DEFAULT_MAX_ARTICLES)
+        search_drivers: list[str] = []
+        if req.get("seed_url"):
+            urls = [req["seed_url"]]
+        elif req.get("seed_urls"):
+            urls = list(req["seed_urls"])[:max_articles]
+            search_drivers.append(f"Screening su {len(urls)} articoli selezionati in console")
+        else:
+            results = await workflow.execute_activity(
+                search_articles, args=[subject, {"mode": "targeted", "max_results": max_articles}],
+                start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
+            )
+            urls = [r["url"] for r in results if r.get("url")][:max_articles]
+            search_drivers.append(f"Web search: {len(urls)} articoli candidati analizzati")
+
+        # --- Fetch + estrazione + verifica di menzione per ciascun URL ---
+        docs: list[dict] = []
+        any_mention = False
+        for url in urls:
+            raw = await workflow.execute_activity(
+                fetch_source, url, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
+            )
+            doc = await workflow.execute_activity(
+                extract_content, raw, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
+            )
+            men = await workflow.execute_activity(
+                verify_subject_mention, args=[subject, doc.get("text", "")],
+                start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
+            )
+            doc["_mentioned"] = bool(men.get("mentioned"))
+            any_mention = any_mention or doc["_mentioned"]
+            docs.append(doc)
+
+        # Testo per la classificazione: preferisci gli articoli che citano il
+        # soggetto; se nessuno lo cita, usa tutti quelli con contenuto (con warning).
+        with_text = [d for d in docs if d.get("text")]
+        screening_docs = [d for d in with_text if d.get("_mentioned")] or with_text
+        combined = "\n\n".join(d["text"] for d in screening_docs)[:_MAX_CLASSIFY_CHARS]
+
+        if combined:
+            classification = await workflow.execute_activity(
+                classify_fatf, combined, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
+            )
+        else:
+            classification = {"fatf_categories": [], "method": "nessun_contenuto"}
+
         ami = await workflow.execute_activity(
             compute_ami, args=[subject, classification],
             start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
         )
 
-        # Verifica di menzione (non bloccante): il soggetto è citato nell'evidenza?
-        mention_res = await workflow.execute_activity(
-            verify_subject_mention, args=[subject, doc.get("text", "")],
-            start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
-        )
-        drivers = list(ami["drivers"])
-        if not mention_res.get("mentioned"):
+        drivers = search_drivers + list(ami["drivers"])
+        if not urls:
+            drivers.insert(0, "Nessun articolo trovato dalla ricerca (web search)")
+        elif not any_mention:
             drivers.insert(
                 0,
-                "⚠ Soggetto non citato nell'evidenza raccolta: verificare attribuzione (possibile falsa attribuzione)",
+                "⚠ Soggetto non citato negli articoli analizzati: verificare attribuzione (possibile falsa attribuzione)",
             )
 
         alert_payload = {
@@ -119,16 +162,19 @@ class ScreeningWorkflow:
             publish_svi, alert_payload, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
         )
 
-        # Evidenza ancorata all'alert (URL, snippet, hash, timestamp, WARC).
-        prov = doc.get("provenance") or {}
-        text = doc.get("text") or ""
+        # Evidenze ancorate all'alert (una per articolo effettivamente recuperato
+        # e con hash: URL, snippet, hash, timestamp, WARC).
         evidence = []
-        if prov.get("content_hash"):
+        for d in docs:
+            prov = d.get("provenance") or {}
+            if not prov.get("content_hash"):
+                continue
+            text = d.get("text") or ""
             evidence.append({
-                "url": doc.get("source"),
-                "testata": doc.get("testata"),
-                "title": doc.get("title"),
-                "data": doc.get("date"),
+                "url": d.get("source"),
+                "testata": d.get("testata"),
+                "title": d.get("title"),
+                "data": d.get("date"),
                 "snippet": text[:300],
                 "content_hash": prov.get("content_hash"),
                 "fetch_ts": prov.get("fetch_ts"),
@@ -153,5 +199,6 @@ class ScreeningWorkflow:
             "alert_id": alert_id,
             "svi_alert_id": svi_alert_id,
             "ami_score": ami["ami_score"],
+            "articles": len(docs),
             "resolved": True,
         }

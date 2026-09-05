@@ -77,7 +77,38 @@ export interface ScreeningRequest {
   data_nascita?: string; // ISO YYYY-MM-DD, disambiguante (persona fisica)
   cf_piva?: string;
   cup: string[];
-  seed_url?: string;
+  seed_url?: string;       // URL singolo (override manuale)
+  seed_urls?: string[];    // articoli scelti dalla web search
+  max_articles?: number;   // max articoli in ricerca automatica
+}
+
+export interface SearchResult {
+  url: string;
+  title?: string | null;
+  snippet?: string | null;
+  testata?: string | null;
+  data?: string | null;
+  language?: string | null;
+  provider: string;
+  score?: number | null;
+}
+
+export interface SearchResponse {
+  provider: string;
+  query: string;
+  mode: string;
+  count: number;
+  results: SearchResult[];
+}
+
+export interface SearchPreviewRequest {
+  tipo_soggetto: TipoSoggetto;
+  denominazione?: string;
+  nome?: string;
+  cognome?: string;
+  cf_piva?: string;
+  mode?: "broad" | "targeted";
+  max_results?: number;
 }
 
 export interface Screening {
@@ -104,4 +135,6 @@ export const listAlerts = () => getJSON<Alert[]>("/api/alerts");
 export const startScreening = (body: ScreeningRequest) =>
   postJSON<Screening>("/api/screening", body);
 export const getScreening = (id: string) => getJSON<Screening>(`/api/screening/${id}`);
+export const searchPreview = (body: SearchPreviewRequest) =>
+  postJSON<SearchResponse>("/api/search/preview", body);
 export { API_BASE };

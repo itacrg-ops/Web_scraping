@@ -23,7 +23,34 @@ LLM_GATEWAY_URL = os.getenv("LLM_GATEWAY_URL", "http://llm-gateway:8080")
 SVI_PUBLISHER_URL = os.getenv("SVI_PUBLISHER_URL", "http://svi-publisher:8090")
 API_BASE = os.getenv("API_BASE", "http://api:8000")
 ENTITY_RESOLUTION_URL = os.getenv("ENTITY_RESOLUTION_URL", "http://entity-resolution:8070")
+SEARCH_GATEWAY_URL = os.getenv("SEARCH_GATEWAY_URL", "http://search-gateway:8095")
 INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "")
+
+
+@activity.defn
+async def search_articles(subject: dict, options: dict | None = None) -> list[dict]:
+    """Ricerca articoli adverse-media per il soggetto via search-gateway
+    (provider mock in locale, GDELT keyless in pilota). Non fatale: su
+    errore/assenza ritorna lista vuota (la pipeline lo gestisce)."""
+    options = options or {}
+    payload = {
+        "subject": {k: subject.get(k) for k in
+                    ("tipo_soggetto", "denominazione", "nome", "cognome", "cf_piva")},
+        "mode": options.get("mode", "targeted"),
+        "max_results": options.get("max_results"),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"{SEARCH_GATEWAY_URL}/v1/search", json=payload)
+        if resp.status_code == 200:
+            data = resp.json()
+            activity.logger.info("search_articles: provider=%s count=%s query=%s",
+                                 data.get("provider"), data.get("count"), data.get("query"))
+            return data.get("results", [])
+        activity.logger.warning("search-gateway %s", resp.status_code)
+    except Exception as exc:  # noqa: BLE001 — ricerca non disponibile, non fatale
+        activity.logger.warning("search-gateway non disponibile (%s)", exc)
+    return []
 
 
 @activity.defn

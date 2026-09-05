@@ -1,44 +1,79 @@
 import { useState } from "react";
 import {
-  Alert as MuiAlert, Box, Button, Paper, Stack, TextField,
-  ToggleButton, ToggleButtonGroup, Typography,
+  Alert as MuiAlert, Box, Button, Checkbox, Chip, CircularProgress, Divider,
+  Link, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Paper, Stack,
+  TextField, ToggleButton, ToggleButtonGroup, Typography,
 } from "@mui/material";
+import SearchIcon from "@mui/icons-material/Search";
 import {
-  getScreening, startScreening, type Screening, type TipoSoggetto,
+  getScreening, searchPreview, startScreening,
+  type Screening, type SearchResult, type TipoSoggetto,
 } from "../api";
 
-// Pagina di prova del walking skeleton end-to-end:
-// avvia uno screening → workflow Temporal → pipeline → alert persistito.
-// Supporta due tipi di soggetto: persona giuridica (denominazione) e
-// persona fisica (nome + cognome, con CF/data di nascita per l'anti-omonimia).
+// Prova end-to-end: soggetto → (web search o URL) → workflow Temporal →
+// Entity Resolution → fetch/estrazione/menzione per articolo → FATF → AMI →
+// SVI (mock) → alert persistito. Due tipi di soggetto: giuridica / fisica.
 export default function ScreeningPage() {
   const [tipo, setTipo] = useState<TipoSoggetto>("persona_giuridica");
-  // Persona giuridica
   const [denominazione, setDenominazione] = useState("ACME Costruzioni S.r.l.");
-  // Persona fisica
   const [cognome, setCognome] = useState("Rossi");
   const [nome, setNome] = useState("Mario");
   const [dataNascita, setDataNascita] = useState("");
-  // Comuni
   const [cfPiva, setCfPiva] = useState("00743110157");
   const [cup, setCup] = useState("E51B21000000001");
-  const [seedUrl, setSeedUrl] = useState("https://example.com");
+  const [seedUrl, setSeedUrl] = useState("");
+
+  // Web search
+  const [searching, setSearching] = useState(false);
+  const [results, setResults] = useState<SearchResult[] | null>(null);
+  const [provider, setProvider] = useState<string>("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Screening | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const isPerson = tipo === "persona_fisica";
-  const canSubmit = isPerson ? Boolean(cognome && nome) : Boolean(denominazione);
+  const hasSubject = isPerson ? Boolean(cognome && nome) : Boolean(denominazione);
 
   function onTipoChange(_: unknown, value: TipoSoggetto | null) {
     if (!value) return;
     setTipo(value);
-    // Preset coerenti col registro seed (match deterministico via CF/P.IVA).
-    if (value === "persona_fisica") {
-      setCfPiva("RSSMRA75C15H501P");
-    } else {
-      setCfPiva("00743110157");
+    setResults(null);
+    setSelected(new Set());
+    setCfPiva(value === "persona_fisica" ? "RSSMRA75C15H501P" : "00743110157");
+  }
+
+  const subjectFields = () => ({
+    tipo_soggetto: tipo,
+    denominazione: isPerson ? undefined : denominazione,
+    nome: isPerson ? nome : undefined,
+    cognome: isPerson ? cognome : undefined,
+    cf_piva: cfPiva || undefined,
+  });
+
+  async function search() {
+    setSearching(true);
+    setError(null);
+    setResults(null);
+    setSelected(new Set());
+    try {
+      const r = await searchPreview({ ...subjectFields(), mode: "targeted" });
+      setProvider(r.provider);
+      setResults(r.results);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSearching(false);
     }
+  }
+
+  function toggle(url: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(url) ? next.delete(url) : next.add(url);
+      return next;
+    });
   }
 
   async function submit() {
@@ -46,19 +81,17 @@ export default function ScreeningPage() {
     setError(null);
     setResult(null);
     try {
+      const urls = Array.from(selected);
       const s = await startScreening({
-        tipo_soggetto: tipo,
-        denominazione: isPerson ? undefined : denominazione,
-        nome: isPerson ? nome : undefined,
-        cognome: isPerson ? cognome : undefined,
+        ...subjectFields(),
         data_nascita: isPerson && dataNascita ? dataNascita : undefined,
-        cf_piva: cfPiva || undefined,
         cup: cup ? cup.split(",").map((c) => c.trim()) : [],
-        seed_url: seedUrl || undefined,
+        // Precedenza: selezionati (web search) → URL singolo → ricerca automatica.
+        seed_urls: urls.length > 0 ? urls : undefined,
+        seed_url: urls.length === 0 && seedUrl ? seedUrl : undefined,
       });
       setResult(s);
-      // Polling breve dello stato (il worker completa la pipeline in modo asincrono).
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < 12; i++) {
         await new Promise((r) => setTimeout(r, 1000));
         const cur = await getScreening(s.id);
         setResult(cur);
@@ -71,16 +104,24 @@ export default function ScreeningPage() {
     }
   }
 
+  const submitLabel = busy
+    ? "In corso…"
+    : selected.size > 0
+    ? `Avvia screening (${selected.size} selezionati)`
+    : seedUrl
+    ? "Avvia screening (URL singolo)"
+    : "Avvia screening (ricerca automatica)";
+
   return (
     <div>
       <Typography variant="h5" gutterBottom>Nuovo screening (prova end-to-end)</Typography>
       <Typography variant="body2" color="text.secondary" gutterBottom>
-        Avvia il workflow Temporal: Entity Resolution (anti-omonimia) → fetch →
-        estrazione → classificazione FATF (Foundry) → AMI → pubblicazione in SVI
-        (mock) → alert persistito. L'esito appare nella pagina <strong>Alert</strong>.
+        Indica il soggetto, poi <strong>cerca gli articoli sul web</strong> e seleziona quelli da
+        analizzare — oppure lascia fare la ricerca automatica al workflow. L'esito appare nella
+        pagina <strong>Alert</strong>.
       </Typography>
 
-      <Paper sx={{ p: 3, mt: 2, maxWidth: 560 }}>
+      <Paper sx={{ p: 3, mt: 2, maxWidth: 720 }}>
         <Stack spacing={2}>
           <ToggleButtonGroup
             exclusive size="small" color="primary"
@@ -91,36 +132,109 @@ export default function ScreeningPage() {
           </ToggleButtonGroup>
 
           {isPerson ? (
-            <>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
               <TextField label="Cognome" value={cognome}
                 onChange={(e) => setCognome(e.target.value)} fullWidth required />
               <TextField label="Nome" value={nome}
                 onChange={(e) => setNome(e.target.value)} fullWidth required />
-              <TextField label="Codice Fiscale (16)" value={cfPiva}
-                onChange={(e) => setCfPiva(e.target.value)} fullWidth
-                helperText="Identificatore forte: consente il match deterministico ed evita l'omonimia." />
+            </Stack>
+          ) : (
+            <TextField label="Denominazione" value={denominazione}
+              onChange={(e) => setDenominazione(e.target.value)} fullWidth required />
+          )}
+
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+            <TextField label={isPerson ? "Codice Fiscale (16)" : "CF / P.IVA"} value={cfPiva}
+              onChange={(e) => setCfPiva(e.target.value)} fullWidth
+              helperText={isPerson ? "Identificatore forte (anti-omonimia)." : undefined} />
+            {isPerson && (
               <TextField label="Data di nascita" type="date" value={dataNascita}
                 onChange={(e) => setDataNascita(e.target.value)} fullWidth
                 InputLabelProps={{ shrink: true }}
-                helperText="Facoltativa: disambigua i casi di omonimia quando manca il CF." />
-            </>
-          ) : (
-            <>
-              <TextField label="Denominazione" value={denominazione}
-                onChange={(e) => setDenominazione(e.target.value)} fullWidth required />
-              <TextField label="CF / P.IVA" value={cfPiva}
-                onChange={(e) => setCfPiva(e.target.value)} fullWidth />
-            </>
-          )}
+                helperText="Facoltativa: disambigua l'omonimia." />
+            )}
+          </Stack>
 
           <TextField label="CUP (separati da virgola)" value={cup}
             onChange={(e) => setCup(e.target.value)} fullWidth />
-          <TextField label="URL sorgente (seed)" value={seedUrl}
-            onChange={(e) => setSeedUrl(e.target.value)} fullWidth
-            helperText="Fetch conforme (robots.txt). Per un alert ALTO usa un articolo con contenuti adverse che consenta lo scraping." />
+
+          <Divider textAlign="left">
+            <Typography variant="overline" color="text.secondary">Ricerca articoli (web search)</Typography>
+          </Divider>
+
           <Box>
-            <Button variant="contained" onClick={submit} disabled={busy || !canSubmit}>
-              {busy ? "In corso…" : "Avvia screening"}
+            <Button variant="outlined" startIcon={<SearchIcon />} onClick={search}
+              disabled={searching || !hasSubject}>
+              {searching ? "Ricerca…" : "Cerca articoli"}
+            </Button>
+          </Box>
+
+          {results && (
+            <Paper variant="outlined" sx={{ p: 0 }}>
+              <Box sx={{ px: 2, py: 1, display: "flex", alignItems: "center", gap: 1 }}>
+                <Typography variant="body2" color="text.secondary">
+                  {results.length} risultati
+                </Typography>
+                <Chip size="small" label={`provider: ${provider}`} />
+                {results.length > 0 && (
+                  <Button size="small" onClick={() =>
+                    setSelected(selected.size === results.length
+                      ? new Set()
+                      : new Set(results.map((r) => r.url)))}>
+                    {selected.size === results.length ? "Deseleziona tutti" : "Seleziona tutti"}
+                  </Button>
+                )}
+              </Box>
+              <Divider />
+              {results.length === 0 ? (
+                <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
+                  Nessun articolo trovato. Con il provider <code>mock</code> i risultati sono di
+                  esempio; per risultati reali imposta <code>SEARCH_PROVIDER=gdelt</code>.
+                </Typography>
+              ) : (
+                <List dense sx={{ maxHeight: 320, overflow: "auto" }}>
+                  {results.map((r) => (
+                    <ListItem key={r.url} disablePadding>
+                      <ListItemButton onClick={() => toggle(r.url)} dense>
+                        <ListItemIcon sx={{ minWidth: 36 }}>
+                          <Checkbox edge="start" size="small" tabIndex={-1} disableRipple
+                            checked={selected.has(r.url)} />
+                        </ListItemIcon>
+                        <ListItemText
+                          primary={r.title || r.url}
+                          secondary={
+                            <>
+                              <Typography variant="caption" color="text.secondary">
+                                {[r.testata, r.data].filter(Boolean).join(" · ")}
+                              </Typography>
+                              {r.snippet && (
+                                <Typography variant="caption" display="block" color="text.secondary"
+                                  sx={{ fontStyle: "italic" }}>
+                                  “{r.snippet}”
+                                </Typography>
+                              )}
+                              <Link href={r.url} target="_blank" rel="noreferrer"
+                                variant="caption" onClick={(e) => e.stopPropagation()}>
+                                {r.url}
+                              </Link>
+                            </>
+                          }
+                        />
+                      </ListItemButton>
+                    </ListItem>
+                  ))}
+                </List>
+              )}
+            </Paper>
+          )}
+
+          <TextField label="URL singolo (override manuale, opzionale)" value={seedUrl}
+            onChange={(e) => setSeedUrl(e.target.value)} fullWidth
+            helperText="Se valorizzato e senza selezioni, screena solo questo URL (fetch conforme robots.txt)." />
+
+          <Box>
+            <Button variant="contained" onClick={submit} disabled={busy || !hasSubject}>
+              {busy ? <><CircularProgress size={16} sx={{ mr: 1 }} />In corso…</> : submitLabel}
             </Button>
           </Box>
         </Stack>

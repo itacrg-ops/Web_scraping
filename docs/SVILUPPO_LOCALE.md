@@ -25,6 +25,7 @@ Servizi esposti:
 | api (FastAPI) | http://localhost:8000/docs | back-end edge |
 | llm-gateway | http://localhost:8080/healthz | verso Azure AI Foundry |
 | entity-resolution | http://localhost:8070/healthz | gate anti-omonimia (entità **e persone fisiche**) |
+| search-gateway | http://localhost:8095/healthz | ricerca articoli (`mock` default, `gdelt` keyless) |
 | svi-publisher | http://localhost:8090/healthz | `SVI_MODE=mock` in locale |
 | Temporal UI | http://localhost:8233 | orchestratore (dev server) |
 | MinIO console | http://localhost:9001 | object store (WARC) |
@@ -84,6 +85,32 @@ con P.IVA `00743110157` → `resolved`.
 > il registro proviene da ReGiS/OpenCoesione/InfoCamere (beneficiari/attuatori e
 > relativi UBO/RUP/rappresentanti).
 
+### Ricerca articoli (web search)
+Dopo aver indicato il soggetto, il pulsante **Cerca articoli** interroga il
+`search-gateway` e mostra i candidati (titolo, testata, data, snippet). Da lì:
+
+- **selezioni** uno o più articoli → screening solo su quelli (`seed_urls`);
+- **URL singolo** nel campo override → screening solo di quell'URL (`seed_url`);
+- **nessuna selezione né URL** → il workflow fa la **ricerca automatica** e
+  screena i primi N (default 3, `max_articles`).
+
+In tutti i casi la pipeline verifica la **menzione** del soggetto in ogni
+articolo e produce **un alert con più evidenze** (una per articolo recuperato e
+con hash). La query di ricerca è nome/denominazione + termini avversi FATF
+(indagato, corruzione, sequestro, …).
+
+Provider (`SEARCH_PROVIDER` nel `.env`):
+- **`mock`** (default): risultati di esempio, nessuna rete — utile per l'anteprima
+  e il wiring. Gli URL puntano a `example.com` (il fetch reale darà poco segnale).
+- **`gdelt`** (keyless): news reale globale, adatta al pilota. Nessuna API key.
+  ```bash
+  SEARCH_PROVIDER=gdelt docker compose -f docker-compose.dev.yml up -d --build search-gateway
+  ```
+  Filtri: `SEARCH_DEFAULT_LANG` (lingua GDELT, es. `italian`) e `SEARCH_TIMESPAN`
+  (es. `24h`, `1w`, `3m`, `6m`). Altri provider (Bing/Brave/SerpAPI/Google CSE via
+  API key, o feed licenziati Dow Jones/Factiva) si innestano su
+  `services/search-gateway/app/providers.py`.
+
 ## SAS Viya / SVI in locale
 SVI/Viya **non gira** su Docker Desktop. Due modalità:
 - **Mock (default)**: `SVI_MODE=mock` — `svi-publisher` logga gli alert senza
@@ -109,6 +136,8 @@ docs/                   Documentazione tecnico-funzionale e di architettura
 
 ## Stato dello scaffold
 Scheletro **eseguibile e in crescita**. Già reali: persistenza su PostgreSQL,
+**web search** degli articoli adverse-media (`search-gateway`: mock in locale,
+GDELT keyless nel pilota; screening auto dei top-N o su articoli scelti),
 **Entity Resolution** (gate anti-omonimia con validazione CF/P.IVA, per **entità
 e persone fisiche** — ricerca per nome e cognome con disambiguazione per CF/data
 di nascita), **fetch

@@ -20,6 +20,7 @@ from activities import (
     persist_alert,
     publish_svi,
     resolve_entity,
+    search_articles,
     verify_subject_mention,
 )
 from workflows import ScreeningWorkflow
@@ -50,6 +51,7 @@ async def main() -> None:
         task_queue=TASK_QUEUE,
         workflows=[ScreeningWorkflow],
         activities=[
+            search_articles,
             resolve_entity,
             fetch_source,
             extract_content,
