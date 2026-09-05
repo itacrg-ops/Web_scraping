@@ -28,10 +28,13 @@ class Settings(BaseSettings):
     # Redazione PII prima dell'invio all'LLM (default: attiva).
     pii_redaction: bool = True
 
-    # Auth: DefaultAzureCredential.
-    #  - locale : service principal di sviluppo via AZURE_TENANT_ID/CLIENT_ID/CLIENT_SECRET
-    #  - prod   : AKS Workload Identity (nessuna chiave statica)
-    # La scope OAuth per Azure OpenAI/Cognitive Services:
+    # Autenticazione. Due modalità (la API key ha la precedenza se valorizzata):
+    #  A) API key: imposta AZURE_OPENAI_API_KEY (endpoint + key).
+    #  B) Keyless (Entra) via DefaultAzureCredential:
+    #     - locale : service principal di sviluppo (AZURE_TENANT_ID/CLIENT_ID/CLIENT_SECRET)
+    #     - prod   : AKS Workload Identity (nessuna chiave statica)
+    azure_api_key: str = ""
+    # Scope OAuth per Azure OpenAI/Cognitive Services (usato solo in modalità keyless):
     azure_cognitive_scope: str = "https://cognitiveservices.azure.com/.default"
 
 

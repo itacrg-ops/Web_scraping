@@ -36,7 +36,11 @@ class ClassifyResponse(BaseModel):
 
 @app.get("/healthz")
 def healthz() -> dict:
-    return {"status": "ok", "endpoint_configured": bool(settings.azure_foundry_endpoint)}
+    return {
+        "status": "ok",
+        "endpoint_configured": bool(settings.azure_foundry_endpoint),
+        "auth_mode": "api_key" if settings.azure_api_key else "entra",
+    }
 
 
 @app.post("/v1/classify", response_model=ClassifyResponse)

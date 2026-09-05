@@ -27,8 +27,16 @@ def _client() -> AzureOpenAI:
     if not settings.azure_foundry_endpoint:
         raise RuntimeError(
             "AZURE_FOUNDRY_ENDPOINT non configurato: imposta l'endpoint Foundry "
-            "e la credenziale (dev SP in locale, Workload Identity in prod)."
+            "e la credenziale (API key oppure Entra: dev SP in locale / Workload Identity in prod)."
         )
+    # Modalità A — API key (endpoint + key): ha la precedenza se valorizzata.
+    if settings.azure_api_key:
+        return AzureOpenAI(
+            azure_endpoint=settings.azure_foundry_endpoint,
+            api_version=settings.azure_openai_api_version,
+            api_key=settings.azure_api_key,
+        )
+    # Modalità B — keyless (Entra) via DefaultAzureCredential.
     from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
     token_provider = get_bearer_token_provider(

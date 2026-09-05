@@ -21,9 +21,21 @@ az cognitiveservices account show -n <resource> -g <rg> --query id -o tsv
 az cognitiveservices account deployment list -n <resource> -g <rg> -o table
 ```
 
-## 2. Credenziale keyless (service principal di sviluppo)
-`DefaultAzureCredential` in locale usa un service principal via variabili
-d'ambiente (nessuna API key statica).
+## 2. Autenticazione — scegli una modalità
+
+### Opzione A — API key (endpoint + key) · più semplice
+Nessun service principal né ruolo: basta l'endpoint e una **API key** della
+risorsa. Se `AZURE_OPENAI_API_KEY` è valorizzata, il gateway usa questa (ha la
+precedenza).
+```bash
+# recupera una delle due chiavi della risorsa
+az cognitiveservices account keys list -n <resource> -g <rg> --query key1 -o tsv
+```
+(oppure copiala dal portale: risorsa → *Keys and Endpoint*).
+
+### Opzione B — Keyless (Entra) · consigliata in produzione
+`DefaultAzureCredential` con un service principal in locale e Workload Identity
+in prod (nessuna chiave statica). Usa questa **solo se NON imposti** la API key.
 ```bash
 # crea il service principal (annota appId, password, tenant)
 az ad sp create-for-rbac -n adverse-media-dev
@@ -45,7 +57,10 @@ LLM_MODEL_PRIMARY=<nome-deployment-primario>
 LLM_MODEL_SECONDARY=<nome-deployment-secondario>   # opzionale; vuoto = single-LLM
 EMBEDDING_MODEL=<nome-deployment-embedding>         # opzionale (near-duplicate futuri)
 
-# credenziale dev (service principal) — DefaultAzureCredential la usa in locale
+# --- Opzione A: API key (ha la precedenza se valorizzata) ---
+AZURE_OPENAI_API_KEY=<key1-della-risorsa>
+
+# --- Opzione B: keyless (service principal) — usare SOLO se NON metti la key ---
 AZURE_TENANT_ID=<tenant>
 AZURE_CLIENT_ID=<appId>
 AZURE_CLIENT_SECRET=<password>
@@ -60,7 +75,7 @@ docker compose -f docker-compose.dev.yml up -d --force-recreate llm-gateway work
 ```bash
 # 1) il gateway vede l'endpoint configurato
 curl -s http://localhost:8080/healthz
-# -> {"status":"ok","endpoint_configured":true}
+# -> {"status":"ok","endpoint_configured":true,"auth_mode":"api_key"}   (o "entra")
 
 # 2) classificazione reale su un testo di prova
 curl -s -X POST http://localhost:8080/v1/classify \
