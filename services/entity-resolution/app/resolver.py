@@ -109,6 +109,25 @@ def resolve(subject: dict) -> dict:
             warnings.append("Identificatore CF/P.IVA formalmente non valido (checksum)")
         for r in REGISTRY:
             if clean_id(r.get("cf_piva")) == cf:
+                rec_dob = r.get("data_nascita")
+                # Coerenza CF ↔ data di nascita: se entrambe presenti ma
+                # discordanti, l'input è contraddittorio (o è errato il CF, o la
+                # data). Non superare il gate: revisione umana (abstain).
+                if dob and rec_dob and dob != rec_dob:
+                    return {
+                        "resolved": False,
+                        "status": "needs_review",
+                        "method": "conflitto_CF_data_nascita",
+                        "confidence": 0.5,
+                        "identifier_valid": id_ok,
+                        "matched": None,
+                        "candidates": [{**_match_record(r), "score": None}],
+                        "warnings": warnings + [
+                            f"Incoerenza CF/data di nascita: il CF corrisponde a "
+                            f"{r['denominazione']} (nato/a {rec_dob}), ma è stata indicata "
+                            f"la data {dob}. Verifica manuale richiesta."
+                        ],
+                    }
                 return {
                     "resolved": True,
                     "status": "resolved",

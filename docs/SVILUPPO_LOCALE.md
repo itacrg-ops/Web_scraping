@@ -53,17 +53,32 @@ Dalla console (tab **Screening**) si sceglie il tipo di soggetto:
   `Codice Fiscale` (16) o `data di nascita` per disambiguare l'**omonimia**.
 
 Regola anti-omonimia (gate §8): **solo un identificatore forte supera il gate**
-di default; il solo nome porta a `needs_review`/`ambiguous` (revisione umana),
-la data di nascita restringe i candidati ma non risolve da sola.
+di default. Il solo nome porta a `needs_review`/`ambiguous` (revisione umana); la
+data di nascita restringe i candidati ma **non risolve da sola**; il **CF** risolve
+in modo deterministico, ma se è indicata **anche** una data di nascita
+**discordante** il gate non passa (`needs_review`: input contraddittorio).
 
-Soggetti nel registro seed (`services/entity-resolution/app/resolver.py`) utili a provare i vari esiti:
+Soggetti nel registro seed (`services/entity-resolution/app/resolver.py`):
 
-| Soggetto | Tipo | Identificatore | Esito atteso (senza/con identificatore) |
-|----------|------|----------------|------------------------------------------|
-| ACME Costruzioni S.r.l. | giuridica | P.IVA `00743110157` | nome-only → *ambiguous* (c'è anche "ACME … Generali"); con P.IVA → *resolved* |
-| Rossi Mario | fisica | CF `RSSMRA75C15H501P` (nato 1975-03-15) | nome-only → *ambiguous* (**omonimo**); con CF → *resolved* |
-| Rossi Mario | fisica | CF `RSSMRA80E20F205I` (nato 1980-05-20) | l'omonimo: la data di nascita `1975-03-15` riduce a 1 candidato → *needs_review* |
-| Bianchi Giulia | fisica | CF `BNCGLI82S43H501W` | nome-only → *needs_review*; con CF → *resolved* |
+| Soggetto | Tipo | Identificatore forte | Data di nascita |
+|----------|------|----------------------|-----------------|
+| ACME Costruzioni S.r.l. | giuridica | P.IVA `00743110157` | — |
+| Rossi Mario (#1) | fisica | CF `RSSMRA75C15H501P` | 1975-03-15 |
+| Rossi Mario (#2, omonimo) | fisica | CF `RSSMRA80E20F205I` | 1980-05-20 |
+| Bianchi Giulia | fisica | CF `BNCGLI82S43H501W` | 1982-11-03 |
+
+Esiti attesi (persona fisica "Rossi Mario", che ha un **omonimo**):
+
+| Input | Esito |
+|-------|-------|
+| solo nome e cognome | `ambiguous` (due omonimi) |
+| nome + cognome + data `1975-03-15` (senza CF) | `needs_review` (ridotto a 1, ma serve conferma) |
+| CF `RSSMRA80E20F205I` (senza data) | `resolved` (il CF basta) |
+| CF `RSSMRA80E20F205I` + data `1980-05-20` (coerente) | `resolved` |
+| CF `RSSMRA80E20F205I` + data `1975-03-15` (**discordante**) | `needs_review` (incoerenza CF/data) |
+
+Per la persona giuridica: "ACME" solo nome → `ambiguous` (c'è anche "ACME … Generali");
+con P.IVA `00743110157` → `resolved`.
 
 > I CF del seed sono **fittizi ma formalmente validi** (checksum). In produzione
 > il registro proviene da ReGiS/OpenCoesione/InfoCamere (beneficiari/attuatori e
