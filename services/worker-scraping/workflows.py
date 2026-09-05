@@ -24,6 +24,7 @@ with workflow.unsafe.imports_passed_through():
         persist_alert,
         publish_svi,
         resolve_entity,
+        verify_subject_mention,
     )
 
 _RETRY = RetryPolicy(maximum_attempts=3)
@@ -85,6 +86,18 @@ class ScreeningWorkflow:
             start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
         )
 
+        # Verifica di menzione (non bloccante): il soggetto è citato nell'evidenza?
+        mention_res = await workflow.execute_activity(
+            verify_subject_mention, args=[subject, doc.get("text", "")],
+            start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
+        )
+        drivers = list(ami["drivers"])
+        if not mention_res.get("mentioned"):
+            drivers.insert(
+                0,
+                "⚠ Soggetto non citato nell'evidenza raccolta: verificare attribuzione (possibile falsa attribuzione)",
+            )
+
         alert_payload = {
             "subject": subject["denominazione"],
             "cf_piva": subject["cf_piva"],
@@ -92,7 +105,7 @@ class ScreeningWorkflow:
             "ami_score": ami["ami_score"],
             "risk_level": ami["risk_level"],
             "fatf_categories": classification.get("fatf_categories", []),
-            "drivers": ami["drivers"],
+            "drivers": drivers,
             "disposition": ami["disposition"],
         }
 

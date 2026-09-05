@@ -20,6 +20,7 @@ from activities import (
     persist_alert,
     publish_svi,
     resolve_entity,
+    verify_subject_mention,
 )
 from workflows import ScreeningWorkflow
 
@@ -54,6 +55,7 @@ async def main() -> None:
             extract_content,
             classify_fatf,
             compute_ami,
+            verify_subject_mention,
             publish_svi,
             persist_alert,
         ],

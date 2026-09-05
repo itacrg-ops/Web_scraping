@@ -74,10 +74,13 @@ conforme** (robots.txt + crawl-delay, User-Agent identificabile, rate-limiting
 per dominio, snapshot **WARC** su object store con hash SHA-256 e provenance) ed
 estrazione con trafilatura, **Evidence** persistita e ancorata all'alert, e
 **classificazione FATF dual-LLM strutturata** via Azure AI Foundry (categorie,
-ruolo processuale, Victim-Bystander, severità, confidence) con fallback
-euristico se Foundry non è configurato. Placeholder / da completare (marcati
-`TODO`): AMI scoring governato in SAS Viya (oggi mappatura locale severità→AMI),
-mapping reale del Data Hub/Alerts SVI, headless browser per pagine dinamiche.
+ruolo processuale, Victim-Bystander, severità, confidence; vedi
+[FOUNDRY_SETUP.md](FOUNDRY_SETUP.md)) con fallback euristico se Foundry non è
+configurato, e **verifica di menzione** non bloccante (anti falsa attribuzione:
+segnala se il soggetto non è citato nell'evidenza). Placeholder / da completare
+(marcati `TODO`): AMI scoring governato in SAS Viya (oggi mappatura locale
+severità→AMI), mapping reale del Data Hub/Alerts SVI, headless browser per
+pagine dinamiche.
 
 Gli snapshot delle pagine (HTML + WARC) sono su MinIO (console http://localhost:9001,
 bucket `adverse-media-snapshots`).

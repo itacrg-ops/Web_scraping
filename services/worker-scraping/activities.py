@@ -16,6 +16,7 @@ from temporalio import activity
 import classifier
 import extract as extractor
 import fetcher
+import mention
 import snapshot
 
 LLM_GATEWAY_URL = os.getenv("LLM_GATEWAY_URL", "http://llm-gateway:8080")
@@ -34,6 +35,15 @@ async def resolve_entity(subject: dict) -> dict:
     activity.logger.info("resolve_entity: status=%s method=%s conf=%.2f",
                          result.get("status"), result.get("method"), result.get("confidence", 0.0))
     return result
+
+
+@activity.defn
+async def verify_subject_mention(subject: dict, text: str) -> dict:
+    """Verifica che il soggetto sia citato nell'evidenza (anti falsa attribuzione)."""
+    res = mention.check(subject, text)
+    activity.logger.info("verify_subject_mention: mentioned=%s matched=%s",
+                         res["mentioned"], res["matched"])
+    return res
 
 
 @activity.defn
