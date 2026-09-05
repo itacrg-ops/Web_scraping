@@ -1,6 +1,7 @@
 """Configurazione del gateway LLM verso Azure AI Foundry."""
 from __future__ import annotations
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,7 +34,10 @@ class Settings(BaseSettings):
     #  B) Keyless (Entra) via DefaultAzureCredential:
     #     - locale : service principal di sviluppo (AZURE_TENANT_ID/CLIENT_ID/CLIENT_SECRET)
     #     - prod   : AKS Workload Identity (nessuna chiave statica)
-    azure_api_key: str = ""
+    azure_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("AZURE_OPENAI_API_KEY", "AZURE_API_KEY"),
+    )
     # Scope OAuth per Azure OpenAI/Cognitive Services (usato solo in modalità keyless):
     azure_cognitive_scope: str = "https://cognitiveservices.azure.com/.default"
 
