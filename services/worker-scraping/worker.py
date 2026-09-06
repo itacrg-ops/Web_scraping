@@ -13,6 +13,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from activities import (
+    annotate_credibility,
     classify_fatf,
     compute_ami,
     extract_content,
@@ -52,6 +53,7 @@ async def main() -> None:
         workflows=[ScreeningWorkflow],
         activities=[
             search_articles,
+            annotate_credibility,
             resolve_entity,
             fetch_source,
             extract_content,

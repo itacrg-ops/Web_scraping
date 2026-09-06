@@ -54,6 +54,8 @@ export interface Alert {
   cup: string[];
   ami_score: number;
   risk_level: string;
+  fatf_categories?: string[];
+  drivers?: string[];
   disposition: string;
   svi_alert_id?: string | null;
   entity_resolution?: EntityResolution | null;

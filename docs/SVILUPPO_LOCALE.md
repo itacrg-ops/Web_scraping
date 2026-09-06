@@ -124,6 +124,20 @@ Provider (`SEARCH_PROVIDER` nel `.env`):
   API key, o feed licenziati Dow Jones/Factiva) si innestano su
   `services/search-gateway/app/providers.py`.
 
+### AMI: pesatura per credibilità e corroborazione
+L'AMI non dipende solo dalla gravità: **AMI = base(severità) × credibilità ×
+corroborazione**, poi cap Victim-Bystander e clamp 0–100.
+- **credibilità**: dalla testata migliore tra le fonti che citano il soggetto —
+  `alta ×1.05`, `media ×1.00`, `sconosciuta ×0.95` (cautela lieve: testata non a
+  registro), `bassa ×0.80`;
+- **corroborazione**: numero di **domini distinti** che citano il soggetto —
+  0 → ×0.50 (possibile falsa attribuzione), 1 → ×0.95, 2 → ×1.00, 3 → ×1.07,
+  ≥4 → ×1.15. Due articoli della **stessa** testata contano come una fonte.
+
+La formula è **esplicabile**: ogni fattore compare nei *driver* dell'alert (es.
+«AMI = base 88 (severità alta) × 1.00 (credibilità) × 0.95 (corroborazione) = 84»).
+I pesi sono `services/worker-scraping/activities.py` (in prod: governo in SAS Viya).
+
 ## SAS Viya / SVI in locale
 SVI/Viya **non gira** su Docker Desktop. Due modalità:
 - **Mock (default)**: `SVI_MODE=mock` — `svi-publisher` logga gli alert senza
@@ -161,10 +175,13 @@ estrazione con trafilatura, **Evidence** persistita e ancorata all'alert, e
 ruolo processuale, Victim-Bystander, severità, confidence; vedi
 [FOUNDRY_SETUP.md](FOUNDRY_SETUP.md)) con fallback euristico se Foundry non è
 configurato, e **verifica di menzione** non bloccante (anti falsa attribuzione:
-segnala se il soggetto non è citato nell'evidenza). Placeholder / da completare
-(marcati `TODO`): AMI scoring governato in SAS Viya (oggi mappatura locale
-severità→AMI), mapping reale del Data Hub/Alerts SVI, headless browser per
-pagine dinamiche.
+segnala se il soggetto non è citato nell'evidenza), **AMI pesato** per
+**credibilità** della testata e **corroborazione** (numero di fonti indipendenti
+che citano il soggetto), con formula esplicabile nei driver dell'alert.
+Placeholder / da completare (marcati `TODO`): AMI scoring governato in SAS Viya
+(oggi pesatura locale severità × credibilità × corroborazione; mancano
+materialità CUP, sentiment, freschezza), mapping reale del Data Hub/Alerts SVI,
+headless browser per pagine dinamiche.
 
 Gli snapshot delle pagine (HTML + WARC) sono su MinIO (console http://localhost:9001,
 bucket `adverse-media-snapshots`).

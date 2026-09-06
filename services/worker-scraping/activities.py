@@ -54,6 +54,27 @@ async def search_articles(subject: dict, options: dict | None = None) -> list[di
 
 
 @activity.defn
+async def annotate_credibility(urls: list) -> dict:
+    """Annota gli URL con dominio + credibilità testata (via search-gateway,
+    registro unico). Ritorna {url: {domain, credibilita}}. Non fatale: su
+    errore ritorna {} (credibilità sconosciuta → peso neutro nell'AMI)."""
+    if not urls:
+        return {}
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(f"{SEARCH_GATEWAY_URL}/v1/credibility", json={"urls": urls})
+        if resp.status_code == 200:
+            return {
+                it["url"]: {"domain": it.get("domain"), "credibilita": it.get("testata_credibilita")}
+                for it in resp.json().get("items", [])
+            }
+        activity.logger.warning("credibility %s", resp.status_code)
+    except Exception as exc:  # noqa: BLE001 — non fatale
+        activity.logger.warning("annotate_credibility non disponibile (%s)", exc)
+    return {}
+
+
+@activity.defn
 async def resolve_entity(subject: dict) -> dict:
     """Gate anti-omonimia: risolve il soggetto contro il registro (§8)."""
     async with httpx.AsyncClient(timeout=30) as client:
@@ -149,13 +170,46 @@ async def classify_fatf(text: str) -> dict:
     return classifier.classify_text(text)
 
 
-@activity.defn
-async def compute_ami(subject: dict, classification: dict) -> dict:
-    """Calcolo AMI (placeholder deterministico).
+# --- Pesatura AMI: credibilità della fonte e corroborazione (§ scoring) ---
+# Fattore per la MIGLIOR credibilità tra le fonti che citano il soggetto.
+# "sconosciuta" (testata non ancora nel registro) è una cautela LIEVE, non una
+# penalità: distinta da "bassa" (nota come poco affidabile).
+# Ordinamento del peso: alta > media > sconosciuta > bassa.
+_CRED_WEIGHT = {"alta": 1.05, "media": 1.0, "bassa": 0.8, "sconosciuta": 0.95}
+_CRED_ORDER = {"alta": 3, "media": 2, "sconosciuta": 1, "bassa": 0}
 
-    TODO: severità × materialità(CUP/ruolo) × sentiment × credibilità ×
-    freschezza × corroborazione × ruolo processuale; scoring governato in SAS Viya.
+
+def _registrable_domain(url: str) -> str:
+    """Dominio registrabile (minuscolo, senza www/sottodomini) per contare le
+    fonti indipendenti. Euristica coerente col search-gateway."""
+    host = (urlparse(url or "").hostname or "").lower()
+    if not host:
+        return ""
+    if host.startswith("www."):
+        host = host[4:]
+    labels = host.split(".")
+    return ".".join(labels[-2:]) if len(labels) > 2 else host
+
+
+def _corroboration_factor(n: int) -> float:
+    """Più fonti indipendenti corroborano → più peso; fonte unica: lieve
+    cautela; nessuna fonte che cita il soggetto: forte sconto (possibile falsa
+    attribuzione)."""
+    if n <= 0:
+        return 0.5
+    return {1: 0.95, 2: 1.0, 3: 1.07}.get(n, 1.15)
+
+
+@activity.defn
+async def compute_ami(subject: dict, classification: dict, evidence_signals: list | None = None) -> dict:
+    """Calcolo AMI (placeholder deterministico) pesato per **credibilità** della
+    fonte e **corroborazione** (numero di fonti indipendenti che citano il
+    soggetto): AMI = base(severità) × credibilità × corroborazione, con cap
+    Victim-Bystander. Esplicabile nei driver.
+
+    TODO: materialità(CUP/ruolo), sentiment, freschezza; scoring governato in SAS Viya.
     """
+    evidence_signals = evidence_signals or []
     categories = classification.get("fatf_categories", [])
     ruolo = classification.get("ruolo_processuale")
     severity = classification.get("severity")
@@ -166,10 +220,24 @@ async def compute_ami(subject: dict, classification: dict) -> dict:
         return {"ami_score": 8, "risk_level": "BASSO", "disposition": "AUTO_CHIUSO",
                 "drivers": ["Nessun segnale adverse-media rilevante (early-termination)"]}
 
-    ami = {"alta": 88, "media": 68, "bassa": 45}.get(severity, 78)
+    base = {"alta": 88, "media": 68, "bassa": 45}.get(severity, 78)
+
+    # Fonti che citano davvero il soggetto (corroborazione anti falsa attribuzione).
+    mentioned = [s for s in evidence_signals if s.get("mentioned")]
+    domains = {d for s in mentioned if (d := (s.get("domain") or _registrable_domain(s.get("url", ""))))}
+    n_sources = len(domains)
+    creds = [(s.get("testata_credibilita") or "sconosciuta") for s in mentioned]
+    best_cred = max(creds, key=lambda c: _CRED_ORDER.get(c, 0)) if creds else "sconosciuta"
+
+    f_cred = _CRED_WEIGHT.get(best_cred, 0.75)
+    f_corrob = _corroboration_factor(n_sources)
+    ami = int(round(base * f_cred * f_corrob))
+
     # Victim-Bystander Analysis: se il soggetto non è il perpetratore, l'AMI cala.
     if role_analysis in ("vittima", "menzionato"):
         ami = min(ami, 25)
+    ami = max(0, min(100, ami))
+
     risk = "ALTO" if ami >= 75 else "MEDIO" if ami >= 45 else "BASSO"
     disposition = "ESCALATION_I_LIVELLO" if risk in ("ALTO", "MEDIO") else "AUTO_CHIUSO"
 
@@ -182,6 +250,19 @@ async def compute_ami(subject: dict, classification: dict) -> dict:
         drivers.append("Disaccordo dual-LLM sulle categorie → revisione consigliata")
     if rationale:
         drivers.append(f"Motivazione: {rationale}")
+    # Spiegabilità della pesatura AMI.
+    if n_sources == 0:
+        drivers.append("Corroborazione: nessuna fonte indipendente cita il soggetto "
+                       f"(possibile falsa attribuzione) → ×{f_corrob:.2f}")
+    else:
+        _fonti = "fonte" if n_sources == 1 else "fonti"
+        drivers.append(f"Credibilità fonte (migliore su {n_sources} {_fonti}): {best_cred} → ×{f_cred:.2f}")
+        if n_sources == 1:
+            drivers.append(f"Corroborazione: fonte unica → segnale da confermare (×{f_corrob:.2f})")
+        else:
+            drivers.append(f"Corroborazione: {n_sources} fonti indipendenti → ×{f_corrob:.2f}")
+    drivers.append(f"AMI = base {base} (severità {severity}) × {f_cred:.2f} (credibilità) "
+                   f"× {f_corrob:.2f} (corroborazione) = {ami}")
     drivers.append("Materialità da valutare rispetto al CUP dell'intervento")
     return {"ami_score": ami, "risk_level": risk, "disposition": disposition, "drivers": drivers}
 

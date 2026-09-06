@@ -59,9 +59,39 @@ class SearchResponse(BaseModel):
     results: list[SearchResultOut] = []
 
 
+class CredibilityRequest(BaseModel):
+    urls: list[str] = []
+
+
+class CredibilityItem(BaseModel):
+    url: str
+    domain: str | None = None
+    testata_credibilita: str
+
+
+class CredibilityResponse(BaseModel):
+    items: list[CredibilityItem] = []
+
+
 @app.get("/healthz")
 def healthz() -> dict:
     return {"status": "ok", "provider": settings.search_provider}
+
+
+@app.post("/v1/credibility", response_model=CredibilityResponse)
+def credibility(req: CredibilityRequest) -> dict:
+    """Annota una lista di URL con dominio registrabile e credibilità della
+    testata (registro unico `testate.py`). Usato dal worker per pesare l'AMI
+    su tutti i percorsi (ricerca automatica, articoli scelti, URL singolo)."""
+    items = []
+    for u in req.urls:
+        d = testate.domain_of(u)
+        items.append({
+            "url": u,
+            "domain": d or None,
+            "testata_credibilita": testate.credibility_of(d) if d else "sconosciuta",
+        })
+    return {"items": items}
 
 
 @app.post("/v1/search", response_model=SearchResponse)

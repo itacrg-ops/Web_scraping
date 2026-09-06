@@ -35,6 +35,29 @@ function ResolutionDetail({ a }: { a: Alert }) {
   );
 }
 
+function MotivazioneDetail({ a }: { a: Alert }) {
+  const cats = a.fatf_categories ?? [];
+  const drivers = a.drivers ?? [];
+  if (cats.length === 0 && drivers.length === 0) return null;
+  return (
+    <Box sx={{ p: 2, pb: 1 }}>
+      <Typography variant="subtitle2" gutterBottom>Motivazione (AMI {a.ami_score})</Typography>
+      {cats.length > 0 && (
+        <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", mb: 1 }}>
+          {cats.map((c) => <Chip key={c} size="small" label={c} color="warning" variant="outlined" />)}
+        </Box>
+      )}
+      {drivers.length > 0 && (
+        <ul style={{ margin: 0, paddingLeft: 18 }}>
+          {drivers.map((d, i) => (
+            <li key={i}><Typography variant="caption" color="text.secondary">{d}</Typography></li>
+          ))}
+        </ul>
+      )}
+    </Box>
+  );
+}
+
 function EvidenceDetail({ a }: { a: Alert }) {
   const ev = a.evidence ?? [];
   if (ev.length === 0) {
@@ -120,6 +143,7 @@ function AlertRow({ a }: { a: Alert }) {
       <TableRow>
         <TableCell sx={{ py: 0 }} colSpan={10}>
           <Collapse in={open} timeout="auto" unmountOnExit>
+            <MotivazioneDetail a={a} />
             <ResolutionDetail a={a} />
             <EvidenceDetail a={a} />
           </Collapse>

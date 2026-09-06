@@ -20,6 +20,7 @@ from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from activities import (
+        annotate_credibility,
         classify_fatf,
         compute_ami,
         extract_content,
@@ -88,7 +89,6 @@ class ScreeningWorkflow:
         # console) → ricerca automatica via search-gateway (web search).
         max_articles = int(req.get("max_articles") or _DEFAULT_MAX_ARTICLES)
         search_drivers: list[str] = []
-        cred_by_url: dict = {}  # url → credibilità testata (dalla web search)
         if req.get("seed_url"):
             urls = [req["seed_url"]]
         elif req.get("seed_urls"):
@@ -100,8 +100,16 @@ class ScreeningWorkflow:
                 start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
             )
             urls = [r["url"] for r in results if r.get("url")][:max_articles]
-            cred_by_url = {r["url"]: r.get("testata_credibilita") for r in results if r.get("url")}
             search_drivers.append(f"Web search: {len(urls)} articoli candidati analizzati")
+
+        # Credibilità delle testate (registro unico via search-gateway), uniforme
+        # su tutti i percorsi: pesa l'AMI e annota l'evidenza.
+        cred_map = (
+            await workflow.execute_activity(
+                annotate_credibility, urls, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
+            )
+            if urls else {}
+        )
 
         # --- Fetch + estrazione + verifica di menzione per ciascun URL ---
         docs: list[dict] = []
@@ -117,8 +125,10 @@ class ScreeningWorkflow:
                 verify_subject_mention, args=[subject, doc.get("text", "")],
                 start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
             )
+            info = cred_map.get(url) or {}
             doc["_mentioned"] = bool(men.get("mentioned"))
-            doc["_credibilita"] = cred_by_url.get(url)
+            doc["_credibilita"] = info.get("credibilita")
+            doc["_domain"] = info.get("domain")
             any_mention = any_mention or doc["_mentioned"]
             docs.append(doc)
 
@@ -135,8 +145,19 @@ class ScreeningWorkflow:
         else:
             classification = {"fatf_categories": [], "method": "nessun_contenuto"}
 
+        # Segnali per la pesatura AMI: per ogni articolo, fonte + credibilità +
+        # se cita il soggetto (corroborazione da fonti indipendenti).
+        signals = [
+            {
+                "url": d.get("source"),
+                "domain": d.get("_domain"),
+                "testata_credibilita": d.get("_credibilita"),
+                "mentioned": d.get("_mentioned"),
+            }
+            for d in docs
+        ]
         ami = await workflow.execute_activity(
-            compute_ami, args=[subject, classification],
+            compute_ami, args=[subject, classification, signals],
             start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
         )
 
