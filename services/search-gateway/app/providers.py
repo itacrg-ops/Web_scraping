@@ -195,6 +195,16 @@ def _brave_date(a: dict) -> str | None:
     return pa  # es. "2 days ago" (relativo)
 
 
+def _brave_items(data: dict) -> list[dict]:
+    """Estrae i risultati sia dall'endpoint web che da quello news."""
+    return (
+        (data.get("web") or {}).get("results")
+        or data.get("results")
+        or (data.get("news") or {}).get("results")
+        or []
+    )
+
+
 async def _brave(subject: dict, mode: str, max_results: int, lang: str,
                  timespan: str) -> tuple[list[dict], str, str | None]:
     if not settings.brave_api_key:
@@ -202,37 +212,47 @@ async def _brave(subject: dict, mode: str, max_results: int, lang: str,
     query_str = qb.build_query(subject, mode) or qb.build_query(subject, "broad")
     if not query_str:
         return [], "", None
+    # NB: country/search_lang vogliono CODICI (it), non nomi lingua (il param
+    # `lang` di GDELT è ignorato qui apposta). count web: max 20.
     params = {
         "q": query_str,
         "country": settings.brave_country,
-        "search_lang": lang or settings.brave_country,
-        "count": max(1, min(max_results, 50)),
+        "search_lang": settings.brave_search_lang,
+        "count": max(1, min(max_results, 20)),
     }
-    headers = {"Accept": "application/json", "X-Subscription-Token": settings.brave_api_key}
+    headers = {
+        "Accept": "application/json", "Accept-Encoding": "gzip",
+        "X-Subscription-Token": settings.brave_api_key,
+    }
     try:
         async with httpx.AsyncClient(timeout=settings.request_timeout) as c:
             r = await c.get(settings.brave_endpoint, params=params, headers=headers)
-        if r.status_code == 429:
-            return [], query_str, "Brave ha limitato le richieste (429). Riprova tra poco."
-        if r.status_code in (401, 403):
-            return [], query_str, "Brave: chiave non valida o non autorizzata (BRAVE_API_KEY)."
         if r.status_code != 200:
-            logger.warning("Brave status %s", r.status_code)
-            return [], query_str, "Brave non raggiungibile. Riprova più tardi."
+            body = r.text[:200].replace("\n", " ")
+            logger.warning("Brave status %s body=%r", r.status_code, body)
+            if r.status_code in (401, 403):
+                note = "Brave: chiave non valida o non autorizzata (controlla BRAVE_API_KEY)."
+            elif r.status_code == 422:
+                note = "Brave: parametri non accettati (422). Verifica country/search_lang (codici, es. it)."
+            elif r.status_code == 429:
+                note = "Brave ha limitato le richieste (429). Riprova tra poco."
+            else:
+                note = f"Brave ha risposto {r.status_code}. Riprova più tardi."
+            return [], query_str, note
         data = r.json()
     except Exception as exc:  # noqa: BLE001 — rete non fatale
         logger.warning("Brave non raggiungibile: %s: %s", type(exc).__name__, exc)
-        return [], query_str, "Brave non raggiungibile. Riprova più tardi."
+        return [], query_str, f"Brave non raggiungibile ({type(exc).__name__}). Riprova più tardi."
 
     out: list[dict] = []
-    for a in (data.get("results") or []):
+    for a in _brave_items(data):
         url = a.get("url")
         if not url:
             continue
         out.append(_result(
             url=url, title=a.get("title"), snippet=a.get("description"),
             testata=(a.get("meta_url") or {}).get("hostname"),
-            data=_brave_date(a), language=lang or None, provider="brave", score=None,
+            data=_brave_date(a), language=None, provider="brave", score=None,
         ))
     return out, query_str, None
 

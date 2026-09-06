@@ -30,11 +30,14 @@ class Settings(BaseSettings):
     # UA "browser" per le chiamate GDELT: alcuni CDN penalizzano gli UA bot.
     gdelt_user_agent: str = "Mozilla/5.0 (compatible; AdverseMediaScreening/0.1)"
 
-    # Brave Search API (provider "brave"): chiave e endpoint news. Free tier
-    # generoso; nessuna chiave nel repo (solo via .env).
+    # Brave Search API (provider "brave"): chiave + endpoint. Default sull'endpoint
+    # WEB (incluso in ogni piano free); per il news search cambia brave_endpoint in
+    # .../res/v1/news/search. country e search_lang vogliono CODICI (es. it), non
+    # nomi lingua. Nessuna chiave nel repo (solo via .env).
     brave_api_key: str = ""
-    brave_endpoint: str = "https://api.search.brave.com/res/v1/news/search"
+    brave_endpoint: str = "https://api.search.brave.com/res/v1/web/search"
     brave_country: str = "it"
+    brave_search_lang: str = "it"
     # GDELT è rate-limited (~1 req/5s per IP). Intervallo minimo tra chiamate
     # (throttle in-process), retry dopo un 429 (n. tentativi + attesa base/cap).
     gdelt_min_interval: float = 5.0
