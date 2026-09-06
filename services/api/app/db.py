@@ -87,6 +87,7 @@ async def run_migrations() -> None:
 async def init_db() -> None:
     await run_migrations()
     await _seed_sources()
+    await _seed_subjects()
 
 
 async def _seed_sources() -> None:
@@ -107,4 +108,38 @@ async def _seed_sources() -> None:
         for s in seed:
             if s.id not in existing:
                 session.add(s)
+        await session.commit()
+
+
+async def _seed_subjects() -> None:
+    """Seed dimostrativo del registro soggetti (anti-omonimia). In produzione
+    sincronizzato da ReGiS/OpenCoesione/InfoCamere; qui popola il registro al
+    primo avvio così ER trova i soggetti demo (e la console può aggiungerne)."""
+    from sqlalchemy import select
+
+    from app.models import Subject
+
+    seed = [
+        Subject(id="R-ACME", tipo_soggetto="persona_giuridica", denominazione="ACME Costruzioni S.r.l.",
+                cf_piva="00743110157", cup=["E51B21000000001"], ruolo="impresa esecutrice"),
+        Subject(id="R-ACME-GEN", tipo_soggetto="persona_giuridica", denominazione="ACME Costruzioni Generali S.r.l.",
+                cf_piva="09876543217", cup=["E51B21000000009"], ruolo="impresa esecutrice"),
+        Subject(id="R-BETA", tipo_soggetto="persona_giuridica", denominazione="Beta Infrastrutture S.p.A.",
+                cf_piva="12345670159", cup=["B22C21000000002"], ruolo="beneficiario"),
+        Subject(id="R-TRON", tipo_soggetto="persona_giuridica", denominazione="Tron Group Holding S.r.l.",
+                cf_piva="12345678903", cup=["G29J24000000003"], ruolo="impresa esecutrice"),
+        Subject(id="R-ROSSI-1", tipo_soggetto="persona_fisica", denominazione="Rossi Mario",
+                cf_piva="RSSMRA75C15H501P", data_nascita="1975-03-15", cup=["E51B21000000001"], ruolo="RUP"),
+        Subject(id="R-ROSSI-2", tipo_soggetto="persona_fisica", denominazione="Rossi Mario",
+                cf_piva="RSSMRA80E20F205I", data_nascita="1980-05-20", cup=["G29J24000000003"],
+                ruolo="legale rappresentante"),
+        Subject(id="R-BIANCHI", tipo_soggetto="persona_fisica", denominazione="Bianchi Giulia",
+                cf_piva="BNCGLI82S43H501W", data_nascita="1982-11-03", cup=["B22C21000000002"], ruolo="amministratore"),
+    ]
+    async with SessionLocal() as session:
+        existing = (await session.execute(select(Subject.id))).scalars().all()
+        if existing:
+            return  # registro già popolato (non re-seedare)
+        for s in seed:
+            session.add(s)
         await session.commit()

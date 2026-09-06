@@ -55,6 +55,46 @@ class ScreeningRequest(BaseModel):
         return self
 
 
+class SubjectCreate(BaseModel):
+    """Nuovo soggetto del registro (dalla console). Per la persona fisica
+    compone `denominazione` = "Cognome Nome"."""
+
+    tipo_soggetto: str = Field(default="persona_giuridica",
+                               description="persona_giuridica | persona_fisica")
+    denominazione: str | None = None
+    nome: str | None = None
+    cognome: str | None = None
+    data_nascita: str | None = None
+    cf_piva: str | None = None
+    cup: list[str] = []
+    ruolo: str | None = None
+    attivo: bool = True
+
+    @model_validator(mode="after")
+    def _compose_denominazione(self) -> "SubjectCreate":
+        if self.tipo_soggetto == "persona_fisica" and not self.denominazione:
+            self.denominazione = " ".join(p for p in (self.cognome, self.nome) if p).strip()
+        if not (self.denominazione and self.denominazione.strip()):
+            raise ValueError(
+                "indicare la denominazione (persona giuridica) oppure nome e cognome (persona fisica)"
+            )
+        return self
+
+
+class SubjectOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    tipo_soggetto: str
+    denominazione: str
+    cf_piva: str | None = None
+    data_nascita: str | None = None
+    cup: list[str] = []
+    ruolo: str | None = None
+    attivo: bool = True
+    created_at: datetime
+
+
 class ScreeningOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -2,12 +2,14 @@ import { AppBar, Box, Button, Chip, Container, Toolbar, Typography } from "@mui/
 import { Link as RouterLink, Navigate, Route, Routes } from "react-router-dom";
 import { useCurrentUser } from "./auth";
 import Sources from "./pages/Sources";
+import Soggetti from "./pages/Soggetti";
 import Alerts from "./pages/Alerts";
 import Observability from "./pages/Observability";
 import ScreeningPage from "./pages/Screening";
 
 const NAV = [
   { to: "/sources", label: "Fonti" },
+  { to: "/subjects", label: "Soggetti" },
   { to: "/screening", label: "Screening" },
   { to: "/alerts", label: "Alert" },
   { to: "/observability", label: "Observability" },
@@ -33,6 +35,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/sources" replace />} />
           <Route path="/sources" element={<Sources />} />
+          <Route path="/subjects" element={<Soggetti />} />
           <Route path="/screening" element={<ScreeningPage />} />
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/observability" element={<Observability />} />

@@ -131,6 +131,30 @@ export interface Screening {
   created_at: string;
 }
 
+// Registro soggetti noti (anti-omonimia) — gestibile dalla console.
+export interface Subject {
+  id: string;
+  tipo_soggetto: TipoSoggetto;
+  denominazione: string;
+  cf_piva?: string | null;
+  data_nascita?: string | null;
+  cup: string[];
+  ruolo?: string | null;
+  attivo: boolean;
+  created_at: string;
+}
+
+export interface SubjectCreate {
+  tipo_soggetto: TipoSoggetto;
+  denominazione?: string;
+  nome?: string;
+  cognome?: string;
+  data_nascita?: string;
+  cf_piva?: string;
+  cup: string[];
+  ruolo?: string;
+}
+
 async function postJSON<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
@@ -141,6 +165,11 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function deleteReq(path: string): Promise<void> {
+  const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", headers: await authHeaders() });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+}
+
 export const listSources = () => getJSON<Source[]>("/api/sources");
 export const listAlerts = () => getJSON<Alert[]>("/api/alerts");
 export const startScreening = (body: ScreeningRequest) =>
@@ -148,4 +177,7 @@ export const startScreening = (body: ScreeningRequest) =>
 export const getScreening = (id: string) => getJSON<Screening>(`/api/screening/${id}`);
 export const searchPreview = (body: SearchPreviewRequest) =>
   postJSON<SearchResponse>("/api/search/preview", body);
+export const listSubjects = () => getJSON<Subject[]>("/api/subjects");
+export const createSubject = (body: SubjectCreate) => postJSON<Subject>("/api/subjects", body);
+export const deleteSubject = (id: string) => deleteReq(`/api/subjects/${id}`);
 export { API_BASE };

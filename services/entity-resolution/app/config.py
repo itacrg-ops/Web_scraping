@@ -9,6 +9,12 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
 
+    # Il registro dei soggetti è il sistema di record dell'API (Postgres): ER lo
+    # legge da qui con una cache TTL. Se l'API non è raggiungibile, ER usa un
+    # piccolo seed di fallback (resilienza all'avvio).
+    api_url: str = "http://api:8000"
+    registry_ttl: float = 30.0
+
     # Soglie di matching sul nome (quando manca un identificatore forte).
     name_high: float = 0.92      # sopra: match sul nome "forte"
     name_candidate: float = 0.78  # sopra: candidato da considerare

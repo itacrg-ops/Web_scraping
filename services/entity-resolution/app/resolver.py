@@ -20,50 +20,7 @@ from app.normalize import (
     person_name_similarity,
     valid_identifier,
 )
-
-PERSONA_FISICA = "persona_fisica"
-PERSONA_GIURIDICA = "persona_giuridica"
-
-# --- Registro dei soggetti noti (seed dimostrativo) ---
-# In produzione arriva da ReGiS/OpenCoesione/InfoCamere (persone giuridiche:
-# beneficiari/attuatori) e dai relativi UBO / RUP / rappresentanti (persone
-# fisiche). Le persone fisiche hanno CF a 16 caratteri e data di nascita.
-REGISTRY: list[dict] = [
-    {
-        "id": "R-ACME", "tipo": PERSONA_GIURIDICA, "denominazione": "ACME Costruzioni S.r.l.",
-        "cf_piva": "00743110157", "cup": ["E51B21000000001"], "ruolo": "impresa esecutrice",
-    },
-    {
-        "id": "R-ACME-GEN", "tipo": PERSONA_GIURIDICA, "denominazione": "ACME Costruzioni Generali S.r.l.",
-        "cf_piva": "09876543217", "cup": ["E51B21000000009"], "ruolo": "impresa esecutrice",
-    },
-    {
-        "id": "R-BETA", "tipo": PERSONA_GIURIDICA, "denominazione": "Beta Infrastrutture S.p.A.",
-        "cf_piva": "12345670159", "cup": ["B22C21000000002"], "ruolo": "beneficiario",
-    },
-    {
-        "id": "R-TRON", "tipo": PERSONA_GIURIDICA, "denominazione": "Tron Group Holding S.r.l.",
-        "cf_piva": "12345678903", "cup": ["G29J24000000003"], "ruolo": "impresa esecutrice",
-    },
-    # --- Persone fisiche (UBO / RUP / rappresentanti legali) ---
-    # Rossi Mario compare DUE volte con CF e data di nascita diversi: caso di
-    # omonimia che il gate deve rilevare (senza CF → ambiguo/HITL).
-    {
-        "id": "R-ROSSI-1", "tipo": PERSONA_FISICA, "denominazione": "Rossi Mario",
-        "cf_piva": "RSSMRA75C15H501P", "data_nascita": "1975-03-15",
-        "cup": ["E51B21000000001"], "ruolo": "RUP",
-    },
-    {
-        "id": "R-ROSSI-2", "tipo": PERSONA_FISICA, "denominazione": "Rossi Mario",
-        "cf_piva": "RSSMRA80E20F205I", "data_nascita": "1980-05-20",
-        "cup": ["G29J24000000003"], "ruolo": "legale rappresentante",
-    },
-    {
-        "id": "R-BIANCHI", "tipo": PERSONA_FISICA, "denominazione": "Bianchi Giulia",
-        "cf_piva": "BNCGLI82S43H501W", "data_nascita": "1982-11-03",
-        "cup": ["B22C21000000002"], "ruolo": "amministratore",
-    },
-]
+from app.registry import PERSONA_FISICA, PERSONA_GIURIDICA, get_registry
 
 
 def _match_record(r: dict) -> dict:
@@ -94,6 +51,7 @@ def _subject_name(subject: dict) -> str:
 
 def resolve(subject: dict) -> dict:
     warnings: list[str] = []
+    reg = get_registry()  # registro corrente (dall'API, con cache/fallback)
     cf = clean_id(subject.get("cf_piva"))
     is_person = _is_person(subject)
     name = _subject_name(subject)
@@ -107,7 +65,7 @@ def resolve(subject: dict) -> dict:
     if cf:
         if not id_ok:
             warnings.append("Identificatore CF/P.IVA formalmente non valido (checksum)")
-        for r in REGISTRY:
+        for r in reg:
             if clean_id(r.get("cf_piva")) == cf:
                 rec_dob = r.get("data_nascita")
                 # Coerenza CF ↔ data di nascita: se entrambe presenti ma
@@ -143,7 +101,7 @@ def resolve(subject: dict) -> dict:
     # 2) Analisi sul nome — confrontando SOLO i record dello stesso tipo del
     #    soggetto (una persona non va confrontata con una società).
     target_tipo = PERSONA_FISICA if is_person else PERSONA_GIURIDICA
-    pool = [r for r in REGISTRY if r.get("tipo", PERSONA_GIURIDICA) == target_tipo]
+    pool = [r for r in reg if r.get("tipo", PERSONA_GIURIDICA) == target_tipo]
     scored = sorted(
         ({"record": r, "score": round(similarity(name, r["denominazione"]), 3)} for r in pool),
         key=lambda x: x["score"], reverse=True,

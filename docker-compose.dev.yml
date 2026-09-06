@@ -78,7 +78,10 @@ services:
   entity-resolution:
     build: ./services/entity-resolution
     env_file: .env
+    environment:
+      API_URL: "http://api:8000"   # legge il registro soggetti dall'API (cache TTL)
     ports: ["8070:8070"]
+    depends_on: [api]
 
   # ---- Search gateway (ricerca articoli adverse media) ----
   search-gateway:

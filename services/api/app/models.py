@@ -31,6 +31,24 @@ class Source(Base):
     attiva: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class Subject(Base):
+    """Soggetto noto del registro anti-omonimia (§8): beneficiari/attuatori e
+    relativi UBO/RUP/rappresentanti. In produzione sincronizzato da
+    ReGiS/OpenCoesione/InfoCamere; qui gestibile anche dalla console."""
+
+    __tablename__ = "subjects"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    tipo_soggetto: Mapped[str] = mapped_column(String, default="persona_giuridica")
+    denominazione: Mapped[str] = mapped_column(String)  # "Cognome Nome" per persona fisica
+    cf_piva: Mapped[str | None] = mapped_column(String, nullable=True)
+    data_nascita: Mapped[str | None] = mapped_column(String, nullable=True)
+    cup: Mapped[list] = mapped_column(JSON, default=list)
+    ruolo: Mapped[str | None] = mapped_column(String, nullable=True)
+    attivo: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class Screening(Base):
     __tablename__ = "screenings"
 

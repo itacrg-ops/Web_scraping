@@ -61,10 +61,18 @@ in modo deterministico, ma se è indicata **anche** una data di nascita
 
 > **Soggetto non a registro** (es. cerchi "Italware" e non è tra i soggetti noti):
 > di default il gate resta `unresolved` (HITL) — è corretto, in produzione il
-> registro contiene i beneficiari reali. Per **provare la pipeline su qualsiasi
-> nome** in locale, imposta `ALLOW_UNREGISTERED_SUBJECT=true`: il soggetto viene
-> risolto come **`provvisorio`** (screening esplorativo, non autoritativo) e
-> l'alert è marcato di conseguenza. Non tocca i casi ambigui.
+> registro contiene i beneficiari reali. Due modi per procedere:
+> 1. **Aggiungilo al registro** dalla tab **Soggetti** con il suo CF/P.IVA →
+>    match **deterministico** allo screening (`resolved`). È il flusso di
+>    produzione (lì il registro è sincronizzato da ReGiS/OpenCoesione/InfoCamere).
+> 2. **Screening esplorativo**: `ALLOW_UNREGISTERED_SUBJECT=true` → il soggetto è
+>    risolto come **`provvisorio`** (non autoritativo), utile per provare la
+>    pipeline su qualsiasi nome. Non tocca i casi ambigui.
+
+Il **registro soggetti** è persistito su PostgreSQL (sistema di record dell'API)
+e gestibile dalla tab **Soggetti** (aggiungi/elimina). L'entity-resolution lo
+legge dall'API con una cache breve (`REGISTRY_TTL`, default 30s), quindi le
+modifiche diventano effettive entro pochi secondi.
 
 Soggetti nel registro seed (`services/entity-resolution/app/resolver.py`):
 
