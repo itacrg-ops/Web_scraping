@@ -42,7 +42,8 @@ async def preview(req: PreviewRequest) -> dict:
         "min_credibility": req.min_credibility,
     }
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        # timeout ampio: il gateway può attendere per il throttle/retry di GDELT.
+        async with httpx.AsyncClient(timeout=45) as client:
             resp = await client.post(f"{settings.search_gateway_url}/v1/search", json=payload)
         resp.raise_for_status()
         return resp.json()

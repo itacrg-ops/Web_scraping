@@ -40,7 +40,8 @@ async def search_articles(subject: dict, options: dict | None = None) -> list[di
         "max_results": options.get("max_results"),
     }
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        # timeout ampio: il gateway può attendere per il throttle/retry di GDELT.
+        async with httpx.AsyncClient(timeout=45) as client:
             resp = await client.post(f"{SEARCH_GATEWAY_URL}/v1/search", json=payload)
         if resp.status_code == 200:
             data = resp.json()

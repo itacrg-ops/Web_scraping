@@ -117,6 +117,12 @@ con hash). La query di ricerca è nome/denominazione + termini avversi FATF
 > *"Tron Group Holding"*), e se la query mirata non trova nulla il gateway
 > **ripiega** su nome-solo e poi senza vincolo di lingua. Se resti a 0: prova un
 > nome più breve, disattiva il filtro credibilità o allarga `SEARCH_TIMESPAN`.
+>
+> **GDELT è rate-limited** (~1 richiesta ogni pochi secondi per IP): se hai
+> ricerche ravvicinate può rispondere **429**. Il gateway distanzia le chiamate
+> (`GDELT_MIN_INTERVAL`, default 5s) e su 429 fa **un solo retry**; se persiste,
+> la console mostra un avviso «GDELT ha limitato le richieste» — attendi qualche
+> secondo e riprova. La preview può quindi impiegare qualche secondo.
 
 Provider (`SEARCH_PROVIDER` nel `.env`):
 - **`mock`** (default): risultati di esempio, nessuna rete — utile per l'anteprima

@@ -107,6 +107,7 @@ export interface SearchResponse {
   raw_count: number;
   removed: number;
   min_credibility: string;
+  note?: string | null;
   results: SearchResult[];
 }
 

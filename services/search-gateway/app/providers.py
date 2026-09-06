@@ -10,7 +10,9 @@ la stessa forma di risultato.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 
 import httpx
 
@@ -18,6 +20,11 @@ from app import query as qb
 from app.config import settings
 
 logger = logging.getLogger("search-gateway.providers")
+
+# Throttle in-process delle chiamate GDELT (best-effort, singolo worker): GDELT
+# limita a ~1 richiesta ogni pochi secondi per IP e risponde 429 se si eccede.
+_gdelt_lock = asyncio.Lock()
+_gdelt_last = 0.0
 
 
 def _result(url, title=None, snippet=None, testata=None, data=None,
@@ -74,29 +81,47 @@ def _fmt_gdelt_date(seendate: str | None) -> str | None:
     return f"{seendate[0:4]}-{seendate[4:6]}-{seendate[6:8]}"
 
 
-async def _gdelt_call(query_str: str, max_results: int, timespan: str) -> list[dict] | None:
-    """Una singola chiamata GDELT. Ritorna la lista (anche vuota) o None su errore
-    (così il chiamante distingue 'nessun articolo' da 'query rifiutata/rete')."""
+async def _throttle_gdelt() -> None:
+    """Distanzia le chiamate GDELT di almeno gdelt_min_interval secondi."""
+    global _gdelt_last
+    async with _gdelt_lock:
+        wait = settings.gdelt_min_interval - (time.monotonic() - _gdelt_last)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _gdelt_last = time.monotonic()
+
+
+async def _gdelt_call(query_str: str, max_results: int, timespan: str) -> tuple[str, object]:
+    """Una singola chiamata GDELT. Ritorna:
+      ("ok", list)            articoli (anche [] = nessun risultato);
+      ("rate_limited", wait)  429, wait = Retry-After in secondi o None;
+      ("error", None)         altro errore (status/parsing/rete)."""
     params = {
         "query": query_str, "mode": "ArtList", "format": "json",
         "maxrecords": str(max(1, min(max_results, 250))),
         "sort": "DateDesc", "timespan": timespan,
     }
+    await _throttle_gdelt()
     try:
         async with httpx.AsyncClient(timeout=settings.request_timeout,
                                      headers={"User-Agent": settings.user_agent}) as c:
             r = await c.get(settings.gdelt_endpoint, params=params)
+        if r.status_code == 429:
+            ra = r.headers.get("Retry-After")
+            wait = float(ra) if (ra and ra.isdigit()) else None
+            logger.warning("GDELT 429 (rate limit) per query=%r retry_after=%s", query_str, ra)
+            return "rate_limited", wait
         if r.status_code != 200:
             logger.warning("GDELT status %s per query=%r", r.status_code, query_str)
-            return None
+            return "error", None
         try:
             data = r.json()
         except Exception:  # noqa: BLE001 — GDELT risponde HTML su query invalide
             logger.warning("GDELT: risposta non-JSON (query rifiutata?) query=%r", query_str)
-            return None
+            return "error", None
     except Exception as exc:  # noqa: BLE001 — rete non fatale
-        logger.warning("GDELT non raggiungibile: %s", exc)
-        return None
+        logger.warning("GDELT non raggiungibile: %s: %s", type(exc).__name__, exc)
+        return "error", None
 
     out: list[dict] = []
     for a in (data.get("articles") or []):
@@ -108,20 +133,22 @@ async def _gdelt_call(query_str: str, max_results: int, timespan: str) -> list[d
             testata=a.get("domain"), data=_fmt_gdelt_date(a.get("seendate")),
             language=a.get("language"), provider="gdelt", score=None,
         ))
-    return out
+    return "ok", out
 
 
 async def _gdelt(subject: dict, mode: str, max_results: int, lang: str,
-                 timespan: str) -> tuple[list[dict], str]:
+                 timespan: str) -> tuple[list[dict], str, str | None]:
     """Scala di fallback per massimizzare il recall senza restare a 0:
     1) mirata (nome + termini avversi) con filtro lingua;
     2) nome soltanto con filtro lingua;
     3) nome soltanto senza filtro lingua.
-    Ritorna (risultati, query effettivamente usata)."""
+    Prosegue al variante successivo SOLO se la precedente è andata a buon fine
+    ma senza articoli; su 429/errore si ferma (un solo retry sul 429) per non
+    peggiorare il rate limit. Ritorna (risultati, query_usata, note)."""
     targeted = qb.build_query(subject, "targeted")
     broad = qb.build_query(subject, "broad")
     if not broad:
-        return [], ""
+        return [], "", None
 
     def _with_lang(q: str) -> str:
         return f"{q} sourcelang:{lang}" if lang else q
@@ -133,18 +160,27 @@ async def _gdelt(subject: dict, mode: str, max_results: int, lang: str,
     if lang:
         variants.append(broad)  # ultimo tentativo: senza vincolo di lingua
 
-    last = variants[0]
     for vq in variants:
-        res = await _gdelt_call(vq, max_results, timespan)
-        last = vq
-        if res:
-            return res, vq
-    return [], last
+        status, payload = await _gdelt_call(vq, max_results, timespan)
+        if status == "ok":
+            if payload:
+                return payload, vq, None
+            continue  # ok ma nessun articolo → prova la variante successiva
+        if status == "rate_limited":
+            wait = min(payload or settings.gdelt_retry_wait, settings.gdelt_max_wait)
+            await asyncio.sleep(wait)
+            status2, payload2 = await _gdelt_call(vq, max_results, timespan)
+            if status2 == "ok" and payload2:
+                return payload2, vq, None
+            return [], vq, ("GDELT ha limitato le richieste (429). Attendi qualche "
+                            "secondo e riprova.")
+        return [], vq, "GDELT non raggiungibile o query rifiutata. Riprova più tardi."
+    return [], variants[-1], None
 
 
 async def search(subject: dict, mode: str, max_results: int, lang: str,
-                 timespan: str) -> tuple[list[dict], str]:
-    """Ritorna (risultati_grezzi, query_effettiva)."""
+                 timespan: str) -> tuple[list[dict], str, str | None]:
+    """Ritorna (risultati_grezzi, query_effettiva, note)."""
     if settings.search_provider == "gdelt":
         return await _gdelt(subject, mode, max_results, lang, timespan)
-    return _mock(subject, mode, max_results), qb.build_query(subject, mode)
+    return _mock(subject, mode, max_results), qb.build_query(subject, mode), None

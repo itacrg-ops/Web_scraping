@@ -32,6 +32,7 @@ export default function ScreeningPage() {
   const [results, setResults] = useState<SearchResult[] | null>(null);
   const [provider, setProvider] = useState<string>("");
   const [queryUsed, setQueryUsed] = useState<string>("");
+  const [note, setNote] = useState<string | null>(null);
   const [removed, setRemoved] = useState(0);
   const [onlyReliable, setOnlyReliable] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -63,6 +64,7 @@ export default function ScreeningPage() {
     setSearching(true);
     setError(null);
     setResults(null);
+    setNote(null);
     setSelected(new Set());
     try {
       const r = await searchPreview({
@@ -75,6 +77,7 @@ export default function ScreeningPage() {
       setResults(r.results);
       setRemoved(r.removed);
       setQueryUsed(r.query);
+      setNote(r.note ?? null);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -187,6 +190,8 @@ export default function ScreeningPage() {
               label="Escludi fonti a bassa credibilità (blog/UGC)"
             />
           </Box>
+
+          {note && <MuiAlert severity="warning" sx={{ py: 0 }}>{note}</MuiAlert>}
 
           {results && (
             <Paper variant="outlined" sx={{ p: 0 }}>

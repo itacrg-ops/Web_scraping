@@ -55,6 +55,7 @@ class SearchResponse(BaseModel):
     raw_count: int          # risultati grezzi prima di dedup/filtro
     removed: int            # rimossi da filtro credibilità + dedup per dominio
     min_credibility: str
+    note: str | None = None  # avviso (es. GDELT rate-limited / non raggiungibile)
     results: list[SearchResultOut] = []
 
 
@@ -104,7 +105,7 @@ async def search(req: SearchRequest) -> dict:
 
     # Over-fetch dal provider, così dopo la dedup restano abbastanza domini distinti.
     fetch_n = min(max_results * settings.dedup_overfetch, 250) if settings.dedup_by_domain else max_results
-    raw, query_used = await providers.search(subject, mode, fetch_n, lang, timespan)
+    raw, query_used, note = await providers.search(subject, mode, fetch_n, lang, timespan)
 
     results, removed = testate.postprocess(
         raw,
@@ -121,5 +122,6 @@ async def search(req: SearchRequest) -> dict:
         "raw_count": len(raw),
         "removed": removed,
         "min_credibility": min_cred,
+        "note": note,
         "results": results,
     }
