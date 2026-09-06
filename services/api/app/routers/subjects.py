@@ -152,7 +152,9 @@ async def import_subjects(
 
 
 @router.delete("/{subject_id}", status_code=204, dependencies=[Depends(require_user)])
-async def delete_subject(subject_id: str, session: AsyncSession = Depends(get_session)) -> None:
+async def delete_subject(subject_id: str, session: AsyncSession = Depends(get_session)):
+    # Nota: niente annotazione di ritorno `-> None` (FastAPI la tratterebbe come
+    # response model e va in conflitto con lo status 204 "senza body").
     row = await session.get(SubjectModel, subject_id)
     if row is None:
         raise HTTPException(status_code=404, detail="soggetto non trovato")

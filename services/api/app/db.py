@@ -86,8 +86,13 @@ async def run_migrations() -> None:
 
 async def init_db() -> None:
     await run_migrations()
-    await _seed_sources()
-    await _seed_subjects()
+    # Il seeding è NON fatale: un suo errore non deve rendere irraggiungibile
+    # l'intera API (le migrazioni, invece, restano fatali: schema corretto).
+    for seed in (_seed_sources, _seed_subjects):
+        try:
+            await seed()
+        except Exception:  # noqa: BLE001
+            logger.exception("Seed %s fallito (non fatale): l'API parte comunque", seed.__name__)
 
 
 async def _seed_sources() -> None:
