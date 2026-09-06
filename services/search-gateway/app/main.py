@@ -7,6 +7,8 @@ data, snippet) che poi vengono verificati e passati alla pipeline di screening.
 """
 from __future__ import annotations
 
+import time
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 
@@ -15,6 +17,26 @@ from app import testate
 from app.config import settings
 
 app = FastAPI(title="Search Gateway — Adverse Media", version="0.1.0")
+
+# Cache in-memory dei risultati GREZZI del provider (pre-dedup/filtro), così
+# ricerche ripetute nel loop di test non ribattono su GDELT (rate-limited).
+# Chiave: parametri che determinano la risposta del provider. TTL da config.
+_cache: dict[tuple, tuple[float, list, str]] = {}
+
+
+def _cache_get(key: tuple):
+    hit = _cache.get(key)
+    if hit and (time.monotonic() - hit[0]) < settings.search_cache_ttl:
+        return hit[1], hit[2]
+    return None
+
+
+def _cache_put(key: tuple, raw: list, query_used: str) -> None:
+    if settings.search_cache_ttl <= 0:
+        return
+    if len(_cache) > 500:
+        _cache.clear()
+    _cache[key] = (time.monotonic(), raw, query_used)
 
 
 class SubjectIn(BaseModel):
@@ -105,7 +127,20 @@ async def search(req: SearchRequest) -> dict:
 
     # Over-fetch dal provider, così dopo la dedup restano abbastanza domini distinti.
     fetch_n = min(max_results * settings.dedup_overfetch, 250) if settings.dedup_by_domain else max_results
-    raw, query_used, note = await providers.search(subject, mode, fetch_n, lang, timespan)
+
+    # Cache sui risultati grezzi (indipendente dal filtro credibilità, applicato dopo).
+    cache_key = (
+        settings.search_provider, mode, fetch_n, lang, timespan,
+        subject.get("tipo_soggetto"), subject.get("denominazione"),
+        subject.get("nome"), subject.get("cognome"),
+    )
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        raw, query_used, note = cached[0], cached[1], None
+    else:
+        raw, query_used, note = await providers.search(subject, mode, fetch_n, lang, timespan)
+        if note is None:  # cache solo risposte pulite (non 429/errori)
+            _cache_put(cache_key, raw, query_used)
 
     results, removed = testate.postprocess(
         raw,

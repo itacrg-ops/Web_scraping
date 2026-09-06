@@ -27,10 +27,15 @@ class Settings(BaseSettings):
     # Endpoint GDELT DOC 2.0 API (keyless).
     gdelt_endpoint: str = "https://api.gdeltproject.org/api/v2/doc/doc"
     # GDELT è rate-limited (~1 req/5s per IP). Intervallo minimo tra chiamate
-    # (throttle in-process) e attesa/cap sul retry dopo un 429.
+    # (throttle in-process), retry dopo un 429 (n. tentativi + attesa base/cap).
     gdelt_min_interval: float = 5.0
+    gdelt_retries: int = 2
     gdelt_retry_wait: float = 5.0
-    gdelt_max_wait: float = 6.0
+    gdelt_max_wait: float = 12.0
+
+    # Cache in-memory delle risposte di ricerca (TTL secondi): evita di ribattere
+    # su GDELT per ricerche ripetute nel loop di test. 0 = disattivata.
+    search_cache_ttl: int = 900
 
     # Deduplica per dominio: un (max_per_domain) articolo per testata.
     dedup_by_domain: bool = True

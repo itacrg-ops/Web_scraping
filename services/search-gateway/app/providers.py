@@ -167,13 +167,22 @@ async def _gdelt(subject: dict, mode: str, max_results: int, lang: str,
                 return payload, vq, None
             continue  # ok ma nessun articolo → prova la variante successiva
         if status == "rate_limited":
-            wait = min(payload or settings.gdelt_retry_wait, settings.gdelt_max_wait)
-            await asyncio.sleep(wait)
-            status2, payload2 = await _gdelt_call(vq, max_results, timespan)
-            if status2 == "ok" and payload2:
-                return payload2, vq, None
+            retry_after = payload  # secondi dal 429 (o None)
+            result = None
+            for attempt in range(1, settings.gdelt_retries + 1):
+                wait = min(retry_after or settings.gdelt_retry_wait * attempt, settings.gdelt_max_wait)
+                await asyncio.sleep(wait)
+                st, pl = await _gdelt_call(vq, max_results, timespan)
+                if st == "ok":
+                    result = pl
+                    break
+                if st == "error":
+                    break
+                retry_after = pl  # ancora 429: aggiorna eventuale Retry-After
+            if result:
+                return result, vq, None
             return [], vq, ("GDELT ha limitato le richieste (429). Attendi qualche "
-                            "secondo e riprova.")
+                            "secondo e riprova, oppure dirada le ricerche.")
         return [], vq, "GDELT non raggiungibile o query rifiutata. Riprova più tardi."
     return [], variants[-1], None
 
