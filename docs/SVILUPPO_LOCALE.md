@@ -59,6 +59,13 @@ data di nascita restringe i candidati ma **non risolve da sola**; il **CF** riso
 in modo deterministico, ma se è indicata **anche** una data di nascita
 **discordante** il gate non passa (`needs_review`: input contraddittorio).
 
+> **Soggetto non a registro** (es. cerchi "Italware" e non è tra i soggetti noti):
+> di default il gate resta `unresolved` (HITL) — è corretto, in produzione il
+> registro contiene i beneficiari reali. Per **provare la pipeline su qualsiasi
+> nome** in locale, imposta `ALLOW_UNREGISTERED_SUBJECT=true`: il soggetto viene
+> risolto come **`provvisorio`** (screening esplorativo, non autoritativo) e
+> l'alert è marcato di conseguenza. Non tocca i casi ambigui.
+
 Soggetti nel registro seed (`services/entity-resolution/app/resolver.py`):
 
 | Soggetto | Tipo | Identificatore forte | Data di nascita |

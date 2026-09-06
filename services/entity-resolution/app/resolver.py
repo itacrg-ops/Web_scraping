@@ -197,6 +197,26 @@ def resolve(subject: dict) -> dict:
         status = "needs_review"
     else:
         status = "unresolved"
+
+    # Modalità ESPLORATIVA (default OFF): soggetto non a registro (nessun
+    # candidato) → risoluzione PROVVISORIA, non autoritativa, per esercitare
+    # comunque la pipeline. Non tocca i casi ambigui (lì serve disambiguare).
+    if status == "unresolved" and settings.allow_unregistered_subject:
+        return {
+            "resolved": True,
+            "status": "provvisorio",
+            "method": "non_a_registro",
+            "confidence": 0.3,
+            "identifier_valid": id_ok,
+            "matched": None,
+            "candidates": [],
+            "warnings": warnings + [
+                "Soggetto NON presente nel registro dei soggetti noti: screening "
+                "ESPLORATIVO (non autoritativo). Identità e pertinenza all'intervento "
+                "(CUP) da verificare manualmente."
+            ],
+        }
+
     hint = (
         "Disambiguazione non conclusiva: richiesta revisione umana "
         "(nessun giudizio senza Entity Resolution)."

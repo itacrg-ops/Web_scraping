@@ -169,6 +169,11 @@ class ScreeningWorkflow:
                 0,
                 "⚠ Soggetto non citato negli articoli analizzati: verificare attribuzione (possibile falsa attribuzione)",
             )
+        if resolution.get("status") == "provvisorio":
+            drivers.insert(
+                0,
+                "⚠ Screening ESPLORATIVO: soggetto non a registro — identità e pertinenza al CUP da verificare",
+            )
 
         alert_payload = {
             "subject": subject["denominazione"],

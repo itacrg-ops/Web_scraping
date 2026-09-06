@@ -19,5 +19,11 @@ class Settings(BaseSettings):
     # in cui il nome è sufficiente (es. denominazioni univoche verificate).
     allow_name_only_resolution: bool = False
 
+    # Screening ESPLORATIVO (default OFF): se il soggetto NON è a registro
+    # (nessun candidato), consente di procedere con una risoluzione PROVVISORIA
+    # e non autoritativa. Utile in locale per esercitare la pipeline su qualsiasi
+    # nome; in produzione è un'azione deliberata dell'analista (alert marcato).
+    allow_unregistered_subject: bool = False
+
 
 settings = Settings()
