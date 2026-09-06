@@ -2,11 +2,11 @@
 
 - `mock` (default): risultati deterministici, nessuna rete. Serve allo sviluppo
   locale e all'anteprima in console senza dipendenze esterne.
-- `gdelt`: GDELT DOC 2.0 API (news globale, **keyless**). Adatto a locale/pilota.
+- `gdelt`: GDELT DOC 2.0 API (news globale, **keyless**), ma rate-limited/instabile.
+- `brave`: Brave Search API (news, **a chiave**), affidabile per il pilota.
 
-Altri provider (Bing/Brave/SerpAPI/Google CSE via API key, o feed licenziati tipo
-Dow Jones/Factiva) si aggiungono qui implementando la stessa firma e restituendo
-la stessa forma di risultato.
+Altri provider (SerpAPI/Google CSE, o feed licenziati tipo Dow Jones/Factiva) si
+aggiungono qui implementando la stessa firma (ritorna (risultati, query, note)).
 """
 from __future__ import annotations
 
@@ -104,7 +104,7 @@ async def _gdelt_call(query_str: str, max_results: int, timespan: str) -> tuple[
     await _throttle_gdelt()
     try:
         async with httpx.AsyncClient(timeout=settings.request_timeout,
-                                     headers={"User-Agent": settings.user_agent}) as c:
+                                     headers={"User-Agent": settings.gdelt_user_agent}) as c:
             r = await c.get(settings.gdelt_endpoint, params=params)
         if r.status_code == 429:
             ra = r.headers.get("Retry-After")
@@ -187,9 +187,61 @@ async def _gdelt(subject: dict, mode: str, max_results: int, lang: str,
     return [], variants[-1], None
 
 
+# --- Provider Brave Search (a chiave, affidabile) --------------------------
+def _brave_date(a: dict) -> str | None:
+    pa = a.get("page_age") or a.get("age")
+    if pa and len(pa) >= 10 and pa[4] == "-" and pa[7] == "-":
+        return pa[:10]  # ISO -> YYYY-MM-DD
+    return pa  # es. "2 days ago" (relativo)
+
+
+async def _brave(subject: dict, mode: str, max_results: int, lang: str,
+                 timespan: str) -> tuple[list[dict], str, str | None]:
+    if not settings.brave_api_key:
+        return [], "", "Brave non configurato: imposta BRAVE_API_KEY nel .env."
+    query_str = qb.build_query(subject, mode) or qb.build_query(subject, "broad")
+    if not query_str:
+        return [], "", None
+    params = {
+        "q": query_str,
+        "country": settings.brave_country,
+        "search_lang": lang or settings.brave_country,
+        "count": max(1, min(max_results, 50)),
+    }
+    headers = {"Accept": "application/json", "X-Subscription-Token": settings.brave_api_key}
+    try:
+        async with httpx.AsyncClient(timeout=settings.request_timeout) as c:
+            r = await c.get(settings.brave_endpoint, params=params, headers=headers)
+        if r.status_code == 429:
+            return [], query_str, "Brave ha limitato le richieste (429). Riprova tra poco."
+        if r.status_code in (401, 403):
+            return [], query_str, "Brave: chiave non valida o non autorizzata (BRAVE_API_KEY)."
+        if r.status_code != 200:
+            logger.warning("Brave status %s", r.status_code)
+            return [], query_str, "Brave non raggiungibile. Riprova più tardi."
+        data = r.json()
+    except Exception as exc:  # noqa: BLE001 — rete non fatale
+        logger.warning("Brave non raggiungibile: %s: %s", type(exc).__name__, exc)
+        return [], query_str, "Brave non raggiungibile. Riprova più tardi."
+
+    out: list[dict] = []
+    for a in (data.get("results") or []):
+        url = a.get("url")
+        if not url:
+            continue
+        out.append(_result(
+            url=url, title=a.get("title"), snippet=a.get("description"),
+            testata=(a.get("meta_url") or {}).get("hostname"),
+            data=_brave_date(a), language=lang or None, provider="brave", score=None,
+        ))
+    return out, query_str, None
+
+
 async def search(subject: dict, mode: str, max_results: int, lang: str,
                  timespan: str) -> tuple[list[dict], str, str | None]:
     """Ritorna (risultati_grezzi, query_effettiva, note)."""
     if settings.search_provider == "gdelt":
         return await _gdelt(subject, mode, max_results, lang, timespan)
+    if settings.search_provider == "brave":
+        return await _brave(subject, mode, max_results, lang, timespan)
     return _mock(subject, mode, max_results), qb.build_query(subject, mode), None

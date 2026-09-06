@@ -129,14 +129,17 @@ Provider (`SEARCH_PROVIDER` nel `.env`):
   e il wiring. Include un duplicato di dominio (per mostrare la dedup) e una testata
   a bassa credibilità (per mostrare il filtro). Gli URL `*.example` non risolvono
   (il fetch reale darà poco segnale).
-- **`gdelt`** (keyless): news reale globale, adatta al pilota. Nessuna API key.
+- **`gdelt`** (keyless): news reale globale, **ma rate-limited/instabile** (può
+  rispondere 429 anche da fermo, sotto carico). Va bene per prove occasionali, non
+  per un uso intensivo. Filtri: `SEARCH_DEFAULT_LANG`, `SEARCH_TIMESPAN`.
+- **`brave`** (a chiave, **affidabile** — consigliato per il pilota): Brave Search
+  API. Ottieni una chiave free su <https://brave.com/search/api>, poi:
   ```bash
-  SEARCH_PROVIDER=gdelt docker compose -f docker-compose.dev.yml up -d --build search-gateway
+  # nel .env: SEARCH_PROVIDER=brave e BRAVE_API_KEY=...
+  docker compose -f docker-compose.dev.yml up -d --build search-gateway
   ```
-  Filtri: `SEARCH_DEFAULT_LANG` (lingua GDELT, es. `italian`) e `SEARCH_TIMESPAN`
-  (es. `24h`, `1w`, `3m`, `6m`). Altri provider (Bing/Brave/SerpAPI/Google CSE via
-  API key, o feed licenziati Dow Jones/Factiva) si innestano su
-  `services/search-gateway/app/providers.py`.
+- Altri provider (SerpAPI/Google CSE, o feed licenziati Dow Jones/Factiva) si
+  innestano su `services/search-gateway/app/providers.py`.
 
 ### AMI: pesatura per credibilità e corroborazione
 L'AMI non dipende solo dalla gravità: **AMI = base(severità) × credibilità ×

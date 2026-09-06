@@ -11,7 +11,8 @@ class Settings(BaseSettings):
     app_env: str = "development"
 
     # Provider di ricerca: "mock" (default locale, nessuna rete) | "gdelt" (news
-    # globale keyless). Altri provider (API key, feed licenziati) si innestano
+    # globale keyless, ma rate-limited/instabile) | "brave" (Brave Search API,
+    # a chiave, affidabile). Altri (SerpAPI/CSE, feed licenziati) si innestano
     # sull'astrazione in providers.py.
     search_provider: str = "mock"
 
@@ -26,6 +27,14 @@ class Settings(BaseSettings):
 
     # Endpoint GDELT DOC 2.0 API (keyless).
     gdelt_endpoint: str = "https://api.gdeltproject.org/api/v2/doc/doc"
+    # UA "browser" per le chiamate GDELT: alcuni CDN penalizzano gli UA bot.
+    gdelt_user_agent: str = "Mozilla/5.0 (compatible; AdverseMediaScreening/0.1)"
+
+    # Brave Search API (provider "brave"): chiave e endpoint news. Free tier
+    # generoso; nessuna chiave nel repo (solo via .env).
+    brave_api_key: str = ""
+    brave_endpoint: str = "https://api.search.brave.com/res/v1/news/search"
+    brave_country: str = "it"
     # GDELT è rate-limited (~1 req/5s per IP). Intervallo minimo tra chiamate
     # (throttle in-process), retry dopo un 429 (n. tentativi + attesa base/cap).
     gdelt_min_interval: float = 5.0
