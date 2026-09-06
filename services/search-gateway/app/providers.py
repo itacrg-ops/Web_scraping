@@ -159,6 +159,9 @@ async def _gdelt(subject: dict, mode: str, max_results: int, lang: str,
     variants.append(_with_lang(broad))
     if lang:
         variants.append(broad)  # ultimo tentativo: senza vincolo di lingua
+    # dedup preservando l'ordine (con qualificatori targeted==broad).
+    _seen: set[str] = set()
+    variants = [v for v in variants if not (v in _seen or _seen.add(v))]
 
     for vq in variants:
         status, payload = await _gdelt_call(vq, max_results, timespan)

@@ -47,6 +47,9 @@ async def start_screening(
         "cognome": req.cognome,
         "data_nascita": req.data_nascita,
         "cf_piva": req.cf_piva,
+        "azienda": req.azienda,
+        "localita": req.localita,
+        "ruolo": req.ruolo,
         "cup": req.cup,
         # Precedenza: seed_url (override) → seed_urls (candidati console) →
         # ricerca automatica nel workflow (se entrambi vuoti).

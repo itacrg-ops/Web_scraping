@@ -67,9 +67,27 @@ def _entity_names(subject: dict) -> list[str]:
     return [cleaned] if cleaned else [d]
 
 
+def _is_person(subject: dict) -> bool:
+    return (subject.get("tipo_soggetto") or "persona_giuridica") == PERSONA_FISICA
+
+
 def name_variants(subject: dict) -> list[str]:
-    is_person = (subject.get("tipo_soggetto") or "persona_giuridica") == PERSONA_FISICA
-    return _person_names(subject) if is_person else _entity_names(subject)
+    return _person_names(subject) if _is_person(subject) else _entity_names(subject)
+
+
+def _qualifiers(subject: dict) -> list[str]:
+    """Qualificatori forti per la persona fisica: azienda e località, come frasi
+    quotate in AND. Riducono drasticamente l'omonimia. Il RUOLO NON entra qui:
+    da solo raramente compare negli articoli e in AND taglierebbe il recall
+    (è usato a valle come corroborazione)."""
+    if not _is_person(subject):
+        return []
+    out = []
+    for key in ("azienda", "localita"):
+        v = (subject.get(key) or "").strip()
+        if v:
+            out.append(f'"{v}"')
+    return out
 
 
 def build_query(subject: dict, mode: str = "targeted") -> str:
@@ -80,7 +98,16 @@ def build_query(subject: dict, mode: str = "targeted") -> str:
         name_clause = "(" + " OR ".join(f'"{n}"' for n in names) + ")"
     else:
         name_clause = f'"{names[0]}"'
+
+    quals = _qualifiers(subject)
+    base = " ".join([name_clause, *quals])
+
     if mode == "broad":
-        return name_clause
+        return base
+    # Se ci sono qualificatori forti (azienda/località) il soggetto è già molto
+    # specifico: NON aggiungo l'AND sui termini avversi, per preservare il recall
+    # sulla persona giusta (l'adverse lo decide la classificazione FATF a valle).
+    if quals:
+        return base
     adverse_clause = "(" + " OR ".join(ADVERSE_TERMS) + ")"
-    return f"{name_clause} {adverse_clause}"
+    return f"{base} {adverse_clause}"

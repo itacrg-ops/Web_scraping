@@ -24,6 +24,10 @@ export default function ScreeningPage() {
   const [nome, setNome] = useState("Mario");
   const [dataNascita, setDataNascita] = useState("");
   const [cfPiva, setCfPiva] = useState("00743110157");
+  // Qualificatori di ricerca (persona fisica)
+  const [azienda, setAzienda] = useState("");
+  const [localita, setLocalita] = useState("");
+  const [ruolo, setRuolo] = useState("");
   const [cup, setCup] = useState("E51B21000000001");
   const [seedUrl, setSeedUrl] = useState("");
 
@@ -58,6 +62,9 @@ export default function ScreeningPage() {
     nome: isPerson ? nome : undefined,
     cognome: isPerson ? cognome : undefined,
     cf_piva: cfPiva || undefined,
+    azienda: isPerson && azienda ? azienda : undefined,
+    localita: isPerson && localita ? localita : undefined,
+    ruolo: isPerson && ruolo ? ruolo : undefined,
   });
 
   async function search() {
@@ -171,6 +178,20 @@ export default function ScreeningPage() {
                 helperText="Facoltativa: disambigua l'omonimia." />
             )}
           </Stack>
+
+          {isPerson && (
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <TextField label="Azienda" value={azienda}
+                onChange={(e) => setAzienda(e.target.value)} fullWidth
+                helperText="Qualificatore forte (in AND nella ricerca)." />
+              <TextField label="Località" value={localita}
+                onChange={(e) => setLocalita(e.target.value)} fullWidth
+                helperText="Qualificatore forte (in AND nella ricerca)." />
+              <TextField label="Ruolo" value={ruolo}
+                onChange={(e) => setRuolo(e.target.value)} fullWidth
+                helperText="Soft: non filtra la ricerca, corrobora sugli articoli." />
+            </Stack>
+          )}
 
           <TextField label="CUP (separati da virgola)" value={cup}
             onChange={(e) => setCup(e.target.value)} fullWidth />

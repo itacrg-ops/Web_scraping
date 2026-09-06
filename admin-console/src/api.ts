@@ -78,6 +78,9 @@ export interface ScreeningRequest {
   cognome?: string;    // solo persona fisica
   data_nascita?: string; // ISO YYYY-MM-DD, disambiguante (persona fisica)
   cf_piva?: string;
+  azienda?: string;    // persona fisica: qualificatore ricerca (AND)
+  localita?: string;   // persona fisica: qualificatore ricerca (AND)
+  ruolo?: string;      // persona fisica: soft (corroborazione, non in query)
   cup: string[];
   seed_url?: string;       // URL singolo (override manuale)
   seed_urls?: string[];    // articoli scelti dalla web search
@@ -117,6 +120,9 @@ export interface SearchPreviewRequest {
   nome?: string;
   cognome?: string;
   cf_piva?: string;
+  azienda?: string;
+  localita?: string;
+  ruolo?: string;
   mode?: "broad" | "targeted";
   max_results?: number;
   min_credibility?: "none" | "bassa" | "sconosciuta" | "media" | "alta";

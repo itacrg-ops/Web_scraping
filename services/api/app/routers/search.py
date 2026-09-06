@@ -22,6 +22,9 @@ class PreviewRequest(BaseModel):
     nome: str | None = None
     cognome: str | None = None
     cf_piva: str | None = None
+    azienda: str | None = None          # persona fisica: qualificatore (query AND)
+    localita: str | None = None         # persona fisica: qualificatore (query AND)
+    ruolo: str | None = None            # persona fisica: soft (non in query)
     mode: str = "targeted"              # broad | targeted
     max_results: int | None = None
     min_credibility: str | None = None  # none | bassa | media | alta
@@ -36,6 +39,9 @@ async def preview(req: PreviewRequest) -> dict:
             "nome": req.nome,
             "cognome": req.cognome,
             "cf_piva": req.cf_piva,
+            "azienda": req.azienda,
+            "localita": req.localita,
+            "ruolo": req.ruolo,
         },
         "mode": req.mode,
         "max_results": req.max_results,

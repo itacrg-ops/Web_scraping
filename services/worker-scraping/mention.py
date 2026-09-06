@@ -59,6 +59,17 @@ def _check_entity(subject: dict, tnorm: str, matched: list[str]) -> list[str]:
     return distinctive
 
 
+def _context_matches(subject: dict, tnorm: str) -> list[str]:
+    """Corroborazione anti-omonimia: quali qualificatori (azienda/località/ruolo)
+    co-occorrono nel testo. Il ruolo è un segnale debole (soft)."""
+    out: list[str] = []
+    for key in ("azienda", "localita", "ruolo"):
+        v = _norm(subject.get(key, ""))
+        if v and v in tnorm:
+            out.append(key)
+    return out
+
+
 def check(subject: dict, text: str) -> dict:
     tnorm = _norm(text)
     tnorm_nospace = tnorm.replace(" ", "")
@@ -73,4 +84,9 @@ def check(subject: dict, text: str) -> dict:
     else:
         distinctive = _check_entity(subject, tnorm, matched)
 
-    return {"mentioned": bool(matched), "matched": sorted(set(matched)), "distinctive": distinctive}
+    return {
+        "mentioned": bool(matched),
+        "matched": sorted(set(matched)),
+        "distinctive": distinctive,
+        "context": _context_matches(subject, tnorm),
+    }

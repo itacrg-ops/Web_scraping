@@ -122,6 +122,16 @@ articolo e produce **un alert con più evidenze** (una per articolo recuperato e
 con hash). La query di ricerca è nome/denominazione + termini avversi FATF
 (indagato, corruzione, sequestro, …).
 
+**Qualificatori persona fisica (anti-omonimia).** Per una persona si possono
+indicare (opzionali) **Azienda** e **Località**: entrano nella query come
+qualificatori **in AND forte** (`"Mario Rossi" "Italware" "Cagliari"`) e, quando
+presenti, i termini avversi non sono più obbligatori (il recall resta alto, è la
+classificazione FATF a stabilire l'adverse). Il **Ruolo** è invece *soft*: non
+filtra la ricerca (da solo taglierebbe articoli), ma viene usato — con
+azienda/località — come **corroborazione sull'articolo**: se co-occorrono col
+nome, la probabilità di omonimia cala (driver "Contesto confermato"); se il nome
+compare senza alcun contesto, l'alert è marcato "⚠ possibile omonimo".
+
 **Deduplica per dominio e credibilità delle testate** (§5.1). I risultati sono:
 - **deduplicati per dominio** (`MAX_PER_DOMAIN=1`): un articolo per testata, per
   favorire la corroborazione da fonti indipendenti;

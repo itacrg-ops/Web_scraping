@@ -50,6 +50,10 @@ class ScreeningWorkflow:
             "cognome": req.get("cognome"),
             "data_nascita": req.get("data_nascita"),
             "cf_piva": req.get("cf_piva"),
+            # Qualificatori persona fisica: azienda/località (query in AND) e ruolo (soft).
+            "azienda": req.get("azienda"),
+            "localita": req.get("localita"),
+            "ruolo": req.get("ruolo"),
             "cup": req.get("cup", []),
         }
 
@@ -127,6 +131,7 @@ class ScreeningWorkflow:
             )
             info = cred_map.get(url) or {}
             doc["_mentioned"] = bool(men.get("mentioned"))
+            doc["_context"] = men.get("context", [])
             doc["_credibilita"] = info.get("credibilita")
             doc["_domain"] = info.get("domain")
             any_mention = any_mention or doc["_mentioned"]
@@ -169,6 +174,23 @@ class ScreeningWorkflow:
                 0,
                 "⚠ Soggetto non citato negli articoli analizzati: verificare attribuzione (possibile falsa attribuzione)",
             )
+
+        # Corroborazione del contesto (persona fisica): azienda/località/ruolo
+        # riscontrati negli articoli che citano il soggetto → riduce l'omonimia;
+        # altrimenti segnala "possibile omonimo".
+        _qual_keys = ("azienda", "localita", "ruolo")
+        _labels = {"azienda": "azienda", "localita": "località", "ruolo": "ruolo"}
+        has_quals = subject["tipo_soggetto"] == "persona_fisica" and any(subject.get(k) for k in _qual_keys)
+        if has_quals and any_mention:
+            context_hits = sorted({c for d in docs if d.get("_mentioned") for c in (d.get("_context") or [])})
+            if context_hits:
+                drivers.insert(0, "Contesto confermato negli articoli ("
+                               + ", ".join(_labels.get(c, c) for c in context_hits)
+                               + "): probabilità di omonimia ridotta")
+            else:
+                drivers.insert(0, "⚠ Contesto (azienda/località/ruolo) non riscontrato negli articoli "
+                               "citanti: possibile omonimo, verificare l'identità")
+
         if resolution.get("status") == "provvisorio":
             drivers.insert(
                 0,

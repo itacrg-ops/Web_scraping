@@ -45,6 +45,11 @@ class SubjectIn(BaseModel):
     nome: str | None = None
     cognome: str | None = None
     cf_piva: str | None = None
+    # Qualificatori (persona fisica): azienda e località entrano nella query in
+    # AND forte; il ruolo è soft (non nella query).
+    azienda: str | None = None
+    localita: str | None = None
+    ruolo: str | None = None
 
 
 class SearchRequest(BaseModel):

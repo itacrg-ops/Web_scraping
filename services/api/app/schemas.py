@@ -38,6 +38,11 @@ class ScreeningRequest(BaseModel):
     cognome: str | None = None         # solo persona fisica
     data_nascita: str | None = None    # ISO YYYY-MM-DD, disambiguante (persona fisica)
     cf_piva: str | None = None
+    # Qualificatori di ricerca (persona fisica): azienda/località entrano nella
+    # query in AND forte; ruolo è soft (corroborazione a valle, non nella query).
+    azienda: str | None = None
+    localita: str | None = None
+    ruolo: str | None = None
     cup: list[str] = []
     # Sorgenti da screenare (precedenza: seed_url → seed_urls → ricerca automatica):
     seed_url: str | None = None         # URL singolo (override manuale)

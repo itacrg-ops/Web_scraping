@@ -35,7 +35,8 @@ async def search_articles(subject: dict, options: dict | None = None) -> list[di
     options = options or {}
     payload = {
         "subject": {k: subject.get(k) for k in
-                    ("tipo_soggetto", "denominazione", "nome", "cognome", "cf_piva")},
+                    ("tipo_soggetto", "denominazione", "nome", "cognome", "cf_piva",
+                     "azienda", "localita", "ruolo")},
         "mode": options.get("mode", "targeted"),
         "max_results": options.get("max_results"),
     }
