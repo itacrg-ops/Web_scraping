@@ -81,6 +81,18 @@ class SubjectCreate(BaseModel):
         return self
 
 
+class SubjectUpdate(BaseModel):
+    """Modifica (parziale) di un soggetto — solo i campi inviati vengono applicati."""
+
+    tipo_soggetto: str | None = None
+    denominazione: str | None = None
+    cf_piva: str | None = None
+    data_nascita: str | None = None
+    cup: list[str] | None = None
+    ruolo: str | None = None
+    attivo: bool | None = None
+
+
 class SubjectOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -93,6 +105,20 @@ class SubjectOut(BaseModel):
     ruolo: str | None = None
     attivo: bool = True
     created_at: datetime
+
+
+class SubjectImportRequest(BaseModel):
+    """Import massivo del registro da CSV (testo). Colonne attese (header):
+    tipo_soggetto, denominazione, nome, cognome, cf_piva, data_nascita, cup, ruolo.
+    `cup` separati da `;`. Upsert per CF/P.IVA quando presente."""
+
+    csv: str
+
+
+class SubjectImportResult(BaseModel):
+    created: int = 0
+    updated: int = 0
+    errors: list[str] = []
 
 
 class ScreeningOut(BaseModel):

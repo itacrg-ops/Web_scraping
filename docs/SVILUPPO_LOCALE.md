@@ -70,9 +70,17 @@ in modo deterministico, ma se è indicata **anche** una data di nascita
 >    pipeline su qualsiasi nome. Non tocca i casi ambigui.
 
 Il **registro soggetti** è persistito su PostgreSQL (sistema di record dell'API)
-e gestibile dalla tab **Soggetti** (aggiungi/elimina). L'entity-resolution lo
-legge dall'API con una cache breve (`REGISTRY_TTL`, default 30s), quindi le
-modifiche diventano effettive entro pochi secondi.
+e gestibile dalla tab **Soggetti**: aggiungi, **modifica in linea** (icona
+matita → salva/annulla, incluso il flag *attivo*), elimina e **importa da CSV**.
+L'entity-resolution lo legge dall'API con una cache breve (`REGISTRY_TTL`,
+default 30s), quindi le modifiche diventano effettive entro pochi secondi.
+
+**Import CSV** (bottone *Importa CSV*, template scaricabile): header
+`tipo_soggetto,denominazione,nome,cognome,cf_piva,data_nascita,cup,ruolo`
+(più CUP nella stessa cella separati da `;`). L'import fa **upsert per CF/P.IVA**
+(aggiorna se presente, altrimenti crea) e riporta righe create/aggiornate/errori.
+Per la persona fisica la denominazione è composta come "Cognome Nome". È la base
+per una futura **sincronizzazione da ReGiS/OpenCoesione/InfoCamere**.
 
 Soggetti nel registro seed (`services/entity-resolution/app/resolver.py`):
 

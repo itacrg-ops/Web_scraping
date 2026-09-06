@@ -155,9 +155,35 @@ export interface SubjectCreate {
   ruolo?: string;
 }
 
+// Modifica parziale: solo i campi inviati vengono applicati.
+export interface SubjectUpdate {
+  denominazione?: string;
+  cf_piva?: string;
+  data_nascita?: string;
+  cup?: string[];
+  ruolo?: string;
+  attivo?: boolean;
+}
+
+export interface SubjectImportResult {
+  created: number;
+  updated: number;
+  errors: string[];
+}
+
 async function postJSON<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
+    headers: await authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return (await res.json()) as T;
+}
+
+async function patchJSON<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "PATCH",
     headers: await authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
@@ -179,5 +205,9 @@ export const searchPreview = (body: SearchPreviewRequest) =>
   postJSON<SearchResponse>("/api/search/preview", body);
 export const listSubjects = () => getJSON<Subject[]>("/api/subjects");
 export const createSubject = (body: SubjectCreate) => postJSON<Subject>("/api/subjects", body);
+export const updateSubject = (id: string, body: SubjectUpdate) =>
+  patchJSON<Subject>(`/api/subjects/${id}`, body);
 export const deleteSubject = (id: string) => deleteReq(`/api/subjects/${id}`);
+export const importSubjects = (csvText: string) =>
+  postJSON<SubjectImportResult>("/api/subjects/import", { csv: csvText });
 export { API_BASE };
