@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from app import providers
 from app import query as qb
+from app import testate
 from app.config import settings
 
 app = FastAPI(title="Search Gateway — Adverse Media", version="0.1.0")
@@ -31,6 +32,7 @@ class SearchRequest(BaseModel):
     max_results: int | None = None
     lang: str | None = None         # override del filtro lingua (None = default)
     timespan: str | None = None
+    min_credibility: str | None = None  # override soglia credibilità (none|bassa|media|alta)
 
 
 class SearchResultOut(BaseModel):
@@ -38,6 +40,8 @@ class SearchResultOut(BaseModel):
     title: str | None = None
     snippet: str | None = None
     testata: str | None = None
+    domain: str | None = None
+    testata_credibilita: str | None = None
     data: str | None = None
     language: str | None = None
     provider: str
@@ -49,6 +53,9 @@ class SearchResponse(BaseModel):
     query: str
     mode: str
     count: int
+    raw_count: int          # risultati grezzi prima di dedup/filtro
+    removed: int            # rimossi da filtro credibilità + dedup per dominio
+    min_credibility: str
     results: list[SearchResultOut] = []
 
 
@@ -65,12 +72,26 @@ async def search(req: SearchRequest) -> dict:
     max_results = req.max_results or settings.search_max_results
     lang = settings.search_default_lang if req.lang is None else req.lang
     timespan = req.timespan or settings.search_timespan
+    min_cred = req.min_credibility if req.min_credibility is not None else settings.min_credibility
 
-    results = await providers.search(query_str, subject, mode, max_results, lang, timespan)
+    # Over-fetch dal provider, così dopo la dedup restano abbastanza domini distinti.
+    fetch_n = min(max_results * settings.dedup_overfetch, 250) if settings.dedup_by_domain else max_results
+    raw = await providers.search(query_str, subject, mode, fetch_n, lang, timespan)
+
+    results, removed = testate.postprocess(
+        raw,
+        dedup_by_domain=settings.dedup_by_domain,
+        max_per_domain=settings.max_per_domain,
+        min_credibility=min_cred,
+        max_results=max_results,
+    )
     return {
         "provider": settings.search_provider,
         "query": query_str,
         "mode": mode,
         "count": len(results),
+        "raw_count": len(raw),
+        "removed": removed,
+        "min_credibility": min_cred,
         "results": results,
     }

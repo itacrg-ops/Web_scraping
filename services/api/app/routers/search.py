@@ -22,8 +22,9 @@ class PreviewRequest(BaseModel):
     nome: str | None = None
     cognome: str | None = None
     cf_piva: str | None = None
-    mode: str = "targeted"          # broad | targeted
+    mode: str = "targeted"              # broad | targeted
     max_results: int | None = None
+    min_credibility: str | None = None  # none | bassa | media | alta
 
 
 @router.post("/preview")
@@ -38,6 +39,7 @@ async def preview(req: PreviewRequest) -> dict:
         },
         "mode": req.mode,
         "max_results": req.max_results,
+        "min_credibility": req.min_credibility,
     }
     try:
         async with httpx.AsyncClient(timeout=30) as client:

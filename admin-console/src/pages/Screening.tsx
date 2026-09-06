@@ -1,14 +1,18 @@
 import { useState } from "react";
 import {
   Alert as MuiAlert, Box, Button, Checkbox, Chip, CircularProgress, Divider,
-  Link, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Paper, Stack,
-  TextField, ToggleButton, ToggleButtonGroup, Typography,
+  FormControlLabel, Link, List, ListItem, ListItemButton, ListItemIcon, ListItemText,
+  Paper, Stack, Switch, TextField, ToggleButton, ToggleButtonGroup, Typography,
 } from "@mui/material";
 import SearchIcon from "@mui/icons-material/Search";
 import {
   getScreening, searchPreview, startScreening,
-  type Screening, type SearchResult, type TipoSoggetto,
+  type Credibilita, type Screening, type SearchResult, type TipoSoggetto,
 } from "../api";
+
+// Colore del chip credibilità testata.
+const credColor = (c?: Credibilita | null): "success" | "warning" | "default" =>
+  c === "alta" ? "success" : c === "media" ? "warning" : "default";
 
 // Prova end-to-end: soggetto → (web search o URL) → workflow Temporal →
 // Entity Resolution → fetch/estrazione/menzione per articolo → FATF → AMI →
@@ -27,6 +31,8 @@ export default function ScreeningPage() {
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<SearchResult[] | null>(null);
   const [provider, setProvider] = useState<string>("");
+  const [removed, setRemoved] = useState(0);
+  const [onlyReliable, setOnlyReliable] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const [busy, setBusy] = useState(false);
@@ -58,9 +64,13 @@ export default function ScreeningPage() {
     setResults(null);
     setSelected(new Set());
     try {
-      const r = await searchPreview({ ...subjectFields(), mode: "targeted" });
+      const r = await searchPreview({
+        ...subjectFields(), mode: "targeted",
+        min_credibility: onlyReliable ? "media" : undefined,
+      });
       setProvider(r.provider);
       setResults(r.results);
+      setRemoved(r.removed);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -162,18 +172,24 @@ export default function ScreeningPage() {
             <Typography variant="overline" color="text.secondary">Ricerca articoli (web search)</Typography>
           </Divider>
 
-          <Box>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
             <Button variant="outlined" startIcon={<SearchIcon />} onClick={search}
               disabled={searching || !hasSubject}>
               {searching ? "Ricerca…" : "Cerca articoli"}
             </Button>
+            <FormControlLabel
+              control={<Switch size="small" checked={onlyReliable}
+                onChange={(e) => setOnlyReliable(e.target.checked)} />}
+              label="Solo testate affidabili (≥ media)"
+            />
           </Box>
 
           {results && (
             <Paper variant="outlined" sx={{ p: 0 }}>
-              <Box sx={{ px: 2, py: 1, display: "flex", alignItems: "center", gap: 1 }}>
+              <Box sx={{ px: 2, py: 1, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
                 <Typography variant="body2" color="text.secondary">
                   {results.length} risultati
+                  {removed > 0 && ` · ${removed} rimossi (dedup dominio / credibilità)`}
                 </Typography>
                 <Chip size="small" label={`provider: ${provider}`} />
                 {results.length > 0 && (
@@ -201,11 +217,20 @@ export default function ScreeningPage() {
                             checked={selected.has(r.url)} />
                         </ListItemIcon>
                         <ListItemText
-                          primary={r.title || r.url}
+                          primary={
+                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                              <span>{r.title || r.url}</span>
+                              {r.testata_credibilita && (
+                                <Chip size="small" variant="outlined"
+                                  label={r.testata_credibilita}
+                                  color={credColor(r.testata_credibilita)} />
+                              )}
+                            </Box>
+                          }
                           secondary={
                             <>
                               <Typography variant="caption" color="text.secondary">
-                                {[r.testata, r.data].filter(Boolean).join(" · ")}
+                                {[r.domain || r.testata, r.data].filter(Boolean).join(" · ")}
                               </Typography>
                               {r.snippet && (
                                 <Typography variant="caption" display="block" color="text.secondary"

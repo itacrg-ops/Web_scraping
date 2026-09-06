@@ -99,9 +99,22 @@ articolo e produce **un alert con più evidenze** (una per articolo recuperato e
 con hash). La query di ricerca è nome/denominazione + termini avversi FATF
 (indagato, corruzione, sequestro, …).
 
+**Deduplica per dominio e credibilità delle testate** (§5.1). I risultati sono:
+- **deduplicati per dominio** (`MAX_PER_DOMAIN=1`): un articolo per testata, per
+  favorire la corroborazione da fonti indipendenti;
+- **annotati con la credibilità** della testata (alta | media | bassa |
+  sconosciuta) da un registro governabile (`services/search-gateway/app/testate.py`)
+  e **ordinati** con le fonti più affidabili in cima;
+- **filtrabili** sotto una soglia: toggle *"Solo testate affidabili (≥ media)"* in
+  console, oppure `MIN_CREDIBILITY=media` nel `.env` (default `none` = solo
+  annotazione). La credibilità della fonte viene propagata all'**evidenza**
+  dell'alert (percorso di ricerca automatica).
+
 Provider (`SEARCH_PROVIDER` nel `.env`):
 - **`mock`** (default): risultati di esempio, nessuna rete — utile per l'anteprima
-  e il wiring. Gli URL puntano a `example.com` (il fetch reale darà poco segnale).
+  e il wiring. Include un duplicato di dominio (per mostrare la dedup) e una testata
+  a bassa credibilità (per mostrare il filtro). Gli URL `*.example` non risolvono
+  (il fetch reale darà poco segnale).
 - **`gdelt`** (keyless): news reale globale, adatta al pilota. Nessuna API key.
   ```bash
   SEARCH_PROVIDER=gdelt docker compose -f docker-compose.dev.yml up -d --build search-gateway

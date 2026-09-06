@@ -49,10 +49,17 @@ function EvidenceDetail({ a }: { a: Alert }) {
       <Typography variant="subtitle2" gutterBottom>Evidenze ({ev.length})</Typography>
       {ev.map((e, i) => (
         <Paper key={i} variant="outlined" sx={{ p: 1.5, mb: 1 }}>
-          <Typography variant="body2">
-            <strong>{e.testata || "—"}</strong>{e.data ? ` · ${e.data}` : ""}
-            {e.url && <> · <Link href={e.url} target="_blank" rel="noreferrer">fonte</Link></>}
-          </Typography>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+            <Typography variant="body2">
+              <strong>{e.testata || "—"}</strong>{e.data ? ` · ${e.data}` : ""}
+              {e.url && <> · <Link href={e.url} target="_blank" rel="noreferrer">fonte</Link></>}
+            </Typography>
+            {e.fonte_credibilita && (
+              <Chip size="small" variant="outlined" label={`credibilità: ${e.fonte_credibilita}`}
+                color={e.fonte_credibilita === "alta" ? "success"
+                  : e.fonte_credibilita === "media" ? "warning" : "default"} />
+            )}
+          </Box>
           {e.title && <Typography variant="body2">{e.title}</Typography>}
           {e.snippet && (
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, fontStyle: "italic" }}>

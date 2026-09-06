@@ -82,11 +82,15 @@ export interface ScreeningRequest {
   max_articles?: number;   // max articoli in ricerca automatica
 }
 
+export type Credibilita = "alta" | "media" | "bassa" | "sconosciuta";
+
 export interface SearchResult {
   url: string;
   title?: string | null;
   snippet?: string | null;
   testata?: string | null;
+  domain?: string | null;
+  testata_credibilita?: Credibilita | null;
   data?: string | null;
   language?: string | null;
   provider: string;
@@ -98,6 +102,9 @@ export interface SearchResponse {
   query: string;
   mode: string;
   count: number;
+  raw_count: number;
+  removed: number;
+  min_credibility: string;
   results: SearchResult[];
 }
 
@@ -109,6 +116,7 @@ export interface SearchPreviewRequest {
   cf_piva?: string;
   mode?: "broad" | "targeted";
   max_results?: number;
+  min_credibility?: "none" | "bassa" | "media" | "alta";
 }
 
 export interface Screening {

@@ -29,17 +29,22 @@ def _result(url, title=None, snippet=None, testata=None, data=None,
 
 
 # --- Provider mock: fixtures deterministiche -------------------------------
-_MOCK_TESTATE = [
-    ("ilmessaggero-esempio.example.com", "Il Messaggero (esempio)"),
-    ("repubblica-esempio.example.com", "la Repubblica (esempio)"),
-    ("ansa-esempio.example.org", "ANSA (esempio)"),
+# Domini .example distinti + un duplicato (per mostrare la dedup) + una testata
+# a bassa credibilità (per mostrare il filtro). Vedi testate.py per i livelli.
+_MOCK_ENTRIES = [
+    ("ilmessaggero.example", "Il Messaggero (esempio)",
+     "Inchiesta appalti: perquisizioni e indagati, coinvolto {name}", "2026-03-26"),
+    ("larepubblica.example", "la Repubblica (esempio)",
+     "Corruzione e turbativa d'asta: {name} tra i nomi nel fascicolo", "2026-02-14"),
+    ("ansa.example", "ANSA (esempio)",
+     "Sequestro e accuse di frode: verifiche in corso su {name}", "2025-12-03"),
+    # stesso dominio del primo → dev'essere rimosso dalla dedup per dominio
+    ("ilmessaggero.example", "Il Messaggero (esempio)",
+     "Appalti pubblici, nuovo capitolo dell'inchiesta su {name}", "2026-01-10"),
+    # bassa credibilità → rimosso se min_credibility >= media
+    ("blognotizie.example", "BlogNotizie (esempio)",
+     "Rumors e indiscrezioni non verificate su {name}", "2026-03-01"),
 ]
-_MOCK_TITLES = [
-    "Inchiesta appalti: perquisizioni e indagati, coinvolto {name}",
-    "Corruzione e turbativa d'asta: {name} tra i nomi nel fascicolo",
-    "Sequestro e accuse di frode: verifiche in corso su {name}",
-]
-_MOCK_DATES = ["2026-03-26", "2026-02-14", "2025-12-03"]
 
 
 def _mock(subject: dict, mode: str, max_results: int) -> list[dict]:
@@ -49,13 +54,13 @@ def _mock(subject: dict, mode: str, max_results: int) -> list[dict]:
     display = names[0]
     slug = display.lower().replace(" ", "-").replace("'", "")
     out: list[dict] = []
-    for i, (domain, testata) in enumerate(_MOCK_TESTATE):
+    for i, (domain, testata, title, date) in enumerate(_MOCK_ENTRIES):
         out.append(_result(
             url=f"https://{domain}/adverse-media/{slug}-{i + 1}",
-            title=_MOCK_TITLES[i % len(_MOCK_TITLES)].format(name=display),
+            title=title.format(name=display),
             snippet=(f"Secondo fonti giudiziarie, {display} risulterebbe coinvolto in "
                      f"un'inchiesta su appalti pubblici (contenuto di esempio, provider mock)."),
-            testata=testata, data=_MOCK_DATES[i % len(_MOCK_DATES)],
+            testata=testata, data=date,
             language="Italian", provider="mock", score=round(1.0 - i * 0.1, 2),
         ))
     return out[:max_results]
