@@ -105,10 +105,18 @@ con hash). La query di ricerca è nome/denominazione + termini avversi FATF
 - **annotati con la credibilità** della testata (alta | media | bassa |
   sconosciuta) da un registro governabile (`services/search-gateway/app/testate.py`)
   e **ordinati** con le fonti più affidabili in cima;
-- **filtrabili** sotto una soglia: toggle *"Solo testate affidabili (≥ media)"* in
-  console, oppure `MIN_CREDIBILITY=media` nel `.env` (default `none` = solo
-  annotazione). La credibilità della fonte viene propagata all'**evidenza**
-  dell'alert (percorso di ricerca automatica).
+- **filtrabili** per credibilità: toggle *"Escludi fonti a bassa credibilità"* in
+  console (scarta solo le testate note come poco affidabili — blog/UGC — e
+  mantiene le *sconosciute*, cioè non ancora a registro), oppure `MIN_CREDIBILITY`
+  nel `.env` (`none` default = solo annotazione; `media` = whitelist stretta).
+  Ordine credibilità: `alta > media > sconosciuta > bassa`. La credibilità della
+  fonte viene propagata all'**evidenza** dell'alert.
+
+> Con `SEARCH_PROVIDER=gdelt`: il nome dell'ente viene ripulito dalla forma
+> societaria per la ricerca (es. *"Tron Group Holding S.r.l."* → cerca
+> *"Tron Group Holding"*), e se la query mirata non trova nulla il gateway
+> **ripiega** su nome-solo e poi senza vincolo di lingua. Se resti a 0: prova un
+> nome più breve, disattiva il filtro credibilità o allarga `SEARCH_TIMESPAN`.
 
 Provider (`SEARCH_PROVIDER` nel `.env`):
 - **`mock`** (default): risultati di esempio, nessuna rete — utile per l'anteprima

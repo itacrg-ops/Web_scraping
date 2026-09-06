@@ -118,7 +118,7 @@ export interface SearchPreviewRequest {
   cf_piva?: string;
   mode?: "broad" | "targeted";
   max_results?: number;
-  min_credibility?: "none" | "bassa" | "media" | "alta";
+  min_credibility?: "none" | "bassa" | "sconosciuta" | "media" | "alta";
 }
 
 export interface Screening {

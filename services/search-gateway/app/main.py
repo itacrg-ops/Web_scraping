@@ -11,7 +11,6 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from app import providers
-from app import query as qb
 from app import testate
 from app.config import settings
 
@@ -98,7 +97,6 @@ def credibility(req: CredibilityRequest) -> dict:
 async def search(req: SearchRequest) -> dict:
     subject = req.subject.model_dump()
     mode = req.mode if req.mode in ("broad", "targeted") else "targeted"
-    query_str = qb.build_query(subject, mode)
     max_results = req.max_results or settings.search_max_results
     lang = settings.search_default_lang if req.lang is None else req.lang
     timespan = req.timespan or settings.search_timespan
@@ -106,7 +104,7 @@ async def search(req: SearchRequest) -> dict:
 
     # Over-fetch dal provider, così dopo la dedup restano abbastanza domini distinti.
     fetch_n = min(max_results * settings.dedup_overfetch, 250) if settings.dedup_by_domain else max_results
-    raw = await providers.search(query_str, subject, mode, fetch_n, lang, timespan)
+    raw, query_used = await providers.search(subject, mode, fetch_n, lang, timespan)
 
     results, removed = testate.postprocess(
         raw,
@@ -117,7 +115,7 @@ async def search(req: SearchRequest) -> dict:
     )
     return {
         "provider": settings.search_provider,
-        "query": query_str,
+        "query": query_used,
         "mode": mode,
         "count": len(results),
         "raw_count": len(raw),

@@ -31,6 +31,7 @@ export default function ScreeningPage() {
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<SearchResult[] | null>(null);
   const [provider, setProvider] = useState<string>("");
+  const [queryUsed, setQueryUsed] = useState<string>("");
   const [removed, setRemoved] = useState(0);
   const [onlyReliable, setOnlyReliable] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -66,11 +67,14 @@ export default function ScreeningPage() {
     try {
       const r = await searchPreview({
         ...subjectFields(), mode: "targeted",
-        min_credibility: onlyReliable ? "media" : undefined,
+        // "Escludi bassa credibilità" = scarta solo le testate note come poco
+        // affidabili (blog/UGC); mantiene le sconosciute (non ancora a registro).
+        min_credibility: onlyReliable ? "sconosciuta" : undefined,
       });
       setProvider(r.provider);
       setResults(r.results);
       setRemoved(r.removed);
+      setQueryUsed(r.query);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -180,7 +184,7 @@ export default function ScreeningPage() {
             <FormControlLabel
               control={<Switch size="small" checked={onlyReliable}
                 onChange={(e) => setOnlyReliable(e.target.checked)} />}
-              label="Solo testate affidabili (≥ media)"
+              label="Escludi fonti a bassa credibilità (blog/UGC)"
             />
           </Box>
 
@@ -202,10 +206,18 @@ export default function ScreeningPage() {
                 )}
               </Box>
               <Divider />
+              {queryUsed && (
+                <Typography variant="caption" color="text.secondary" component="div" sx={{ px: 2, pb: 1 }}>
+                  query: <code>{queryUsed}</code>
+                </Typography>
+              )}
               {results.length === 0 ? (
                 <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-                  Nessun articolo trovato. Con il provider <code>mock</code> i risultati sono di
-                  esempio; per risultati reali imposta <code>SEARCH_PROVIDER=gdelt</code>.
+                  Nessun articolo trovato per questa query
+                  {onlyReliable && <> (con il filtro credibilità attivo)</>}.
+                  {provider === "gdelt"
+                    ? " Prova un nome più breve/senza forma societaria, disattiva il filtro, o allarga la finestra temporale (SEARCH_TIMESPAN)."
+                    : " Con il provider mock i risultati sono di esempio; per risultati reali imposta SEARCH_PROVIDER=gdelt."}
                 </Typography>
               ) : (
                 <List dense sx={{ maxHeight: 320, overflow: "auto" }}>

@@ -15,8 +15,10 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-# Ordinamento dei livelli (per sort e soglia di filtro).
-CRED_RANK: dict[str, int] = {"alta": 3, "media": 2, "bassa": 1, "sconosciuta": 0}
+# Ordinamento dei livelli (per sort e soglia di filtro). "sconosciuta" (testata
+# non ancora a registro) è sopra "bassa" (nota come poco affidabile): un dominio
+# non catalogato non va trattato peggio di uno noto-scadente. Coerente con l'AMI.
+CRED_RANK: dict[str, int] = {"alta": 3, "media": 2, "sconosciuta": 1, "bassa": 0}
 
 # Suffissi pubblici composti più comuni (per estrarre il dominio registrabile).
 _COMPOUND_SUFFIXES = {

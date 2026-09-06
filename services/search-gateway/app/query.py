@@ -10,16 +10,32 @@ booleana (frasi tra virgolette, OR, parentesi) è compatibile con GDELT DOC 2.0.
 """
 from __future__ import annotations
 
+import re
+
 PERSONA_FISICA = "persona_fisica"
 
 # Termini avversi (IT) allineati alla tassonomia FATF / reati-spia PA-appalti.
-# Tenuti concisi: GDELT ha un limite sulla lunghezza della query.
+# Set compatto (GDELT limita la lunghezza/numero di OR): i termini più salienti;
+# il resto emerge comunque dalla classificazione FATF a valle.
 ADVERSE_TERMS: list[str] = [
-    "indagato", "arrestato", "inchiesta", "corruzione", "concussione",
-    "peculato", "riciclaggio", "frode", "truffa", "sequestro", "condannato",
-    "perquisizione", "turbativa", "interdittiva",
-    '"associazione a delinquere"', '"abuso d\'ufficio"',
+    "indagato", "arrestato", "inchiesta", "corruzione",
+    "riciclaggio", "frode", "sequestro", "condannato",
 ]
+
+# Forme societarie da rimuovere dal nome per la ricerca ("Tron Group Holding
+# S.r.l." → "Tron Group Holding"): negli articoli il nome compare senza suffisso.
+_LEGAL_RE = re.compile(
+    r"\b(srls?|spa|snc|sas|ss|soc(?:ieta)?\s*coop(?:erativa)?|coop|scarl|scpa|onlus|aps|ets)\b",
+    re.IGNORECASE,
+)
+
+
+def _clean_entity_name(name: str) -> str:
+    s = re.sub(r"&\s*C\.?", " ", name, flags=re.IGNORECASE)
+    s = s.replace(".", "")          # "S.r.l." → "Srl" (poi rimosso)
+    s = _LEGAL_RE.sub(" ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s or name.strip()
 
 
 def _person_names(subject: dict) -> list[str]:
@@ -44,7 +60,11 @@ def _person_names(subject: dict) -> list[str]:
 
 def _entity_names(subject: dict) -> list[str]:
     d = (subject.get("denominazione") or "").strip()
-    return [d] if d else []
+    if not d:
+        return []
+    cleaned = _clean_entity_name(d)
+    # Usa il nome senza forma societaria (match più probabile negli articoli).
+    return [cleaned] if cleaned else [d]
 
 
 def name_variants(subject: dict) -> list[str]:

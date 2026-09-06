@@ -74,12 +74,11 @@ def _fmt_gdelt_date(seendate: str | None) -> str | None:
     return f"{seendate[0:4]}-{seendate[4:6]}-{seendate[6:8]}"
 
 
-async def _gdelt(query_str: str, max_results: int, lang: str, timespan: str) -> list[dict]:
-    if not query_str:
-        return []
-    q = f"{query_str} sourcelang:{lang}" if lang else query_str
+async def _gdelt_call(query_str: str, max_results: int, timespan: str) -> list[dict] | None:
+    """Una singola chiamata GDELT. Ritorna la lista (anche vuota) o None su errore
+    (così il chiamante distingue 'nessun articolo' da 'query rifiutata/rete')."""
     params = {
-        "query": q, "mode": "ArtList", "format": "json",
+        "query": query_str, "mode": "ArtList", "format": "json",
         "maxrecords": str(max(1, min(max_results, 250))),
         "sort": "DateDesc", "timespan": timespan,
     }
@@ -88,16 +87,16 @@ async def _gdelt(query_str: str, max_results: int, lang: str, timespan: str) -> 
                                      headers={"User-Agent": settings.user_agent}) as c:
             r = await c.get(settings.gdelt_endpoint, params=params)
         if r.status_code != 200:
-            logger.warning("GDELT status %s", r.status_code)
-            return []
+            logger.warning("GDELT status %s per query=%r", r.status_code, query_str)
+            return None
         try:
             data = r.json()
-        except Exception:  # noqa: BLE001 — GDELT può rispondere HTML su query invalide
-            logger.warning("GDELT: risposta non-JSON (query rifiutata?)")
-            return []
+        except Exception:  # noqa: BLE001 — GDELT risponde HTML su query invalide
+            logger.warning("GDELT: risposta non-JSON (query rifiutata?) query=%r", query_str)
+            return None
     except Exception as exc:  # noqa: BLE001 — rete non fatale
         logger.warning("GDELT non raggiungibile: %s", exc)
-        return []
+        return None
 
     out: list[dict] = []
     for a in (data.get("articles") or []):
@@ -112,8 +111,40 @@ async def _gdelt(query_str: str, max_results: int, lang: str, timespan: str) -> 
     return out
 
 
-async def search(query_str: str, subject: dict, mode: str, max_results: int,
-                 lang: str, timespan: str) -> list[dict]:
+async def _gdelt(subject: dict, mode: str, max_results: int, lang: str,
+                 timespan: str) -> tuple[list[dict], str]:
+    """Scala di fallback per massimizzare il recall senza restare a 0:
+    1) mirata (nome + termini avversi) con filtro lingua;
+    2) nome soltanto con filtro lingua;
+    3) nome soltanto senza filtro lingua.
+    Ritorna (risultati, query effettivamente usata)."""
+    targeted = qb.build_query(subject, "targeted")
+    broad = qb.build_query(subject, "broad")
+    if not broad:
+        return [], ""
+
+    def _with_lang(q: str) -> str:
+        return f"{q} sourcelang:{lang}" if lang else q
+
+    variants: list[str] = []
+    if mode != "broad" and targeted:
+        variants.append(_with_lang(targeted))
+    variants.append(_with_lang(broad))
+    if lang:
+        variants.append(broad)  # ultimo tentativo: senza vincolo di lingua
+
+    last = variants[0]
+    for vq in variants:
+        res = await _gdelt_call(vq, max_results, timespan)
+        last = vq
+        if res:
+            return res, vq
+    return [], last
+
+
+async def search(subject: dict, mode: str, max_results: int, lang: str,
+                 timespan: str) -> tuple[list[dict], str]:
+    """Ritorna (risultati_grezzi, query_effettiva)."""
     if settings.search_provider == "gdelt":
-        return await _gdelt(query_str, max_results, lang, timespan)
-    return _mock(subject, mode, max_results)
+        return await _gdelt(subject, mode, max_results, lang, timespan)
+    return _mock(subject, mode, max_results), qb.build_query(subject, mode)

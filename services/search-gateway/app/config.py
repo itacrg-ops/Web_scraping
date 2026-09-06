@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     search_default_lang: str = "italian"
 
     # Finestra temporale GDELT (es. 24h, 1w, 3m, 6m, 1y).
-    search_timespan: str = "6m"
+    search_timespan: str = "12m"
 
     # Endpoint GDELT DOC 2.0 API (keyless).
     gdelt_endpoint: str = "https://api.gdeltproject.org/api/v2/doc/doc"
