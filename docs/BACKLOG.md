@@ -27,9 +27,14 @@ SVI mock, alert con evidenze). Questo documento traccia i passi successivi.
 | B7 | NER / Embedding per l'anti-omonimia | P2 | L | `entity-resolution`, `worker-scraping` |
 | B8 | Multi-provider fan-out ricerca | P2 | M | `search-gateway`, `docker-compose` |
 
-**Sequenza consigliata:** B1 → (B2, B3, B4 in parallelo) → B8 → B5 → B6 → B7.
-B1 in versione MVP (regex) è indipendente; la sua versione robusta si appoggia a
-B7 (NER). B8 e B6 alzano il recall; B5 e B7 la pertinenza/accuratezza.
+**Sequenza adottata (pilota): B1 → B6 → B7 → B8** — compatibilità verificata sul
+codice. B1 parte in versione **MVP regex** (indipendente); dopo B7 va rifinita con
+NER (vedi **B1.1**). B6 precede B7 così il NER lavora su testo più ricco
+(JS-rendered); B8 per ultimo, quando gli stadi a monte (PII, estrazione,
+disambiguazione) sono già solidi e il volume di articoli cresce.
+
+_Sequenza alternativa a priorità pura (compliance+operatività prima):_
+B1 → (B2, B3, B4 in parallelo) → B8 → B5 → B6 → B7.
 
 ---
 
@@ -46,9 +51,15 @@ classificazione, sostituisce con placeholder le PII non necessarie (nominativi d
 terzi diversi dal soggetto, indirizzi, CF/P.IVA, email, telefoni, IBAN),
 conservando il soggetto-target e il contesto utile alla classificazione.
 
-**Componenti.** `services/llm-gateway` (punto di uscita verso Azure) e
-`services/worker-scraping/activities.py` (`classify_fatf`) + nuovo modulo
-`pii_redaction`. MVP con regex/pattern; versione robusta con NER (B7).
+**Componenti.** Chokepoint unico verso Azure: `services/llm-gateway/app/foundry.py`
+(`_classify_one`, unico punto in cui il testo lascia il perimetro). In alternativa
+nel worker, tra la costruzione di `combined` e `classify_fatf`
+(`services/worker-scraping/workflows.py`) — la verifica di menzione avviene **prima**,
+quindi la redazione non rompe il match del soggetto. Nuovo modulo `pii_redaction`.
+
+**Follow-up B1.1 (dopo B7).** Potenziare la redazione con **NER** per mascherare i
+**nomi** di terzi non-soggetto: il regex-MVP copre CF/P.IVA, email, telefoni, IBAN
+e indirizzi, ma non i nomi arbitrari, che richiedono il riconoscimento entità (B7).
 
 **Definition of Done.**
 - il payload verso Azure non contiene PII non-soggetto (test di verifica);
@@ -133,12 +144,13 @@ abilitato) con **pesi configurabili** e spiegazione nei driver; test su casi not
 
 **Perché.** Aumenta la copertura: il fetch attuale è HTTP semplice, mentre
 ~30–40% dei siti moderni rende i contenuti in JavaScript e oggi tornano quasi
-vuoti. Un browser headless (**Playwright**, già presente nell'ambiente) recupera
-il contenuto renderizzato.
+vuoti. Un browser headless (**Playwright**) recupera il contenuto renderizzato.
 
 **Scope.** Fallback a Playwright quando l'estrazione semplice trova poco contenuto
 (euristica su lunghezza/qualità); pool e timeout; rispetto di robots/UA; controllo
-di costo e latenza (usato solo quando serve).
+di costo e latenza (usato solo quando serve). **Richiede** l'aggiunta di Playwright
++ browser all'immagine `worker-scraping` (oggi: `temporalio, httpx, trafilatura,
+boto3, warcio`; nessun browser incluso), con impatto su dimensione immagine e avvio.
 
 **Componenti.** `services/worker-scraping` (`fetch_source` / `extract_content`).
 
