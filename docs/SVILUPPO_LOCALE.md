@@ -104,6 +104,11 @@ Esiti attesi (persona fisica "Rossi Mario", che ha un **omonimo**):
 Per la persona giuridica: "ACME" solo nome → `ambiguous` (c'è anche "ACME … Generali");
 con P.IVA `00743110157` → `resolved`.
 
+Per collaudare **tutti** questi casi in un colpo solo (senza cliccare in console):
+`python scripts/smoke_entity_resolution.py` — interroga `POST /resolve` e stampa
+PASS/FAIL per ciascun caso (nell'intestazione dello script l'uso via Docker se non
+hai Python sull'host). Assume il registro seed di default.
+
 > I CF del seed sono **fittizi ma formalmente validi** (checksum). In produzione
 > il registro proviene da ReGiS/OpenCoesione/InfoCamere (beneficiari/attuatori e
 > relativi UBO/RUP/rappresentanti).
