@@ -12,7 +12,27 @@ services:
   admin-console:
     image: node:20-alpine
     working_dir: /app
-    command: sh -c "npm install && npm run dev -- --host"
+    # Guard: se il sorgente non è montato (/app vuoto), npm fallirebbe con un
+    # criptico "ENOENT package.json". Diamo invece un messaggio azionabile.
+    command:
+      - sh
+      - -c
+      - |
+        if [ ! -f /app/package.json ]; then
+          echo "=============================================================="
+          echo " admin-console: /app/package.json NON trovato nel container."
+          echo " Il codice sorgente non risulta montato (volume ./admin-console)."
+          echo " Cause tipiche:"
+          echo "  1) 'docker compose' non eseguito dalla ROOT del repo"
+          echo "     (dove esiste ./admin-console/package.json)."
+          echo "  2) Docker Desktop: cartella del progetto non condivisa"
+          echo "     (Settings -> Resources -> File Sharing)."
+          echo "  3) Repository non aggiornato sull'host: esegui 'git pull'."
+          echo " Verifica sull'host:  ls admin-console/package.json"
+          echo "=============================================================="
+          exit 1
+        fi
+        npm install && npm run dev -- --host
     environment:
       VITE_API_BASE: "http://localhost:8000"
       # Auth SPA: "disabled" in dev (default). "entra" attiva il login MSAL.
