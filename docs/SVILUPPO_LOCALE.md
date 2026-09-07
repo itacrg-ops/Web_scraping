@@ -126,7 +126,12 @@ con hash). La query di ricerca è nome/denominazione + termini avversi FATF
 indicare (opzionali) **Azienda** e **Località**: entrano nella query come
 qualificatori **in AND forte** (`"Mario Rossi" "Italware" "Cagliari"`) e, quando
 presenti, i termini avversi non sono più obbligatori (il recall resta alto, è la
-classificazione FATF a stabilire l'adverse). Il **Ruolo** è invece *soft*: non
+classificazione FATF a stabilire l'adverse). **Se l'AND forte non trova nulla**
+(caso frequente: nessuna pagina indicizzata cita nome e azienda insieme), la
+ricerca **si allarga automaticamente** — toglie un qualificatore alla volta
+(prima la località, poi l'azienda) fino al solo nome — così non si resta mai a
+zero; la console segnala che ha allargato la ricerca e la corroborazione a valle
+(qui sotto) distingue comunque il soggetto dagli omonimi. Il **Ruolo** è invece *soft*: non
 filtra la ricerca (da solo taglierebbe articoli), ma viene usato — con
 azienda/località — come **corroborazione sull'articolo**: se co-occorrono col
 nome, la probabilità di omonimia cala (driver "Contesto confermato"); se il nome

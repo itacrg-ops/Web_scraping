@@ -90,24 +90,60 @@ def _qualifiers(subject: dict) -> list[str]:
     return out
 
 
+def _name_clause(names: list[str]) -> str:
+    if len(names) > 1:
+        return "(" + " OR ".join(f'"{n}"' for n in names) + ")"
+    return f'"{names[0]}"'
+
+
+def _adverse_clause() -> str:
+    return "(" + " OR ".join(ADVERSE_TERMS) + ")"
+
+
 def build_query(subject: dict, mode: str = "targeted") -> str:
+    """Query singola: la PIÙ PRECISA per la modalità. Per la scala completa di
+    fallback (usata dai provider) vedi `build_query_variants`."""
+    variants = build_query_variants(subject, mode)
+    return variants[0] if variants else ""
+
+
+def build_query_variants(subject: dict, mode: str = "targeted") -> list[str]:
+    """Query in ordine dalla PIÙ PRECISA alla PIÙ LARGA. I provider le provano
+    in sequenza e si fermano alla prima che restituisce articoli (fallback):
+    l'AND sui qualificatori (azienda/località) dà precisione quando c'è la
+    co-occorrenza, ma non lascia la ricerca a zero quando quella co-occorrenza
+    non è indicizzata dal provider.
+
+      persona + qualificatori : nome+azienda+località → nome+azienda → nome
+      persona senza qualif. / entità (targeted): nome+avversi → nome
+      qualsiasi soggetto (broad): solo nome
+
+    Quando la query si allarga al solo nome, la garanzia sull'identità resta
+    l'anti-omonimia a valle (verifica di azienda/località nel testo degli articoli).
+    """
     names = name_variants(subject)
     if not names:
-        return ""
-    if len(names) > 1:
-        name_clause = "(" + " OR ".join(f'"{n}"' for n in names) + ")"
-    else:
-        name_clause = f'"{names[0]}"'
-
-    quals = _qualifiers(subject)
-    base = " ".join([name_clause, *quals])
+        return []
+    nc = _name_clause(names)
 
     if mode == "broad":
-        return base
-    # Se ci sono qualificatori forti (azienda/località) il soggetto è già molto
-    # specifico: NON aggiungo l'AND sui termini avversi, per preservare il recall
-    # sulla persona giusta (l'adverse lo decide la classificazione FATF a valle).
-    if quals:
-        return base
-    adverse_clause = "(" + " OR ".join(ADVERSE_TERMS) + ")"
-    return f"{base} {adverse_clause}"
+        return [nc]
+
+    variants: list[str] = []
+    if _is_person(subject):
+        quals = _qualifiers(subject)  # ['"Azienda"', '"Località"'] (azienda, poi località)
+        if quals:
+            # Togli un qualificatore alla volta partendo dall'ultimo (località):
+            # l'azienda, più distintiva, resta fino all'ultimo prima del solo nome.
+            for i in range(len(quals), 0, -1):
+                variants.append(" ".join([nc, *quals[:i]]))
+            variants.append(nc)
+        else:
+            variants.append(f"{nc} {_adverse_clause()}")
+            variants.append(nc)
+    else:
+        variants.append(f"{nc} {_adverse_clause()}")
+        variants.append(nc)
+
+    seen: set[str] = set()
+    return [v for v in variants if not (v in seen or seen.add(v))]

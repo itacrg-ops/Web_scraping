@@ -26,6 +26,29 @@ logger = logging.getLogger("search-gateway.providers")
 _gdelt_lock = asyncio.Lock()
 _gdelt_last = 0.0
 
+# Throttle in-process delle chiamate Brave: la scala di fallback può fare più
+# richieste consecutive e il piano free è ~1 query/secondo.
+_brave_lock = asyncio.Lock()
+_brave_last = 0.0
+
+
+def _is_person(subject: dict) -> bool:
+    return (subject.get("tipo_soggetto") or "persona_giuridica") == "persona_fisica"
+
+
+def _broadened_note(used_query: str, strongest: str, subject: dict) -> str | None:
+    """Nota per la console quando i risultati arrivano da una query PIÙ LARGA
+    della più precisa (per la persona: qualificatori caduti). Avvisa che la
+    conferma di azienda/località negli articoli distingue il soggetto dagli
+    omonimi (lo fa l'anti-omonimia a valle, nei driver dello screening)."""
+    if used_query.split(" sourcelang:")[0] == strongest:
+        return None
+    if _is_person(subject) and (subject.get("azienda") or subject.get("localita")):
+        return ("Nessun articolo con tutti i qualificatori (azienda/località): "
+                "ricerca allargata al solo nome. La conferma di azienda/località nel "
+                "testo degli articoli distingue il soggetto dagli omonimi (vedi i driver).")
+    return None
+
 
 def _result(url, title=None, snippet=None, testata=None, data=None,
             language=None, provider="mock", score=None) -> dict:
@@ -138,28 +161,23 @@ async def _gdelt_call(query_str: str, max_results: int, timespan: str) -> tuple[
 
 async def _gdelt(subject: dict, mode: str, max_results: int, lang: str,
                  timespan: str) -> tuple[list[dict], str, str | None]:
-    """Scala di fallback per massimizzare il recall senza restare a 0:
-    1) mirata (nome + termini avversi) con filtro lingua;
-    2) nome soltanto con filtro lingua;
-    3) nome soltanto senza filtro lingua.
-    Prosegue al variante successivo SOLO se la precedente è andata a buon fine
-    ma senza articoli; su 429/errore si ferma (un solo retry sul 429) per non
-    peggiorare il rate limit. Ritorna (risultati, query_usata, note)."""
-    targeted = qb.build_query(subject, "targeted")
-    broad = qb.build_query(subject, "broad")
-    if not broad:
+    """Scala di fallback (dalla query più precisa alla più larga) per non restare
+    a 0: prova nome+qualificatori/avversi, poi allarga fino al solo nome, infine
+    ritenta senza vincolo di lingua. Prosegue alla variante successiva SOLO se la
+    precedente è andata a buon fine ma senza articoli; su 429/errore si ferma (un
+    solo ciclo di retry sul 429) per non peggiorare il rate limit.
+    Ritorna (risultati, query_usata, note)."""
+    qvars = qb.build_query_variants(subject, mode)
+    if not qvars:
         return [], "", None
+    strongest = qvars[0]
 
     def _with_lang(q: str) -> str:
         return f"{q} sourcelang:{lang}" if lang else q
 
-    variants: list[str] = []
-    if mode != "broad" and targeted:
-        variants.append(_with_lang(targeted))
-    variants.append(_with_lang(broad))
+    variants = [_with_lang(q) for q in qvars]
     if lang:
-        variants.append(broad)  # ultimo tentativo: senza vincolo di lingua
-    # dedup preservando l'ordine (con qualificatori targeted==broad).
+        variants.append(qvars[-1])  # ultimo tentativo: la più larga senza vincolo di lingua
     _seen: set[str] = set()
     variants = [v for v in variants if not (v in _seen or _seen.add(v))]
 
@@ -167,7 +185,7 @@ async def _gdelt(subject: dict, mode: str, max_results: int, lang: str,
         status, payload = await _gdelt_call(vq, max_results, timespan)
         if status == "ok":
             if payload:
-                return payload, vq, None
+                return payload, vq, _broadened_note(vq, strongest, subject)
             continue  # ok ma nessun articolo → prova la variante successiva
         if status == "rate_limited":
             retry_after = payload  # secondi dal 429 (o None)
@@ -183,7 +201,7 @@ async def _gdelt(subject: dict, mode: str, max_results: int, lang: str,
                     break
                 retry_after = pl  # ancora 429: aggiorna eventuale Retry-After
             if result:
-                return result, vq, None
+                return result, vq, _broadened_note(vq, strongest, subject)
             return [], vq, ("GDELT ha limitato le richieste (429). Attendi qualche "
                             "secondo e riprova, oppure dirada le ricerche.")
         return [], vq, "GDELT non raggiungibile o query rifiutata. Riprova più tardi."
@@ -208,15 +226,21 @@ def _brave_items(data: dict) -> list[dict]:
     )
 
 
-async def _brave(subject: dict, mode: str, max_results: int, lang: str,
-                 timespan: str) -> tuple[list[dict], str, str | None]:
-    if not settings.brave_api_key:
-        return [], "", "Brave non configurato: imposta BRAVE_API_KEY nel .env."
-    query_str = qb.build_query(subject, mode) or qb.build_query(subject, "broad")
-    if not query_str:
-        return [], "", None
-    # NB: country/search_lang vogliono CODICI (it), non nomi lingua (il param
-    # `lang` di GDELT è ignorato qui apposta). count web: max 20.
+async def _throttle_brave() -> None:
+    """Distanzia le chiamate Brave di almeno brave_min_interval secondi."""
+    global _brave_last
+    async with _brave_lock:
+        wait = settings.brave_min_interval - (time.monotonic() - _brave_last)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _brave_last = time.monotonic()
+
+
+async def _brave_call(query_str: str, max_results: int) -> tuple[str, object]:
+    """Una singola chiamata Brave. Ritorna:
+      ("ok", list)     risultati (anche [] = nessun risultato);
+      ("error", note)  errore da propagare (chiave/parametri/rete)."""
+    # NB: country/search_lang vogliono CODICI (it), non nomi lingua. count web: max 20.
     params = {
         "q": query_str,
         "country": settings.brave_country,
@@ -227,6 +251,7 @@ async def _brave(subject: dict, mode: str, max_results: int, lang: str,
         "Accept": "application/json", "Accept-Encoding": "gzip",
         "X-Subscription-Token": settings.brave_api_key,
     }
+    await _throttle_brave()
     try:
         async with httpx.AsyncClient(timeout=settings.request_timeout) as c:
             r = await c.get(settings.brave_endpoint, params=params, headers=headers)
@@ -241,11 +266,11 @@ async def _brave(subject: dict, mode: str, max_results: int, lang: str,
                 note = "Brave ha limitato le richieste (429). Riprova tra poco."
             else:
                 note = f"Brave ha risposto {r.status_code}. Riprova più tardi."
-            return [], query_str, note
+            return "error", note
         data = r.json()
     except Exception as exc:  # noqa: BLE001 — rete non fatale
         logger.warning("Brave non raggiungibile: %s: %s", type(exc).__name__, exc)
-        return [], query_str, f"Brave non raggiungibile ({type(exc).__name__}). Riprova più tardi."
+        return "error", f"Brave non raggiungibile ({type(exc).__name__}). Riprova più tardi."
 
     out: list[dict] = []
     for a in _brave_items(data):
@@ -257,7 +282,30 @@ async def _brave(subject: dict, mode: str, max_results: int, lang: str,
             testata=(a.get("meta_url") or {}).get("hostname"),
             data=_brave_date(a), language=None, provider="brave", score=None,
         ))
-    return out, query_str, None
+    return "ok", out
+
+
+async def _brave(subject: dict, mode: str, max_results: int, lang: str,
+                 timespan: str) -> tuple[list[dict], str, str | None]:
+    """Scala di fallback come GDELT: prova la query più precisa (nome +
+    qualificatori), poi allarga fino al solo nome, fermandosi alla prima con
+    risultati. Su errore (chiave/parametri/rete) non insiste."""
+    if not settings.brave_api_key:
+        return [], "", "Brave non configurato: imposta BRAVE_API_KEY nel .env."
+    qvars = qb.build_query_variants(subject, mode)
+    if not qvars:
+        return [], "", None
+    strongest = qvars[0]
+    last_q = qvars[0]
+    for q in qvars:
+        last_q = q
+        status, payload = await _brave_call(q, max_results)
+        if status == "error":
+            return [], q, payload  # chiave/parametri/rete: inutile allargare
+        if payload:
+            return payload, q, _broadened_note(q, strongest, subject)
+        # 200 ma nessun risultato → prova la variante più larga
+    return [], last_q, _broadened_note(last_q, strongest, subject)
 
 
 async def search(subject: dict, mode: str, max_results: int, lang: str,

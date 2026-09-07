@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     brave_endpoint: str = "https://api.search.brave.com/res/v1/web/search"
     brave_country: str = "it"
     brave_search_lang: str = "it"
+    # Intervallo minimo tra chiamate Brave (throttle in-process): il piano free è
+    # ~1 query/secondo; la scala di fallback può fare più chiamate consecutive.
+    brave_min_interval: float = 1.1
     # GDELT è rate-limited (~1 req/5s per IP). Intervallo minimo tra chiamate
     # (throttle in-process), retry dopo un 429 (n. tentativi + attesa base/cap).
     gdelt_min_interval: float = 5.0
