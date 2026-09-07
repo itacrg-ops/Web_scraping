@@ -147,6 +147,12 @@ abilitato) con **pesi configurabili** e spiegazione nei driver; test su casi not
 
 ## B6 — Headless browser per fonti JS-rendered · P2
 
+**Stato: ✅ FATTO.** Modulo `render.py` (Playwright/Chromium) + activity
+`render_source` instradata nella stessa pipeline snapshot/hash/WARC; il workflow
+fa il fallback quando l'estrazione HTTP è < ~400 caratteri e tiene la versione con
+più testo. Playwright + Chromium aggiunti all'immagine `worker-scraping`; toggle
+`HEADLESS_FALLBACK`. Driver dedicato nell'alert.
+
 **Perché.** Aumenta la copertura: il fetch attuale è HTTP semplice, mentre
 ~30–40% dei siti moderni rende i contenuti in JavaScript e oggi tornano quasi
 vuoti. Un browser headless (**Playwright**) recupera il contenuto renderizzato.

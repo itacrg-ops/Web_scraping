@@ -25,6 +25,8 @@ API_BASE = os.getenv("API_BASE", "http://api:8000")
 ENTITY_RESOLUTION_URL = os.getenv("ENTITY_RESOLUTION_URL", "http://entity-resolution:8070")
 SEARCH_GATEWAY_URL = os.getenv("SEARCH_GATEWAY_URL", "http://search-gateway:8095")
 INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "")
+# Fallback headless (Playwright) per pagine JS-rendered (B6): default attivo.
+HEADLESS_FALLBACK = os.getenv("HEADLESS_FALLBACK", "true").lower() == "true"
 
 
 @activity.defn
@@ -120,6 +122,34 @@ async def fetch_source(seed_url: str) -> dict:
     activity.logger.info("Fetch OK %s (%s) hash=%s", res["final_url"], res["status"], prov["content_hash"])
     return {"url": seed_url, "allowed": True, "status": res["status"], "final_url": res["final_url"],
             "content_type": res["content_type"], "error": None, **prov}
+
+
+@activity.defn
+async def render_source(seed_url: str) -> dict:
+    """Fallback headless (Playwright) per pagine JS: rende il DOM e lo instrada
+    nella STESSA pipeline snapshot/hash/estrazione di `fetch_source`. Gated da
+    `HEADLESS_FALLBACK`. Non fatale: se disattivato o su errore ritorna un esito
+    SENZA `raw_key`, così il workflow mantiene l'estrazione HTTP originale.
+    Il render avviene solo su URL già ammessi da robots/crawl-delay a monte."""
+    empty = {"url": seed_url, "allowed": True, "status": None, "final_url": seed_url,
+             "content_type": None, "error": None, "raw_key": None, "warc_key": None,
+             "content_hash": None, "fetch_ts": None, "bucket": None, "fetch_method": "headless"}
+    if not HEADLESS_FALLBACK:
+        return {**empty, "error": "headless_disabled", "fetch_method": "headless_disabled"}
+    import render as renderer  # import lazy: Playwright è una dipendenza pesante
+    res = await renderer.render(seed_url)
+    if res.get("error") or not res.get("body"):
+        activity.logger.info("Render headless senza contenuto (%s): %s", res.get("error"), seed_url)
+        return {**empty, "status": res.get("status"), "final_url": res.get("final_url") or seed_url,
+                "error": res.get("error")}
+    prov = await asyncio.to_thread(
+        snapshot.store, seed_url, res["final_url"], res["status"],
+        res["content_type"], res["headers"], res["body"],
+    )
+    activity.logger.info("Render headless OK %s (%s) hash=%s",
+                         res["final_url"], res["status"], prov["content_hash"])
+    return {"url": seed_url, "allowed": True, "status": res["status"], "final_url": res["final_url"],
+            "content_type": res["content_type"], "error": None, "fetch_method": "headless", **prov}
 
 
 @activity.defn

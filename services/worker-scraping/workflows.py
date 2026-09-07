@@ -27,6 +27,7 @@ with workflow.unsafe.imports_passed_through():
         fetch_source,
         persist_alert,
         publish_svi,
+        render_source,
         resolve_entity,
         search_articles,
         verify_subject_mention,
@@ -37,6 +38,9 @@ _TIMEOUT = timedelta(seconds=60)
 
 _DEFAULT_MAX_ARTICLES = 3      # quanti articoli screenare al massimo in modalità auto
 _MAX_CLASSIFY_CHARS = 12000    # cap del testo aggregato inviato alla classificazione
+_HEADLESS_TIMEOUT = timedelta(seconds=90)  # il render JS è più lento del fetch HTTP
+_HEADLESS_MIN_CHARS = 400      # sotto questa soglia l'estrazione è "povera" → prova headless
+_RENDER_RETRY = RetryPolicy(maximum_attempts=2)  # render costoso: meno tentativi
 
 
 @workflow.defn
@@ -125,6 +129,20 @@ class ScreeningWorkflow:
             doc = await workflow.execute_activity(
                 extract_content, raw, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
             )
+            # Fallback headless (B6): estrazione povera → probabile pagina JS-rendered.
+            # Rendo il DOM con Playwright e ri-estraggo; tengo la versione con più testo.
+            if raw.get("allowed") and len(doc.get("text") or "") < _HEADLESS_MIN_CHARS:
+                raw_r = await workflow.execute_activity(
+                    render_source, url,
+                    start_to_close_timeout=_HEADLESS_TIMEOUT, retry_policy=_RENDER_RETRY,
+                )
+                if raw_r.get("raw_key"):
+                    doc_r = await workflow.execute_activity(
+                        extract_content, raw_r, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
+                    )
+                    if len(doc_r.get("text") or "") > len(doc.get("text") or ""):
+                        raw, doc = raw_r, doc_r
+                        doc["_fetch_method"] = "headless"
             men = await workflow.execute_activity(
                 verify_subject_mention, args=[subject, doc.get("text", "")],
                 start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
@@ -167,6 +185,8 @@ class ScreeningWorkflow:
         )
 
         drivers = search_drivers + list(ami["drivers"])
+        if any(d.get("_fetch_method") == "headless" for d in docs):
+            drivers.append("Alcune fonti JS-rendered recuperate con browser headless")
         if not urls:
             drivers.insert(0, "Nessun articolo trovato dalla ricerca (web search)")
         elif not any_mention:

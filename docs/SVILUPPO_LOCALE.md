@@ -243,7 +243,8 @@ e persone fisiche** — ricerca per nome e cognome con disambiguazione per CF/da
 di nascita), **fetch
 conforme** (robots.txt + crawl-delay, User-Agent identificabile, rate-limiting
 per dominio, snapshot **WARC** su object store con hash SHA-256 e provenance) ed
-estrazione con trafilatura, **Evidence** persistita e ancorata all'alert, e
+estrazione con trafilatura (con **fallback headless** Playwright per le pagine
+JS-rendered, B6), **Evidence** persistita e ancorata all'alert, e
 **classificazione FATF dual-LLM strutturata** via Azure AI Foundry (categorie,
 ruolo processuale, Victim-Bystander, severità, confidence; vedi
 [FOUNDRY_SETUP.md](FOUNDRY_SETUP.md)) con fallback euristico se Foundry non è
@@ -253,11 +254,19 @@ segnala se il soggetto non è citato nell'evidenza), **AMI pesato** per
 che citano il soggetto), con formula esplicabile nei driver dell'alert.
 Placeholder / da completare (marcati `TODO`): AMI scoring governato in SAS Viya
 (oggi pesatura locale severità × credibilità × corroborazione; mancano
-materialità CUP, sentiment, freschezza), mapping reale del Data Hub/Alerts SVI,
-headless browser per pagine dinamiche.
+materialità CUP, sentiment, freschezza), mapping reale del Data Hub/Alerts SVI.
 
 Gli snapshot delle pagine (HTML + WARC) sono su MinIO (console http://localhost:9001,
 bucket `adverse-media-snapshots`).
+
+### Fallback headless per pagine JS-rendered (B6)
+Quando l'estrazione HTTP di un articolo è **povera** (< ~400 caratteri, tipico
+delle SPA/JS), il worker rende la pagina con **Chromium headless** (Playwright) e
+ri-estrae, tenendo la versione con più testo. Il DOM renderizzato passa per la
+**stessa** pipeline snapshot/hash/WARC (evidenza probatoria invariata) e il render
+avviene solo su URL già ammessi da robots/crawl-delay. Toggle `HEADLESS_FALLBACK`
+(default attivo); l'immagine `worker-scraping` include Chromium (~400 MB in più).
+Un driver dell'alert segnala quando una fonte è stata recuperata via headless.
 
 ## Troubleshooting
 
