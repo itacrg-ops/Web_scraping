@@ -36,18 +36,22 @@ def _is_person(subject: dict) -> bool:
     return (subject.get("tipo_soggetto") or "persona_giuridica") == "persona_fisica"
 
 
-def _broadened_note(used_query: str, strongest: str, subject: dict) -> str | None:
-    """Nota per la console quando i risultati arrivano da una query PIÙ LARGA
-    della più precisa (per la persona: qualificatori caduti). Avvisa che la
-    conferma di azienda/località negli articoli distingue il soggetto dagli
-    omonimi (lo fa l'anti-omonimia a valle, nei driver dello screening)."""
-    if used_query.split(" sourcelang:")[0] == strongest:
+def _broadened_note(used_query: str, subject: dict) -> str | None:
+    """Nota per la console quando la query vincente ha PERSO i qualificatori
+    (azienda/località): la ricerca si è allargata al solo nome. Avvisa che è la
+    conferma di azienda/località nel testo degli articoli (anti-omonimia a valle,
+    nei driver) a distinguere il soggetto dagli omonimi."""
+    if not _is_person(subject):
         return None
-    if _is_person(subject) and (subject.get("azienda") or subject.get("localita")):
-        return ("Nessun articolo con tutti i qualificatori (azienda/località): "
-                "ricerca allargata al solo nome. La conferma di azienda/località nel "
-                "testo degli articoli distingue il soggetto dagli omonimi (vedi i driver).")
-    return None
+    quals = [(subject.get("azienda") or "").strip(), (subject.get("localita") or "").strip()]
+    quals = [q for q in quals if q]
+    if not quals:
+        return None
+    if any(f'"{q}"' in used_query for q in quals):
+        return None  # almeno un qualificatore è ancora presente nella query vincente
+    return ("Nessun articolo con i qualificatori azienda/località: ricerca allargata al "
+            "solo nome. La conferma di azienda/località nel testo degli articoli distingue "
+            "il soggetto dagli omonimi (vedi i driver dello screening).")
 
 
 def _result(url, title=None, snippet=None, testata=None, data=None,
@@ -170,7 +174,6 @@ async def _gdelt(subject: dict, mode: str, max_results: int, lang: str,
     qvars = qb.build_query_variants(subject, mode)
     if not qvars:
         return [], "", None
-    strongest = qvars[0]
 
     def _with_lang(q: str) -> str:
         return f"{q} sourcelang:{lang}" if lang else q
@@ -185,7 +188,7 @@ async def _gdelt(subject: dict, mode: str, max_results: int, lang: str,
         status, payload = await _gdelt_call(vq, max_results, timespan)
         if status == "ok":
             if payload:
-                return payload, vq, _broadened_note(vq, strongest, subject)
+                return payload, vq, _broadened_note(vq, subject)
             continue  # ok ma nessun articolo → prova la variante successiva
         if status == "rate_limited":
             retry_after = payload  # secondi dal 429 (o None)
@@ -201,7 +204,7 @@ async def _gdelt(subject: dict, mode: str, max_results: int, lang: str,
                     break
                 retry_after = pl  # ancora 429: aggiorna eventuale Retry-After
             if result:
-                return result, vq, _broadened_note(vq, strongest, subject)
+                return result, vq, _broadened_note(vq, subject)
             return [], vq, ("GDELT ha limitato le richieste (429). Attendi qualche "
                             "secondo e riprova, oppure dirada le ricerche.")
         return [], vq, "GDELT non raggiungibile o query rifiutata. Riprova più tardi."
@@ -292,10 +295,10 @@ async def _brave(subject: dict, mode: str, max_results: int, lang: str,
     risultati. Su errore (chiave/parametri/rete) non insiste."""
     if not settings.brave_api_key:
         return [], "", "Brave non configurato: imposta BRAVE_API_KEY nel .env."
-    qvars = qb.build_query_variants(subject, mode)
+    # Brave/Google: sintassi "plain" (niente parentesi/OR — ogni frase quotata è AND).
+    qvars = qb.build_query_variants(subject, mode, syntax="plain")
     if not qvars:
         return [], "", None
-    strongest = qvars[0]
     last_q = qvars[0]
     for q in qvars:
         last_q = q
@@ -303,9 +306,9 @@ async def _brave(subject: dict, mode: str, max_results: int, lang: str,
         if status == "error":
             return [], q, payload  # chiave/parametri/rete: inutile allargare
         if payload:
-            return payload, q, _broadened_note(q, strongest, subject)
+            return payload, q, _broadened_note(q, subject)
         # 200 ma nessun risultato → prova la variante più larga
-    return [], last_q, _broadened_note(last_q, strongest, subject)
+    return [], last_q, _broadened_note(last_q, subject)
 
 
 async def search(subject: dict, mode: str, max_results: int, lang: str,

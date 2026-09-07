@@ -107,12 +107,18 @@ def build_query(subject: dict, mode: str = "targeted") -> str:
     return variants[0] if variants else ""
 
 
-def build_query_variants(subject: dict, mode: str = "targeted") -> list[str]:
-    """Query in ordine dalla PIÙ PRECISA alla PIÙ LARGA. I provider le provano
-    in sequenza e si fermano alla prima che restituisce articoli (fallback):
-    l'AND sui qualificatori (azienda/località) dà precisione quando c'è la
-    co-occorrenza, ma non lascia la ricerca a zero quando quella co-occorrenza
-    non è indicizzata dal provider.
+def build_query_variants(subject: dict, mode: str = "targeted",
+                         syntax: str = "boolean") -> list[str]:
+    """Query in ordine dalla PIÙ PRECISA alla PIÙ LARGA (fallback ladder). I
+    provider le provano in sequenza e si fermano alla prima con articoli.
+
+    `syntax` adatta la sintassi al provider:
+      - "boolean" (GDELT): supporta i gruppi `("A" OR "B")` e l'OR — un'unica
+        query copre entrambi gli ordini del nome e i termini avversi in OR;
+      - "plain" (Brave/Google): NON supporta parentesi/OR in modo affidabile e
+        tratta OGNI frase tra virgolette come AND obbligatorio. Quindi un solo
+        ordine del nome per query (gli altri ordini diventano varianti
+        successive) e termini avversi NON quotati (segnali soft di ranking).
 
       persona + qualificatori : nome+azienda+località → nome+azienda → nome
       persona senza qualif. / entità (targeted): nome+avversi → nome
@@ -124,26 +130,46 @@ def build_query_variants(subject: dict, mode: str = "targeted") -> list[str]:
     names = name_variants(subject)
     if not names:
         return []
-    nc = _name_clause(names)
-
-    if mode == "broad":
-        return [nc]
-
-    variants: list[str] = []
-    if _is_person(subject):
-        quals = _qualifiers(subject)  # ['"Azienda"', '"Località"'] (azienda, poi località)
-        if quals:
-            # Togli un qualificatore alla volta partendo dall'ultimo (località):
-            # l'azienda, più distintiva, resta fino all'ultimo prima del solo nome.
-            for i in range(len(quals), 0, -1):
-                variants.append(" ".join([nc, *quals[:i]]))
-            variants.append(nc)
-        else:
-            variants.append(f"{nc} {_adverse_clause()}")
-            variants.append(nc)
-    else:
-        variants.append(f"{nc} {_adverse_clause()}")
-        variants.append(nc)
-
+    variants = (_plain_variants(subject, names, mode) if syntax == "plain"
+                else _boolean_variants(subject, names, mode))
     seen: set[str] = set()
     return [v for v in variants if not (v in seen or seen.add(v))]
+
+
+def _boolean_variants(subject: dict, names: list[str], mode: str) -> list[str]:
+    """GDELT: `("A" OR "B")` + termini avversi in OR (una query per entrambi gli
+    ordini del nome). Togliendo un qualificatore alla volta partendo dall'ultimo
+    (località): l'azienda, più distintiva, resta fino all'ultimo prima del nome."""
+    nc = _name_clause(names)
+    if mode == "broad":
+        return [nc]
+    if _is_person(subject):
+        quals = _qualifiers(subject)
+        if quals:
+            out = [" ".join([nc, *quals[:i]]) for i in range(len(quals), 0, -1)]
+            return out + [nc]
+        return [f"{nc} {_adverse_clause()}", nc]
+    return [f"{nc} {_adverse_clause()}", nc]
+
+
+def _plain_variants(subject: dict, names: list[str], mode: str) -> list[str]:
+    """Brave/Google: niente parentesi/OR; ogni frase tra virgolette è AND forte.
+    Un solo ordine del nome per query (gli altri come varianti successive) e
+    termini avversi NON quotati (soft, non filtranti)."""
+    q_names = [f'"{nm}"' for nm in names]
+    if _is_person(subject):
+        if mode == "broad":
+            return q_names
+        quals = _qualifiers(subject)
+        if quals:
+            out: list[str] = []
+            for i in range(len(quals), 0, -1):
+                out += [" ".join([qn, *quals[:i]]) for qn in q_names]
+            return out + q_names
+        adverse = " ".join(ADVERSE_TERMS)
+        return [f"{qn} {adverse}" for qn in q_names] + q_names
+    # entità: la denominazione ripulita è già l'unico nome
+    qn = q_names[0]
+    if mode == "broad":
+        return [qn]
+    return [f"{qn} " + " ".join(ADVERSE_TERMS), qn]

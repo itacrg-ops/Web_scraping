@@ -138,6 +138,8 @@ async def search(req: SearchRequest) -> dict:
         settings.search_provider, mode, fetch_n, lang, timespan,
         subject.get("tipo_soggetto"), subject.get("denominazione"),
         subject.get("nome"), subject.get("cognome"),
+        # azienda/località entrano nella query → devono invalidare la cache.
+        subject.get("azienda"), subject.get("localita"),
     )
     cached = _cache_get(cache_key)
     if cached is not None:
