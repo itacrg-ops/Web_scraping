@@ -40,6 +40,11 @@ B1 → (B2, B3, B4 in parallelo) → B8 → B5 → B6 → B7.
 
 ## B1 — Redazione PII prima dell'invio all'LLM · P0
 
+**Stato: ✅ FATTO (MVP regex).** Modulo `services/llm-gateway/app/pii.py` +
+hook in `foundry.classify` (chokepoint egress), toggle `PII_REDACTION`, audit nel
+campo `pii_redaction` della risposta, test `tests/test_pii.py`. Resta **B1.1**
+(mascheramento nomi via NER, dopo B7).
+
 **Perché.** È la voce più urgente per la compliance **GDPR / AI Act**. Oggi il
 testo degli articoli — che contiene dati personali di **terzi** (non solo il
 soggetto) — viene inviato ad Azure AI Foundry per la classificazione FATF

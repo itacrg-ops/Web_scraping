@@ -32,6 +32,8 @@ class ClassifyResponse(BaseModel):
     secondary_agreement: bool | None = None
     method: str
     models: dict
+    # Audit redazione PII: {"total": n, "by_category": {...}} (solo conteggi).
+    pii_redaction: dict | None = None
 
 
 @app.get("/healthz")

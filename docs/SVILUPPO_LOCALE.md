@@ -45,6 +45,19 @@ e in produzione, cambia solo la sorgente della credenziale.
 Senza credenziali configurate i servizi partono comunque (gli `/healthz`
 rispondono); solo la classificazione LLM restituirà un 503 esplicito.
 
+### Redazione PII prima dell'invio all'LLM (B1)
+Prima di inviare qualunque testo ad Azure (unico punto di egress:
+`llm-gateway/app/foundry.py::classify`), il gateway **redige le PII strutturate**
+di terzi — Codice Fiscale, P.IVA, email, IBAN, telefoni — con placeholder
+tipizzati (`[CF]`, `[EMAIL]`, …). NON tocca anni, importi, date e numeri di
+procedimento (servono alla classificazione FATF). L'audit (conteggi per categoria,
+mai i valori) è loggato e restituito nel campo `pii_redaction` della risposta.
+- Attivo per default (`PII_REDACTION=true`); `false` solo in ambienti senza egress
+  esterno.
+- **MVP**: maschera gli identificatori strutturati, non i **nomi** propri di terzi
+  (richiede NER → B1.1 nel backlog).
+- Test: `python services/llm-gateway/tests/test_pii.py`.
+
 ## Provare lo screening — persona giuridica e persona fisica
 Dalla console (tab **Screening**) si sceglie il tipo di soggetto:
 

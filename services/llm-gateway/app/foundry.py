@@ -16,7 +16,7 @@ from functools import lru_cache
 
 from openai import AzureOpenAI
 
-from app import fatf
+from app import fatf, pii
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -69,13 +69,27 @@ def classify(text: str, *, dual: bool = True) -> dict:
     """Classifica il testo con il modello primario e (se dual) lo valida col
     secondario, riconciliando le categorie e segnalando l'eventuale disaccordo."""
     client = _client()
-    text = (text or "")[: settings.max_input_chars]
+
+    # Redazione PII PRIMA di qualunque invio ad Azure (unico chokepoint di egress).
+    # Si redige il testo completo e poi si tronca, così non si spezza un token PII
+    # sul confine del cap.
+    redaction = {"total": 0, "by_category": {}}
+    raw = text or ""
+    if settings.pii_redaction:
+        raw, redaction = pii.redact(raw)
+        if redaction["total"]:
+            logger.info(
+                "PII redatte prima dell'invio all'LLM: %s (totale %d)",
+                redaction["by_category"], redaction["total"],
+            )
+    text = raw[: settings.max_input_chars]
 
     primary = _classify_one(client, settings.llm_model_primary, text)
     out = dict(primary)
     out["method"] = "llm_single"
     out["secondary_agreement"] = None
     out["models"] = {"primary": settings.llm_model_primary, "secondary": None}
+    out["pii_redaction"] = redaction
 
     if dual and settings.llm_model_secondary:
         secondary = _classify_one(client, settings.llm_model_secondary, text)
