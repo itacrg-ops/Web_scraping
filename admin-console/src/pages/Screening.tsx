@@ -60,6 +60,9 @@ export default function ScreeningPage() {
     setCfPiva(value === "persona_fisica" ? "RSSMRA75C15H501P" : "00743110157");
   }
 
+  // Campi condivisi da ricerca e screening. Il RUOLO non è qui: non entra nella
+  // ricerca (sarebbe rumore) — viene aggiunto solo al payload di screening, dove
+  // serve alla corroborazione a valle.
   const subjectFields = () => ({
     tipo_soggetto: tipo,
     denominazione: isPerson ? undefined : denominazione,
@@ -68,7 +71,6 @@ export default function ScreeningPage() {
     cf_piva: cfPiva || undefined,
     azienda: isPerson && azienda ? azienda : undefined,
     localita: isPerson && localita ? localita : undefined,
-    ruolo: isPerson && ruolo ? ruolo : undefined,
   });
 
   async function search() {
@@ -114,6 +116,7 @@ export default function ScreeningPage() {
         ...subjectFields(),
         data_nascita: isPerson && dataNascita ? dataNascita : undefined,
         luogo_nascita: isPerson && luogoNascita ? luogoNascita : undefined,
+        ruolo: isPerson && ruolo ? ruolo : undefined,   // solo screening (corroborazione)
         cup: cup ? cup.split(",").map((c) => c.trim()) : [],
         // Precedenza: selezionati (web search) → URL singolo → ricerca automatica.
         seed_urls: urls.length > 0 ? urls : undefined,
@@ -210,7 +213,8 @@ export default function ScreeningPage() {
           )}
 
           <TextField label="CUP (separati da virgola)" value={cup}
-            onChange={(e) => setCup(e.target.value)} fullWidth />
+            onChange={(e) => setCup(e.target.value)} fullWidth
+            helperText="Codice interno dell'intervento: usato per la disambiguazione (Entity Resolution), NON nella ricerca web." />
 
           <Divider textAlign="left">
             <Typography variant="overline" color="text.secondary">Ricerca articoli (web search)</Typography>

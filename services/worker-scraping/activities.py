@@ -37,9 +37,11 @@ async def search_articles(subject: dict, options: dict | None = None) -> list[di
     errore/assenza ritorna lista vuota (la pipeline lo gestisce)."""
     options = options or {}
     payload = {
+        # NB: il ruolo NON entra nella ricerca (né PF né PG): è generico e farebbe
+        # rumore. Resta usato dalla corroborazione (mention) sul soggetto completo.
         "subject": {k: subject.get(k) for k in
                     ("tipo_soggetto", "denominazione", "nome", "cognome", "cf_piva",
-                     "azienda", "localita", "ruolo")},
+                     "azienda", "localita")},
         "mode": options.get("mode", "targeted"),
         "max_results": options.get("max_results"),
     }

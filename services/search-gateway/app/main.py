@@ -46,10 +46,10 @@ class SubjectIn(BaseModel):
     cognome: str | None = None
     cf_piva: str | None = None
     # Qualificatori (persona fisica): azienda e località entrano nella query in
-    # AND forte; il ruolo è soft (non nella query).
+    # AND forte. Il ruolo NON è un campo di ricerca (né PF né PG): resta al di
+    # fuori del gateway (usato dalla corroborazione a valle).
     azienda: str | None = None
     localita: str | None = None
-    ruolo: str | None = None
 
 
 class SearchRequest(BaseModel):

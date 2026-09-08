@@ -123,7 +123,6 @@ export interface SearchPreviewRequest {
   cf_piva?: string;
   azienda?: string;
   localita?: string;
-  ruolo?: string;
   mode?: "broad" | "targeted";
   max_results?: number;
   min_credibility?: "none" | "bassa" | "sconosciuta" | "media" | "alta";
