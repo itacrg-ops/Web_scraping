@@ -9,6 +9,7 @@ Lo strumento è un **ausilio istruttorio** (decision-support) *explainable* e au
 | Documento | Contenuto |
 |-----------|-----------|
 | [`docs/WebScraping_AdverseMedia_FSC_MASE.1.0.md`](docs/WebScraping_AdverseMedia_FSC_MASE.1.0.md) | Documento tecnico-funzionale **(baseline 1.0)**: architettura, modulo di scraping, fonti, modello dati, governance, piano di sviluppo — allineato alle decisioni su SVI, React admin, Azure/Foundry e integrazione SAS |
+| [`docs/ARCHITETTURA.md`](docs/ARCHITETTURA.md) | Documento tecnico **as-built**: architettura complessiva, stack, descrizione tecnica/funzionale dei singoli microservizi, fonti dati, ruoli, gate anti-omonimia e scoring AMI — con diagrammi di topologia e pipeline |
 | [`docs/NOTE_DI_REVISIONE.md`](docs/NOTE_DI_REVISIONE.md) | Memo di revisione esperta: rilievi ordinati per criticità, razionale e punti aperti |
 | [`docs/DEPLOYMENT_E_INTEGRAZIONE_SAS.md`](docs/DEPLOYMENT_E_INTEGRAZIONE_SAS.md) | Architettura di deployment a container su **due ambienti** (locale su Docker Desktop → produzione Azure/AKS); due console (SAS Visual Investigator per l'investigazione, React per admin/config/observability); integrazione SAS Viya via SAS MCP server (scoring/decisioning) e `svi-publisher` (Data Hub/Alerts); LLM via Azure AI Foundry (anche in locale) |
 | [`docs/SVILUPPO_LOCALE.md`](docs/SVILUPPO_LOCALE.md) | Guida allo sviluppo locale su Docker Desktop: prerequisiti, avvio, LLM su Foundry in locale, mock SAS/SVI, struttura del repo |
