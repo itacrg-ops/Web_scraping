@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 import httpx
 from temporalio import activity
 
+import anagraphics
 import classifier
 import extract as extractor
 import fetcher
@@ -92,10 +93,12 @@ async def resolve_entity(subject: dict) -> dict:
 
 @activity.defn
 async def verify_subject_mention(subject: dict, text: str) -> dict:
-    """Verifica che il soggetto sia citato nell'evidenza (anti falsa attribuzione)."""
+    """Verifica che il soggetto sia citato nell'evidenza (anti falsa attribuzione)
+    e corrobora l'identità con i dati anagrafici citati nell'articolo (B7)."""
     res = mention.check(subject, text)
-    activity.logger.info("verify_subject_mention: mentioned=%s matched=%s",
-                         res["mentioned"], res["matched"])
+    res["anagraphics"] = anagraphics.corroborate(subject, text)
+    activity.logger.info("verify_subject_mention: mentioned=%s matched=%s anagrafica=%s",
+                         res["mentioned"], res["matched"], res["anagraphics"]["status"])
     return res
 
 

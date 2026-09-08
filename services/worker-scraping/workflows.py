@@ -151,6 +151,7 @@ class ScreeningWorkflow:
             info = cred_map.get(url) or {}
             doc["_mentioned"] = bool(men.get("mentioned"))
             doc["_context"] = men.get("context", [])
+            doc["_anagraphics"] = men.get("anagraphics") or {"status": "n/a"}
             doc["_credibilita"] = info.get("credibilita")
             doc["_domain"] = info.get("domain")
             any_mention = any_mention or doc["_mentioned"]
@@ -211,6 +212,19 @@ class ScreeningWorkflow:
             else:
                 drivers.insert(0, "⚠ Contesto (azienda/località/ruolo) non riscontrato negli articoli "
                                "citanti: possibile omonimo, verificare l'identità")
+
+        # Corroborazione anagrafica dagli articoli (persona fisica): età/anno/luogo
+        # di nascita citati coerenti o discordanti col soggetto → mitiga l'omonimia.
+        if subject["tipo_soggetto"] == "persona_fisica" and any_mention:
+            _ana = [d.get("_anagraphics") or {} for d in docs if d.get("_mentioned")]
+            _disc = [f for a in _ana if a.get("status") == "discordante" for f in a.get("findings", [])]
+            _conf = [f for a in _ana if a.get("status") == "confermato" for f in a.get("findings", [])]
+            if _disc:
+                drivers.insert(0, "⚠ Dati anagrafici discordanti negli articoli ("
+                               + "; ".join(sorted(set(_disc))) + "): possibile OMONIMO, verificare l'identità")
+            elif _conf:
+                drivers.insert(0, "Dati anagrafici confermati negli articoli ("
+                               + "; ".join(sorted(set(_conf))) + "): identità corroborata")
 
         if resolution.get("status") == "provvisorio":
             drivers.insert(
