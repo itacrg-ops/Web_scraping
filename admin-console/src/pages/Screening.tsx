@@ -9,6 +9,7 @@ import {
   getScreening, searchPreview, startScreening,
   type Credibilita, type Screening, type SearchResult, type TipoSoggetto,
 } from "../api";
+import { checkCf } from "../codiceFiscale";
 
 // Colore del chip credibilità testata.
 const credColor = (c?: Credibilita | null): "success" | "warning" | "default" =>
@@ -23,6 +24,7 @@ export default function ScreeningPage() {
   const [cognome, setCognome] = useState("Rossi");
   const [nome, setNome] = useState("Mario");
   const [dataNascita, setDataNascita] = useState("");
+  const [luogoNascita, setLuogoNascita] = useState("");
   const [cfPiva, setCfPiva] = useState("00743110157");
   // Qualificatori di ricerca (persona fisica)
   const [azienda, setAzienda] = useState("");
@@ -47,6 +49,8 @@ export default function ScreeningPage() {
 
   const isPerson = tipo === "persona_fisica";
   const hasSubject = isPerson ? Boolean(cognome && nome) : Boolean(denominazione);
+  // Controllo live CF ↔ dati anagrafici (persona fisica): feedback immediato.
+  const cfCheck = isPerson ? checkCf(cfPiva, nome, cognome, dataNascita) : null;
 
   function onTipoChange(_: unknown, value: TipoSoggetto | null) {
     if (!value) return;
@@ -109,6 +113,7 @@ export default function ScreeningPage() {
       const s = await startScreening({
         ...subjectFields(),
         data_nascita: isPerson && dataNascita ? dataNascita : undefined,
+        luogo_nascita: isPerson && luogoNascita ? luogoNascita : undefined,
         cup: cup ? cup.split(",").map((c) => c.trim()) : [],
         // Precedenza: selezionati (web search) → URL singolo → ricerca automatica.
         seed_urls: urls.length > 0 ? urls : undefined,
@@ -177,7 +182,18 @@ export default function ScreeningPage() {
                 InputLabelProps={{ shrink: true }}
                 helperText="Facoltativa: disambigua l'omonimia." />
             )}
+            {isPerson && (
+              <TextField label="Luogo di nascita" value={luogoNascita}
+                onChange={(e) => setLuogoNascita(e.target.value)} fullWidth
+                helperText="Facoltativo: comune/stato, disambigua l'omonimia." />
+            )}
           </Stack>
+
+          {cfCheck && !cfCheck.consistent && cfCheck.warnings.length > 0 && (
+            <MuiAlert severity="warning" variant="outlined">
+              {cfCheck.warnings.map((w, i) => <div key={i}>{w}</div>)}
+            </MuiAlert>
+          )}
 
           {isPerson && (
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>

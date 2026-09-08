@@ -14,11 +14,12 @@ import {
   createSubject, deleteSubject, importSubjects, listSubjects, updateSubject,
   type Subject, type SubjectImportResult, type TipoSoggetto,
 } from "../api";
+import { checkCf } from "../codiceFiscale";
 
 const CSV_TEMPLATE =
-  "tipo_soggetto,denominazione,nome,cognome,cf_piva,data_nascita,cup,ruolo\n" +
-  "persona_giuridica,Italware S.r.l.,,,12345670159,,E51B21000000001;B22C21000000002,beneficiario\n" +
-  "persona_fisica,,Anna,Verdi,VRDNNA85M41H501K,1985-08-01,,RUP\n";
+  "tipo_soggetto,denominazione,nome,cognome,cf_piva,data_nascita,luogo_nascita,cup,ruolo\n" +
+  "persona_giuridica,Italware S.r.l.,,,12345670159,,,E51B21000000001;B22C21000000002,beneficiario\n" +
+  "persona_fisica,,Anna,Verdi,VRDNNA85M41H501K,1985-08-01,Roma,,RUP\n";
 
 interface EditForm {
   denominazione: string; cf_piva: string; data_nascita: string;
@@ -36,6 +37,7 @@ export default function Soggetti() {
   const [cognome, setCognome] = useState("");
   const [nome, setNome] = useState("");
   const [dataNascita, setDataNascita] = useState("");
+  const [luogoNascita, setLuogoNascita] = useState("");
   const [cfPiva, setCfPiva] = useState("");
   const [cup, setCup] = useState("");
   const [ruolo, setRuolo] = useState("");
@@ -49,6 +51,7 @@ export default function Soggetti() {
 
   const isPerson = tipo === "persona_fisica";
   const canAdd = isPerson ? Boolean(cognome && nome) : Boolean(denominazione);
+  const cfCheck = isPerson ? checkCf(cfPiva, nome, cognome, dataNascita) : null;
 
   async function reload() {
     try { setRows(await listSubjects()); } catch (e) { setError(String(e)); }
@@ -64,12 +67,13 @@ export default function Soggetti() {
         nome: isPerson ? nome : undefined,
         cognome: isPerson ? cognome : undefined,
         data_nascita: isPerson && dataNascita ? dataNascita : undefined,
+        luogo_nascita: isPerson && luogoNascita ? luogoNascita : undefined,
         cf_piva: cfPiva || undefined,
         cup: cup ? cup.split(",").map((c) => c.trim()).filter(Boolean) : [],
         ruolo: ruolo || undefined,
       });
       setDenominazione(""); setCognome(""); setNome("");
-      setDataNascita(""); setCfPiva(""); setCup(""); setRuolo("");
+      setDataNascita(""); setLuogoNascita(""); setCfPiva(""); setCup(""); setRuolo("");
       await reload();
     } catch (e) { setError(String(e)); } finally { setBusy(false); }
   }
@@ -162,6 +166,9 @@ export default function Soggetti() {
               <TextField label="Nome" value={nome} onChange={(e) => setNome(e.target.value)} fullWidth required />
               <TextField label="Data di nascita" type="date" value={dataNascita}
                 onChange={(e) => setDataNascita(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />
+              <TextField label="Luogo di nascita" value={luogoNascita}
+                onChange={(e) => setLuogoNascita(e.target.value)} fullWidth
+                helperText="Comune/stato: disambigua l'omonimia." />
             </Stack>
           ) : (
             <TextField label="Denominazione" value={denominazione}
@@ -177,6 +184,12 @@ export default function Soggetti() {
             <TextField label="Ruolo" value={ruolo} onChange={(e) => setRuolo(e.target.value)} fullWidth
               helperText="es. beneficiario, RUP, legale rappresentante" />
           </Stack>
+
+          {cfCheck && !cfCheck.consistent && cfCheck.warnings.length > 0 && (
+            <MuiAlert severity="warning" variant="outlined">
+              {cfCheck.warnings.map((w, i) => <div key={i}>{w}</div>)}
+            </MuiAlert>
+          )}
 
           <Box>
             <Button variant="contained" onClick={add} disabled={busy || !canAdd}>

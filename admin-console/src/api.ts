@@ -77,6 +77,7 @@ export interface ScreeningRequest {
   nome?: string;       // solo persona fisica
   cognome?: string;    // solo persona fisica
   data_nascita?: string; // ISO YYYY-MM-DD, disambiguante (persona fisica)
+  luogo_nascita?: string; // comune/stato di nascita, disambiguante (persona fisica)
   cf_piva?: string;
   azienda?: string;    // persona fisica: qualificatore ricerca (AND)
   localita?: string;   // persona fisica: qualificatore ricerca (AND)
@@ -144,6 +145,7 @@ export interface Subject {
   denominazione: string;
   cf_piva?: string | null;
   data_nascita?: string | null;
+  luogo_nascita?: string | null;
   cup: string[];
   ruolo?: string | null;
   attivo: boolean;
@@ -156,6 +158,7 @@ export interface SubjectCreate {
   nome?: string;
   cognome?: string;
   data_nascita?: string;
+  luogo_nascita?: string;
   cf_piva?: string;
   cup: string[];
   ruolo?: string;
@@ -166,6 +169,7 @@ export interface SubjectUpdate {
   denominazione?: string;
   cf_piva?: string;
   data_nascita?: string;
+  luogo_nascita?: string;
   cup?: string[];
   ruolo?: string;
   attivo?: boolean;
