@@ -170,6 +170,13 @@ boto3, warcio`; nessun browser incluso), con impatto su dimensione immagine e av
 
 ## B7 — NER / Embedding per l'anti-omonimia · P2
 
+**Stato: ✅ parte 1 FATTA.** Disambiguazione per **CUP** dell'intervento nel gate
+(`probabilistico_nome_CUP`: riduce gli `ambiguous` sugli omonimi) + **embedding**
+opt-in per le varianti di nome (llm-gateway `/v1/embed` + blend in `resolver.py`,
+fallback a stringa). Test `tests/test_resolver_b7.py`. **Parte 2 (da fare): NER
+spaCy** per la corroborazione sugli articoli (endpoint `/v1/ner` nel llm-gateway),
+che sblocca anche **B1.1** (redazione dei nomi di terzi).
+
 **Perché.** Riduce gli alert HITL per omonimia irrisolta. L'Entity Resolution usa
 oggi match deterministico (CF/P.IVA) + similarità sul nome normalizzato: i casi
 senza identificatore forte finiscono in revisione umana

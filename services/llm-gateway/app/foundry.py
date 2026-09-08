@@ -49,6 +49,33 @@ def _client() -> AzureOpenAI:
     )
 
 
+def embed(texts: list[str]) -> dict:
+    """Embedding dei testi via Azure AI Foundry (deployment `embedding_model`).
+    Usato dall'Entity Resolution per la similarità semantica dei nomi (B7).
+    Applica la redazione PII per coerenza col resto del gateway (i nomi propri
+    passano: la redazione MVP tocca solo gli identificatori strutturati)."""
+    if not settings.embedding_model:
+        raise RuntimeError(
+            "EMBEDDING_MODEL non configurato: imposta il deployment di embedding su Foundry."
+        )
+    client = _client()
+    cleaned: list[str] = []
+    redacted_total = 0
+    for t in texts:
+        s = t or ""
+        if settings.pii_redaction:
+            s, rep = pii.redact(s)
+            redacted_total += rep["total"]
+        cleaned.append(s[: settings.max_input_chars])
+    if redacted_total:
+        logger.info("PII redatte prima dell'embedding: %d", redacted_total)
+    resp = client.embeddings.create(model=settings.embedding_model, input=cleaned)
+    vectors = [list(d.embedding) for d in resp.data]
+    return {"model": settings.embedding_model,
+            "dims": len(vectors[0]) if vectors else 0,
+            "embeddings": vectors}
+
+
 def _classify_one(client: AzureOpenAI, model: str, text: str) -> dict:
     if not model:
         raise RuntimeError("Deployment LLM non configurato (LLM_MODEL_PRIMARY/SECONDARY).")

@@ -72,6 +72,15 @@ data di nascita restringe i candidati ma **non risolve da sola**; il **CF** riso
 in modo deterministico, ma se è indicata **anche** una data di nascita
 **discordante** il gate non passa (`needs_review`: input contraddittorio).
 
+**Disambiguazione per CUP (B7).** Tra candidati **omonimi**, se lo screening porta
+il **CUP** dell'intervento e a registro un solo omonimo è legato a quel CUP, il
+gate lo risolve (`probabilistico_nome_CUP`) invece di fermarsi ad `ambiguous`: non
+è "solo nome", è nome + legame autoritativo all'intervento. Disattivabile con
+`ALLOW_CUP_DISAMBIGUATION=false`. In opzione, `USE_EMBEDDINGS=true` fonde la
+similarità **semantica** dei nomi (embedding via llm-gateway) con quella di stringa
+per le varianti/abbreviazioni (richiede `EMBEDDING_MODEL` su Foundry; senza, resta
+la sola stringa). Test: `python services/entity-resolution/tests/test_resolver_b7.py`.
+
 > **Soggetto non a registro** (es. cerchi "Italware" e non è tra i soggetti noti):
 > di default il gate resta `unresolved` (HITL) — è corretto, in produzione il
 > registro contiene i beneficiari reali. Due modi per procedere:

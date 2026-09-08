@@ -21,6 +21,7 @@ from app.normalize import (
     valid_identifier,
 )
 from app.registry import PERSONA_FISICA, PERSONA_GIURIDICA, get_registry
+from app import semantic
 
 
 def _match_record(r: dict) -> dict:
@@ -102,10 +103,20 @@ def resolve(subject: dict) -> dict:
     #    soggetto (una persona non va confrontata con una società).
     target_tipo = PERSONA_FISICA if is_person else PERSONA_GIURIDICA
     pool = [r for r in reg if r.get("tipo", PERSONA_GIURIDICA) == target_tipo]
-    scored = sorted(
-        ({"record": r, "score": round(similarity(name, r["denominazione"]), 3)} for r in pool),
-        key=lambda x: x["score"], reverse=True,
-    )
+    scored = [{"record": r, "score": round(similarity(name, r["denominazione"]), 3)} for r in pool]
+
+    # Embedding (B7): fonde una componente semantica nella similarità del nome
+    # (varianti/abbreviazioni che la stringa sottostima). Opt-in e NON fatale:
+    # senza embedding configurati resta la sola similarità di stringa.
+    if settings.use_embeddings and pool and name:
+        emb = semantic.similarities(name, [r["denominazione"] for r in pool])
+        if emb is not None and len(emb) == len(pool):
+            w = settings.embedding_weight
+            for item, e in zip(scored, emb):
+                item["score"] = round((1 - w) * item["score"] + w * e, 3)
+            warnings.append("Similarità semantica (embedding) fusa nel matching del nome")
+
+    scored.sort(key=lambda x: x["score"], reverse=True)
     best = scored[0] if scored else None
     second = scored[1]["score"] if len(scored) > 1 else 0.0
     candidates_scored = [c for c in scored if c["score"] >= settings.name_candidate]
@@ -121,6 +132,37 @@ def resolve(subject: dict) -> dict:
             warnings.append("Candidati ristretti per data di nascita")
         else:
             warnings.append("Nessun candidato con la data di nascita indicata (possibile omonimia)")
+
+    # 2c) Disambiguazione per CUP dell'intervento (B7): tra candidati OMONIMI il
+    #     legame autoritativo persona↔CUP nel registro individua quello giusto.
+    #     Non è "solo nome": è nome + legame forte allo specifico intervento.
+    if settings.allow_cup_disambiguation and candidates_scored:
+        req_cups = {clean_id(c) for c in (subject.get("cup") or []) if clean_id(c)}
+        if req_cups:
+            def _rec_cups(item: dict) -> set:
+                return {clean_id(x) for x in (item["record"].get("cup") or []) if clean_id(x)}
+            cup_matches = [c for c in candidates_scored if req_cups & _rec_cups(c)]
+            if len(cup_matches) == 1:
+                rec = cup_matches[0]["record"]
+                cup_hit = sorted(req_cups & _rec_cups(cup_matches[0]))[0]
+                return {
+                    "resolved": True,
+                    "status": "resolved",
+                    "method": "probabilistico_nome_CUP",
+                    "confidence": round(max(cup_matches[0]["score"], 0.9), 3),
+                    "identifier_valid": id_ok,
+                    "matched": _match_record(rec),
+                    "candidates": [],
+                    "warnings": warnings + [
+                        f"Disambiguazione per CUP dell'intervento ({cup_hit}): tra gli omonimi "
+                        "a registro individuato univocamente il soggetto legato a questo CUP."
+                    ],
+                }
+            if len(cup_matches) >= 2:
+                candidates_scored = cup_matches
+                warnings.append(
+                    "Candidati ristretti per CUP dell'intervento (restano omonimi sullo stesso CUP)"
+                )
 
     candidates = [{**_match_record(c["record"]), "score": c["score"]} for c in candidates_scored]
 

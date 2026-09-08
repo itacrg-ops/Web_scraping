@@ -31,5 +31,18 @@ class Settings(BaseSettings):
     # nome; in produzione è un'azione deliberata dell'analista (alert marcato).
     allow_unregistered_subject: bool = False
 
+    # Disambiguazione per CUP dell'intervento (B7): tra candidati OMONIMI, il
+    # legame autoritativo persona↔CUP a registro individua il soggetto giusto →
+    # riduce gli esiti `ambiguous`. Segnale forte (non è "solo nome"): default ON.
+    allow_cup_disambiguation: bool = True
+
+    # Similarità semantica via embedding (B7): fonde la similarità di stringa con
+    # quella semantica (varianti di nome, abbreviazioni). Opt-in e NON fatale:
+    # senza llm-gateway/embedding configurati resta la sola similarità di stringa.
+    use_embeddings: bool = False
+    llm_gateway_url: str = "http://llm-gateway:8080"
+    embedding_weight: float = 0.4     # peso della componente semantica nel blend [0..1]
+    embedding_timeout: float = 10.0
+
 
 settings = Settings()

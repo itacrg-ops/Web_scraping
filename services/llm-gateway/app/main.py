@@ -36,11 +36,22 @@ class ClassifyResponse(BaseModel):
     pii_redaction: dict | None = None
 
 
+class EmbedRequest(BaseModel):
+    texts: list[str]
+
+
+class EmbedResponse(BaseModel):
+    model: str
+    dims: int
+    embeddings: list[list[float]] = []
+
+
 @app.get("/healthz")
 def healthz() -> dict:
     return {
         "status": "ok",
         "endpoint_configured": bool(settings.azure_foundry_endpoint),
+        "embedding_configured": bool(settings.embedding_model),
         "auth_mode": "api_key" if settings.azure_api_key else "entra",
     }
 
@@ -54,3 +65,16 @@ def classify(req: ClassifyRequest) -> dict:
     except Exception as exc:  # noqa: BLE001 — errore modello/parsing JSON
         logger.warning("Classificazione fallita: %s", exc)
         raise HTTPException(status_code=502, detail=f"classificazione non riuscita: {exc}") from exc
+
+
+@app.post("/v1/embed", response_model=EmbedResponse)
+def embed(req: EmbedRequest) -> dict:
+    """Embedding dei testi (Azure AI Foundry) per la similarità semantica dei
+    nomi nell'Entity Resolution (B7)."""
+    try:
+        return foundry.embed(req.texts)
+    except RuntimeError as exc:  # embedding non configurato
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Embedding fallito: %s", exc)
+        raise HTTPException(status_code=502, detail=f"embedding non riuscito: {exc}") from exc
