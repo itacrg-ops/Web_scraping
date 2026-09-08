@@ -69,8 +69,8 @@ CASES: list[dict] = [
         "label": "PF CF RSSMRA80E20F205I + data 1975-03-15 (DISCORDANTE)",
         "subject": {"tipo_soggetto": "persona_fisica", "nome": "Mario", "cognome": "Rossi",
                     "cf_piva": "RSSMRA80E20F205I", "data_nascita": "1975-03-15"},
-        "expect": {"status": "needs_review", "method_contains": "conflitto"},
-        "why": "il CF è del nato nel 1980, ma è indicato 1975 → incoerenza",
+        "expect": {"status": "needs_review", "method_contains": "incoerenza"},
+        "why": "il CF codifica il 1980, ma è indicato 1975 → incoerenza CF/dati anagrafici",
     },
     {
         "label": "PG ACME Costruzioni — solo nome",

@@ -21,7 +21,7 @@ from app.normalize import (
     valid_identifier,
 )
 from app.registry import PERSONA_FISICA, PERSONA_GIURIDICA, get_registry
-from app import semantic
+from app import codice_fiscale, semantic
 
 
 def _match_record(r: dict) -> dict:
@@ -59,6 +59,34 @@ def resolve(subject: dict) -> dict:
     dob = (subject.get("data_nascita") or "").strip() or None
     id_ok = valid_identifier(cf) if cf else False
     similarity = person_name_similarity if is_person else name_similarity
+
+    # 0) Coerenza CF ↔ dati anagrafici inseriti (persona fisica). Il CF codifica
+    #    cognome, nome e data di nascita: se non corrispondono a quanto inserito,
+    #    l'input è contraddittorio (refuso o CF errato per il soggetto) → non si
+    #    procede a un match autoritativo. Il checksum non blocca (solo avviso).
+    if cf and is_person and len(cf) == 16:
+        nome_in = (subject.get("nome") or "").strip()
+        cognome_in = (subject.get("cognome") or "").strip()
+        if not (nome_in or cognome_in):
+            toks = _subject_name(subject).split()
+            if toks:
+                cognome_in, nome_in = toks[0], " ".join(toks[1:])
+        cf_cons = codice_fiscale.check_consistency(cf, nome_in, cognome_in, dob)
+        if cf_cons["checks"] and any(not c["ok"] for c in cf_cons["checks"]):
+            return {
+                "resolved": False,
+                "status": "needs_review",
+                "method": "incoerenza_CF_dati_anagrafici",
+                "confidence": 0.4,
+                "identifier_valid": id_ok,
+                "matched": None,
+                "candidates": [],
+                "warnings": warnings + cf_cons["warnings"] + [
+                    "Dati anagrafici incoerenti col Codice Fiscale: verifica CF, nome, "
+                    "cognome o data di nascita."
+                ],
+            }
+        warnings += cf_cons["warnings"]  # es. avviso di checksum non valido (non bloccante)
 
     # 1) Deterministico su CF/P.IVA (unico percorso che supera il gate di default).
     #    Gli identificatori sono globalmente univoci (CF 16 char = persona fisica,

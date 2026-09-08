@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from app import resolver
+from app import codice_fiscale, resolver
 from app.normalize import valid_cf, valid_identifier, valid_piva
 
 app = FastAPI(title="Entity Resolution", version="0.1.0")
@@ -65,3 +65,20 @@ def resolve(subject: SubjectIn) -> dict:
 def validate(id: str) -> dict:
     """Utility: valida formalmente un CF o una P.IVA."""
     return {"value": id, "valid": valid_identifier(id), "is_cf": valid_cf(id), "is_piva": valid_piva(id)}
+
+
+class CfCheckIn(BaseModel):
+    cf_piva: str
+    nome: str | None = None
+    cognome: str | None = None
+    data_nascita: str | None = None
+
+
+@app.post("/cf-check")
+def cf_check(req: CfCheckIn) -> dict:
+    """Coerenza tra Codice Fiscale e dati anagrafici (persona fisica): il CF
+    codifica cognome/nome/data/sesso. Usato dal controllo live nella console e
+    riusa la stessa logica del gate."""
+    return codice_fiscale.check_consistency(
+        req.cf_piva, req.nome, req.cognome, req.data_nascita
+    )
