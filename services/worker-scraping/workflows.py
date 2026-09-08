@@ -21,6 +21,7 @@ from temporalio.common import RetryPolicy
 with workflow.unsafe.imports_passed_through():
     from activities import (
         annotate_credibility,
+        assess_risk_feed,
         classify_fatf,
         compute_ami,
         extract_content,
@@ -41,6 +42,25 @@ _MAX_CLASSIFY_CHARS = 12000    # cap del testo aggregato inviato alla classifica
 _HEADLESS_TIMEOUT = timedelta(seconds=90)  # il render JS è più lento del fetch HTTP
 _HEADLESS_MIN_CHARS = 400      # sotto questa soglia l'estrazione è "povera" → prova headless
 _RENDER_RETRY = RetryPolicy(maximum_attempts=2)  # render costoso: meno tentativi
+
+_SEV_ORDER = {"bassa": 1, "media": 2, "alta": 3}
+
+
+def _merge_risk_feed(classification: dict, risk_feed: dict) -> dict:
+    """Fonde il feed di rischio strutturato nella classificazione media: unione
+    delle categorie FATF (senza duplicati) e severità = massimo tra media e feed.
+    Così un riscontro dal feed alza l'AMI anche quando gli articoli tacciono.
+    Funzione **pura** (deterministica): sicura nel contesto workflow."""
+    merged = dict(classification)
+    cats = list(merged.get("fatf_categories") or [])
+    for c in risk_feed.get("fatf_categories") or []:
+        if c not in cats:
+            cats.append(c)
+    merged["fatf_categories"] = cats
+    sev_feed = risk_feed.get("severity")
+    if _SEV_ORDER.get(sev_feed, 0) > _SEV_ORDER.get(merged.get("severity"), 0):
+        merged["severity"] = sev_feed
+    return merged
 
 
 @workflow.defn
@@ -92,6 +112,14 @@ class ScreeningWorkflow:
         matched = resolution.get("matched") or {}
         if matched.get("cup"):
             subject["cup"] = subject["cup"] or matched.get("cup", [])
+
+        # --- Feed di rischio strutturato (AML/CFT) sul soggetto RISOLTO ---
+        # Dopo il gate anti-omonimia: l'identità è certa, quindi ha senso
+        # interrogare un feed per identità (Crime&tech). Default OFF (RISK_PROVIDER
+        # vuoto) → None → nessun arricchimento. Non altera il percorso articoli.
+        risk_feed = await workflow.execute_activity(
+            assess_risk_feed, subject, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
+        )
 
         # --- Selezione degli URL da screenare ---
         # Precedenza: seed_url singolo (override) → seed_urls (candidati scelti in
@@ -173,6 +201,13 @@ class ScreeningWorkflow:
         else:
             classification = {"fatf_categories": [], "method": "nessun_contenuto"}
 
+        # Feed di rischio strutturato: se disponibile, fonde categorie FATF e
+        # severità nella classificazione PRIMA dell'AMI (un riscontro dal feed
+        # pesa anche quando gli articoli tacciono). Default OFF → nessun effetto.
+        risk_available = bool(risk_feed and risk_feed.get("available"))
+        if risk_available:
+            classification = _merge_risk_feed(classification, risk_feed)
+
         # Segnali per la pesatura AMI: per ogni articolo, fonte + credibilità +
         # se cita il soggetto (corroborazione da fonti indipendenti).
         signals = [
@@ -242,6 +277,17 @@ class ScreeningWorkflow:
             drivers.insert(
                 0,
                 "⚠ Screening ESPLORATIVO: soggetto non a registro — identità e pertinenza al CUP da verificare",
+            )
+
+        # Feed di rischio: blocco di driver in testa se c'è un riscontro; una nota
+        # di trasparenza se il feed è attivo ma senza riscontro utilizzabile.
+        if risk_available:
+            block = [f"— Feed di rischio ({risk_feed.get('provider')}) —"] + list(risk_feed.get("drivers", []))
+            drivers = block + drivers
+        elif risk_feed is not None:
+            drivers.append(
+                f"Feed di rischio ({risk_feed.get('provider')}): nessun riscontro utilizzabile "
+                f"({risk_feed.get('reason')})"
             )
 
         alert_payload = {

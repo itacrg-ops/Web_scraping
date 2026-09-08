@@ -1,6 +1,6 @@
 # Backlog — Adverse Media Screening (pilota MASE/FSC)
 
-Aggiornato: 2026-09-07 · Ordine dei componenti: `services/*`, `admin-console/`.
+Aggiornato: 2026-09-08 · Ordine dei componenti: `services/*`, `admin-console/`.
 
 Elenco prioritizzato delle evoluzioni. La pipeline di base è operativa e
 collaudata end-to-end (registro Soggetti, web search multi-sintassi con
@@ -26,6 +26,7 @@ SVI mock, alert con evidenze). Questo documento traccia i passi successivi.
 | B6 | Headless browser (fonti JS) | P2 | M | `worker-scraping` |
 | B7 | NER / Embedding per l'anti-omonimia | P2 | L | `entity-resolution`, `worker-scraping` |
 | B8 | Multi-provider fan-out ricerca | P2 | M | `search-gateway`, `docker-compose` |
+| B9 | Feed di rischio strutturato (Crime&tech) | P2 | M | `risk-gateway` (nuovo), `worker-scraping` |
 
 **Sequenza adottata (pilota): B1 → B6 → B7 → B8** — compatibilità verificata sul
 codice. B1 parte in versione **MVP regex** (indipendente); dopo B7 va rifinita con
@@ -268,3 +269,55 @@ flowchart LR
 **Definition of Done.** Query con 2+ provider in parallelo; risultati fusi e
 dedotti per URL; corroborazione riflessa nel ranking; il singolo-provider resta
 supportato per compatibilità.
+
+## B9 — Feed di rischio strutturato (Crime&tech) · P2
+
+**Stato: ✅ SCAFFOLDING (default OFF, non collegato).** Creata l'astrazione
+`services/risk-gateway` (nuovo microservizio, porta 8096) come **punto unico di
+egress** verso provider di dati di rischio, analoga a `search-gateway`/
+`llm-gateway`. Include: dispatch provider (`RISK_PROVIDER`: `""`=OFF | `mock` |
+`crimetech`), **mappatura** indicatori→FATF/severità e connessioni→driver/
+evidenza (`app/mapping.py`, pura e testata), **client Crime&tech stub**
+(`app/crimetech.py`, endpoint documentato, guardie hard anti-egress), provider
+**mock** con fixture per il collaudo offline, e l'aggancio nel workflow
+(`assess_risk_feed` **dopo** l'Entity Resolution). Test 9/9. Dettaglio e
+attivazione in [`CRIMETECH_FEED`](CRIMETECH_FEED.md).
+
+**Perché.** Il feed **non** è web search: è una fonte **per identità** (dato il
+soggetto risolto, restituisce indicatori di rischio validati per tipo di reato,
+con rating esplicabile, e la **rete di connessioni**). Complementare all'adverse
+media: alza l'AMI anche quando gli articoli tacciono, e porta segnali di rete
+(soci/consulenti a rischio) che la ricerca testuale non vede.
+
+**Architettura.** Endpoint documentato di riferimento
+`GET /dataset/{dataset_id}/risk-indicators/{entity_id}/connections`. Flusso:
+Entity Resolution → **riconciliazione** soggetto→`entity_id` nel dataset del
+provider → fetch indicatori+connessioni → mappa su FATF/AMI/evidenza → arricchisce
+l'alert. Collocato **dopo** il gate: si interroga solo un'identità certa.
+
+```mermaid
+flowchart LR
+    ER["Entity Resolution<br/>(gate)"] --> RG["risk-gateway<br/>/v1/risk"]
+    RG --> REC["Riconciliazione<br/>entity_id"]
+    REC --> CT["Crime&tech<br/>indicatori + connessioni"]
+    CT --> MAP["Mappatura<br/>FATF / severità / evidenza"]
+    MAP --> AMI["AMI + driver<br/>dell'alert"]
+```
+
+**Vincoli (compliance).** A differenza dell'adverse media, la **redazione PII
+non è applicabile**: per interrogare il feed si invia l'**identità reale** a un
+processore esterno. Prerequisiti all'attivazione: **spec OpenAPI** ufficiale +
+**chiave** (mai nel repo), **licenza/DPA**, **DPIA** aggiornata (nuovo
+trasferimento di dati personali), base giuridica del trattamento. Le due guardie
+`CRIMETECH_LIVE` + `CRIMETECH_API_KEY` impediscono qualunque egress finché non
+sono entrambe valorizzate; oggi l'egress verso `api.crimetech.app` è comunque
+bloccato dal proxy dell'ambiente.
+
+**Componenti.** `services/risk-gateway` (nuovo); `services/worker-scraping`
+(`assess_risk_feed`, hook nel workflow); `docker-compose.dev.yml` (servizio
+`risk-gateway`); catalogo Fonti (riga `crimetech`, `sospesa`).
+
+**Definition of Done (per l'attivazione).** Reconcile entità→`entity_id`
+implementato sullo schema reale; `_normalize_connections_response` confermata
+sui campi OpenAPI; DPIA/DPA firmati; un soggetto noto produce indicatori+
+connessioni mappati in AMI/driver, con test su risposta reale (oggi: mock).

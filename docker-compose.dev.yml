@@ -83,10 +83,11 @@ services:
       SVI_PUBLISHER_URL: "http://svi-publisher:8090"
       ENTITY_RESOLUTION_URL: "http://entity-resolution:8070"
       SEARCH_GATEWAY_URL: "http://search-gateway:8095"
+      RISK_GATEWAY_URL: "http://risk-gateway:8096"
       API_BASE: "http://api:8000"
       # Deve combaciare con l'INTERNAL_API_TOKEN dell'api per superare il gate interno.
       INTERNAL_API_TOKEN: "${INTERNAL_API_TOKEN:-}"
-    depends_on: [temporal, redis, minio, llm-gateway, svi-publisher, entity-resolution, search-gateway, api]
+    depends_on: [temporal, redis, minio, llm-gateway, svi-publisher, entity-resolution, search-gateway, risk-gateway, api]
 
   # ---- Gateway LLM verso Azure AI Foundry (anche in locale) ----
   llm-gateway:
@@ -121,6 +122,17 @@ services:
     environment:
       SEARXNG_BASE_URL: "http://localhost:8888/"
     ports: ["8888:8080"]
+
+  # ---- Risk gateway: feed di rischio strutturato AML/CFT (Crime&tech) ----
+  # DEFAULT OFF: RISK_PROVIDER vuoto = feed disattivato, nessun egress esterno.
+  # Attivazione: RISK_PROVIDER=mock (fixture) oppure crimetech (chiave + spec +
+  # ok compliance). Nessun segreto nel repo: CRIMETECH_* solo via .env.
+  risk-gateway:
+    build: ./services/risk-gateway
+    env_file: .env   # RISK_PROVIDER, CRIMETECH_* (vuoti di default)
+    environment:
+      RISK_PROVIDER: "${RISK_PROVIDER:-}"
+    ports: ["8096:8096"]
 
   # ---- Publisher verso SAS Visual Investigator (mock in locale) ----
   svi-publisher:

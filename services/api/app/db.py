@@ -107,6 +107,11 @@ async def _seed_sources() -> None:
                credibilita="alta", rischio_legale="basso"),
         Source(id="albo-pretorio", nome="Albo pretorio (comune X)", tipo="scraping",
                credibilita="alta", rischio_legale="basso", crawl_delay_s=3.0),
+        # Feed di rischio strutturato (B9): capability progettata (risk-gateway),
+        # non ancora attiva. rischio_legale "medio" perché invia identità reale a
+        # un processore esterno (DPA/DPIA richiesti). attiva=False = sospesa.
+        Source(id="crimetech", nome="Crime&tech — Risk Indicators (AML/CFT)", tipo="feed",
+               credibilita="alta", rischio_legale="medio", attiva=False),
     ]
     async with SessionLocal() as session:
         existing = (await session.execute(select(Source.id))).scalars().all()

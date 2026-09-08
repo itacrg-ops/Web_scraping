@@ -14,6 +14,7 @@ from temporalio.worker import Worker
 
 from activities import (
     annotate_credibility,
+    assess_risk_feed,
     classify_fatf,
     compute_ami,
     extract_content,
@@ -56,6 +57,7 @@ async def main() -> None:
             search_articles,
             annotate_credibility,
             resolve_entity,
+            assess_risk_feed,
             fetch_source,
             render_source,
             extract_content,

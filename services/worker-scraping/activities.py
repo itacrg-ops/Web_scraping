@@ -25,6 +25,11 @@ SVI_PUBLISHER_URL = os.getenv("SVI_PUBLISHER_URL", "http://svi-publisher:8090")
 API_BASE = os.getenv("API_BASE", "http://api:8000")
 ENTITY_RESOLUTION_URL = os.getenv("ENTITY_RESOLUTION_URL", "http://entity-resolution:8070")
 SEARCH_GATEWAY_URL = os.getenv("SEARCH_GATEWAY_URL", "http://search-gateway:8095")
+RISK_GATEWAY_URL = os.getenv("RISK_GATEWAY_URL", "http://risk-gateway:8096")
+# Feed di rischio strutturato (AML/CFT) via risk-gateway. Fonte di verità unica:
+# lo stesso RISK_PROVIDER del gateway (vuoto = OFF). Se vuoto, il worker NON
+# chiama nemmeno il gateway (nessun hop, nessun cambiamento di comportamento).
+RISK_PROVIDER = os.getenv("RISK_PROVIDER", "").strip()
 INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "")
 # Fallback headless (Playwright) per pagine JS-rendered (B6): default attivo.
 HEADLESS_FALLBACK = os.getenv("HEADLESS_FALLBACK", "true").lower() == "true"
@@ -95,6 +100,32 @@ async def resolve_entity(subject: dict) -> dict:
     activity.logger.info("resolve_entity: status=%s method=%s conf=%.2f",
                          result.get("status"), result.get("method"), result.get("confidence", 0.0))
     return result
+
+
+@activity.defn
+async def assess_risk_feed(subject: dict) -> dict | None:
+    """Feed di rischio strutturato (AML/CFT) sul soggetto **già risolto**, via
+    risk-gateway (provider Crime&tech o mock). Restituisce indicatori di rischio,
+    connessioni, categorie FATF e severità mappate, oppure `available:false`.
+
+    Gate a fonte di verità unica: se `RISK_PROVIDER` è vuoto (feed OFF, default)
+    non si chiama nemmeno il gateway → `None` → nessun arricchimento dell'alert.
+    Non fatale: su gateway assente/errore ritorna `None` (la pipeline prosegue)."""
+    if not RISK_PROVIDER:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"{RISK_GATEWAY_URL}/v1/risk", json={"subject": subject})
+        if resp.status_code == 200:
+            data = resp.json()
+            activity.logger.info("assess_risk_feed: provider=%s available=%s severità=%s categorie=%s",
+                                 data.get("provider"), data.get("available"),
+                                 data.get("severity"), data.get("fatf_categories"))
+            return data
+        activity.logger.warning("risk-gateway %s", resp.status_code)
+    except Exception as exc:  # noqa: BLE001 — feed non disponibile, non fatale
+        activity.logger.info("risk-gateway non disponibile (%s): alert senza feed di rischio", exc)
+    return None
 
 
 @activity.defn
