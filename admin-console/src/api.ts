@@ -26,6 +26,24 @@ export interface Source {
   attiva: boolean;
 }
 
+// Motori di ricerca web (search-gateway): stato live per la pagina Fonti.
+export interface SearchProvider {
+  id: string;
+  nome: string;
+  tipo: string;
+  keyless: boolean;
+  configurato: boolean;
+  attivo: boolean;
+  note?: string | null;
+}
+
+export interface SearchProvidersStatus {
+  active: string[];
+  count: number;
+  fan_out: boolean;
+  providers: SearchProvider[];
+}
+
 export interface EntityResolution {
   status: string;
   method: string;
@@ -206,6 +224,7 @@ async function deleteReq(path: string): Promise<void> {
 }
 
 export const listSources = () => getJSON<Source[]>("/api/sources");
+export const getSearchProviders = () => getJSON<SearchProvidersStatus>("/api/search/providers");
 export const listAlerts = () => getJSON<Alert[]>("/api/alerts");
 export const startScreening = (body: ScreeningRequest) =>
   postJSON<Screening>("/api/screening", body);

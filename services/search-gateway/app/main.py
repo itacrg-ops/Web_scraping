@@ -106,6 +106,32 @@ def healthz() -> dict:
     return {"status": "ok", "provider": settings.search_provider}
 
 
+@app.get("/v1/providers")
+def providers_status() -> dict:
+    """Stato dei motori di ricerca web: quali sono ATTIVI (da SEARCH_PROVIDER) e il
+    catalogo disponibile. Alimenta la pagina 'Fonti' della console."""
+    active = providers._provider_list()
+
+    def _p(pid: str, nome: str, tipo: str, keyless: bool,
+           configurato: bool = True, note: str | None = None) -> dict:
+        return {"id": pid, "nome": nome, "tipo": tipo, "keyless": keyless,
+                "configurato": configurato, "attivo": pid in active, "note": note}
+
+    catalog = [
+        _p("searxng", "SearXNG (meta-search)", "meta-motore self-hosted", True,
+           note="Aggrega Google/Bing/DuckDuckGo News; keyless, nessun rate-limit centralizzato."),
+        _p("gdelt", "GDELT DOC 2.0", "news, keyless", True,
+           note="News globale; instabile e rate-limited (~1 req/5s)."),
+        _p("brave", "Brave Search API", "web, a chiave", False,
+           configurato=bool(settings.brave_api_key),
+           note="Affidabile; richiede BRAVE_API_KEY (free tier)."),
+        _p("mock", "Mock (fixtures)", "locale, nessuna rete", True,
+           note="Dati di esempio: solo sviluppo, non per il pilota reale."),
+    ]
+    return {"active": active, "count": len(active), "providers": catalog,
+            "fan_out": len(active) > 1}
+
+
 @app.post("/v1/credibility", response_model=CredibilityResponse)
 def credibility(req: CredibilityRequest) -> dict:
     """Annota una lista di URL con dominio registrabile e credibilità della

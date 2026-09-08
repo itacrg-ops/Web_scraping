@@ -30,6 +30,19 @@ class PreviewRequest(BaseModel):
     min_credibility: str | None = None  # none | bassa | media | alta
 
 
+@router.get("/providers")
+async def providers() -> dict:
+    """Stato dei motori di ricerca web (proxy verso il search-gateway) per la
+    pagina Fonti: quali sono attivi e il catalogo disponibile."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{settings.search_gateway_url}/v1/providers")
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as exc:  # noqa: BLE001 — gateway non disponibile
+        raise HTTPException(status_code=502, detail=f"stato provider non disponibile: {exc}") from exc
+
+
 @router.post("/preview")
 async def preview(req: PreviewRequest) -> dict:
     payload = {
