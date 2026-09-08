@@ -33,6 +33,7 @@ def _match_record(r: dict) -> dict:
         "cup": r.get("cup", []),
         "ruolo": r.get("ruolo"),
         "data_nascita": r.get("data_nascita"),
+        "luogo_nascita": r.get("luogo_nascita"),
     }
 
 
@@ -160,6 +161,19 @@ def resolve(subject: dict) -> dict:
             warnings.append("Candidati ristretti per data di nascita")
         else:
             warnings.append("Nessun candidato con la data di nascita indicata (possibile omonimia)")
+
+    # 2b-bis) Disambiguazione per luogo di nascita (persona fisica): ulteriore
+    #         restringimento tra omonimi quando indicato.
+    if is_person and candidates_scored:
+        luogo = " ".join((subject.get("luogo_nascita") or "").upper().split())
+        if luogo:
+            same_luogo = [c for c in candidates_scored
+                          if " ".join((c["record"].get("luogo_nascita") or "").upper().split()) == luogo]
+            if same_luogo and len(same_luogo) < len(candidates_scored):
+                candidates_scored = same_luogo
+                warnings.append("Candidati ristretti per luogo di nascita")
+            elif not same_luogo:
+                warnings.append("Nessun candidato con il luogo di nascita indicato (possibile omonimia)")
 
     # 2c) Disambiguazione per CUP dell'intervento (B7): tra candidati OMONIMI il
     #     legame autoritativo persona↔CUP nel registro individua quello giusto.

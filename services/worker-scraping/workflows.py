@@ -53,6 +53,7 @@ class ScreeningWorkflow:
             "nome": req.get("nome"),
             "cognome": req.get("cognome"),
             "data_nascita": req.get("data_nascita"),
+            "luogo_nascita": req.get("luogo_nascita"),
             "cf_piva": req.get("cf_piva"),
             # Qualificatori persona fisica: azienda/località (query in AND) e ruolo (soft).
             "azienda": req.get("azienda"),

@@ -134,12 +134,14 @@ async def _seed_subjects() -> None:
         Subject(id="R-TRON", tipo_soggetto="persona_giuridica", denominazione="Tron Group Holding S.r.l.",
                 cf_piva="12345678903", cup=["G29J24000000003"], ruolo="impresa esecutrice"),
         Subject(id="R-ROSSI-1", tipo_soggetto="persona_fisica", denominazione="Rossi Mario",
-                cf_piva="RSSMRA75C15H501P", data_nascita="1975-03-15", cup=["E51B21000000001"], ruolo="RUP"),
+                cf_piva="RSSMRA75C15H501P", data_nascita="1975-03-15", luogo_nascita="Roma",
+                cup=["E51B21000000001"], ruolo="RUP"),
         Subject(id="R-ROSSI-2", tipo_soggetto="persona_fisica", denominazione="Rossi Mario",
-                cf_piva="RSSMRA80E20F205I", data_nascita="1980-05-20", cup=["G29J24000000003"],
-                ruolo="legale rappresentante"),
+                cf_piva="RSSMRA80E20F205I", data_nascita="1980-05-20", luogo_nascita="Milano",
+                cup=["G29J24000000003"], ruolo="legale rappresentante"),
         Subject(id="R-BIANCHI", tipo_soggetto="persona_fisica", denominazione="Bianchi Giulia",
-                cf_piva="BNCGLI82S43H501W", data_nascita="1982-11-03", cup=["B22C21000000002"], ruolo="amministratore"),
+                cf_piva="BNCGLI82S43H501W", data_nascita="1982-11-03", luogo_nascita="Roma",
+                cup=["B22C21000000002"], ruolo="amministratore"),
     ]
     async with SessionLocal() as session:
         existing = (await session.execute(select(Subject.id))).scalars().all()

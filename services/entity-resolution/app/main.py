@@ -23,6 +23,7 @@ class SubjectIn(BaseModel):
     nome: str | None = None               # solo persona fisica
     cognome: str | None = None            # solo persona fisica
     data_nascita: str | None = None       # ISO YYYY-MM-DD, disambiguante (PF)
+    luogo_nascita: str | None = None      # comune/stato di nascita, disambiguante (PF)
     cf_piva: str | None = None            # CF 16 (PF) o CF/P.IVA 11 (PG)
     cup: list[str] = []
     sede: str | None = None
@@ -37,6 +38,7 @@ class MatchOut(BaseModel):
     cup: list[str] = []
     ruolo: str | None = None
     data_nascita: str | None = None
+    luogo_nascita: str | None = None
     score: float | None = None
 
 

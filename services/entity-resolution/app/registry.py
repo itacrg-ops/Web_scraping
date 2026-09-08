@@ -27,12 +27,14 @@ _FALLBACK: list[dict] = [
     {"id": "R-TRON", "tipo": PERSONA_GIURIDICA, "denominazione": "Tron Group Holding S.r.l.",
      "cf_piva": "12345678903", "cup": ["G29J24000000003"], "ruolo": "impresa esecutrice"},
     {"id": "R-ROSSI-1", "tipo": PERSONA_FISICA, "denominazione": "Rossi Mario",
-     "cf_piva": "RSSMRA75C15H501P", "data_nascita": "1975-03-15", "cup": ["E51B21000000001"], "ruolo": "RUP"},
+     "cf_piva": "RSSMRA75C15H501P", "data_nascita": "1975-03-15", "luogo_nascita": "Roma",
+     "cup": ["E51B21000000001"], "ruolo": "RUP"},
     {"id": "R-ROSSI-2", "tipo": PERSONA_FISICA, "denominazione": "Rossi Mario",
-     "cf_piva": "RSSMRA80E20F205I", "data_nascita": "1980-05-20", "cup": ["G29J24000000003"],
-     "ruolo": "legale rappresentante"},
+     "cf_piva": "RSSMRA80E20F205I", "data_nascita": "1980-05-20", "luogo_nascita": "Milano",
+     "cup": ["G29J24000000003"], "ruolo": "legale rappresentante"},
     {"id": "R-BIANCHI", "tipo": PERSONA_FISICA, "denominazione": "Bianchi Giulia",
-     "cf_piva": "BNCGLI82S43H501W", "data_nascita": "1982-11-03", "cup": ["B22C21000000002"], "ruolo": "amministratore"},
+     "cf_piva": "BNCGLI82S43H501W", "data_nascita": "1982-11-03", "luogo_nascita": "Roma",
+     "cup": ["B22C21000000002"], "ruolo": "amministratore"},
 ]
 
 _cache: dict = {"ts": 0.0, "data": None}

@@ -46,6 +46,7 @@ async def start_screening(
         "nome": req.nome,
         "cognome": req.cognome,
         "data_nascita": req.data_nascita,
+        "luogo_nascita": req.luogo_nascita,
         "cf_piva": req.cf_piva,
         "azienda": req.azienda,
         "localita": req.localita,

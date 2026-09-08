@@ -41,6 +41,7 @@ async def registry(session: AsyncSession = Depends(get_session)) -> dict:
             "denominazione": r.denominazione,
             "cf_piva": r.cf_piva,
             "data_nascita": r.data_nascita,
+            "luogo_nascita": r.luogo_nascita,
             "cup": r.cup or [],
             "ruolo": r.ruolo,
         }
@@ -64,6 +65,7 @@ async def create_subject(
         denominazione=payload.denominazione,
         cf_piva=payload.cf_piva or None,
         data_nascita=payload.data_nascita or None,
+        luogo_nascita=payload.luogo_nascita or None,
         cup=payload.cup,
         ruolo=payload.ruolo or None,
         attivo=payload.attivo,
@@ -89,7 +91,7 @@ async def update_subject(
             if not (value and value.strip()):
                 raise HTTPException(status_code=400, detail="denominazione non può essere vuota")
             row.denominazione = value.strip()
-        elif key in ("cf_piva", "data_nascita", "ruolo", "tipo_soggetto"):
+        elif key in ("cf_piva", "data_nascita", "luogo_nascita", "ruolo", "tipo_soggetto"):
             setattr(row, key, (value or None))
         else:  # cup, attivo
             setattr(row, key, value)
@@ -119,6 +121,7 @@ async def import_subjects(
                 nome=row.get("nome") or None,
                 cognome=row.get("cognome") or None,
                 data_nascita=row.get("data_nascita") or None,
+                luogo_nascita=row.get("luogo_nascita") or None,
                 cf_piva=row.get("cf_piva") or None,
                 cup=[c.strip() for c in (row.get("cup") or "").split(";") if c.strip()],
                 ruolo=row.get("ruolo") or None,
@@ -136,6 +139,7 @@ async def import_subjects(
             existing.tipo_soggetto = sc.tipo_soggetto
             existing.denominazione = sc.denominazione
             existing.data_nascita = sc.data_nascita
+            existing.luogo_nascita = sc.luogo_nascita
             existing.cup = sc.cup
             existing.ruolo = sc.ruolo
             existing.attivo = True
@@ -144,6 +148,7 @@ async def import_subjects(
             session.add(SubjectModel(
                 tipo_soggetto=sc.tipo_soggetto, denominazione=sc.denominazione,
                 cf_piva=sc.cf_piva or None, data_nascita=sc.data_nascita,
+                luogo_nascita=sc.luogo_nascita,
                 cup=sc.cup, ruolo=sc.ruolo, attivo=True,
             ))
             created += 1

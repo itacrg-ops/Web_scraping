@@ -43,6 +43,7 @@ class Subject(Base):
     denominazione: Mapped[str] = mapped_column(String)  # "Cognome Nome" per persona fisica
     cf_piva: Mapped[str | None] = mapped_column(String, nullable=True)
     data_nascita: Mapped[str | None] = mapped_column(String, nullable=True)
+    luogo_nascita: Mapped[str | None] = mapped_column(String, nullable=True)
     cup: Mapped[list] = mapped_column(JSON, default=list)
     ruolo: Mapped[str | None] = mapped_column(String, nullable=True)
     attivo: Mapped[bool] = mapped_column(Boolean, default=True)

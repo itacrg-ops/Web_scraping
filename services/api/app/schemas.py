@@ -37,6 +37,7 @@ class ScreeningRequest(BaseModel):
     nome: str | None = None            # solo persona fisica
     cognome: str | None = None         # solo persona fisica
     data_nascita: str | None = None    # ISO YYYY-MM-DD, disambiguante (persona fisica)
+    luogo_nascita: str | None = None   # comune/stato di nascita, disambiguante (persona fisica)
     cf_piva: str | None = None
     # Qualificatori di ricerca (persona fisica): azienda/località entrano nella
     # query in AND forte; ruolo è soft (corroborazione a valle, non nella query).
@@ -70,6 +71,7 @@ class SubjectCreate(BaseModel):
     nome: str | None = None
     cognome: str | None = None
     data_nascita: str | None = None
+    luogo_nascita: str | None = None
     cf_piva: str | None = None
     cup: list[str] = []
     ruolo: str | None = None
@@ -93,6 +95,7 @@ class SubjectUpdate(BaseModel):
     denominazione: str | None = None
     cf_piva: str | None = None
     data_nascita: str | None = None
+    luogo_nascita: str | None = None
     cup: list[str] | None = None
     ruolo: str | None = None
     attivo: bool | None = None
@@ -106,6 +109,7 @@ class SubjectOut(BaseModel):
     denominazione: str
     cf_piva: str | None = None
     data_nascita: str | None = None
+    luogo_nascita: str | None = None
     cup: list[str] = []
     ruolo: str | None = None
     attivo: bool = True
