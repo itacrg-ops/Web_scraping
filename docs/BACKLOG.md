@@ -78,18 +78,30 @@ i nomi arbitrari li copre la NER.
 
 ## B2 — Payload SVI reali · P1
 
-**Perché.** Sblocca l'operatività investigativa: oggi `svi-publisher` gira in
-`SVI_MODE=mock`, quindi gli alert restano nella console React e **l'istruttore
-non li vede in SVI**.
+**Stato: ✅ FATTO (ramo live pronto; attivazione a Viya disponibile).** Publisher
+reale in `services/svi-publisher`: **mapping** alert→SVI (documento Data Hub +
+alert) in `app/mapping.py` (puro, testato), **auth** OAuth2 SASLogon / broker in
+`app/auth.py`, **retry con backoff** e **idempotenza** (business key =
+`screening_id`) in `app/svi_client.py`. Payload arricchito con **evidenze +
+motivazione** (il worker le costruisce prima della pubblicazione). Modello dati
+(tipo oggetto/alert/coda/attributo esterno) **configurabile** da `.env`
+(deployment-specific). `SVI_MODE=mock` invariato in locale. Test 7/7. Dettaglio e
+attivazione in [`SVI_INTEGRATION`](SVI_INTEGRATION.md).
+
+**Perché.** Sblocca l'operatività investigativa: in `SVI_MODE=mock` gli alert
+restano nella console React e **l'istruttore non li vede in SVI**.
 
 **Scope.** Publisher reale: mapping `AMI / categorie FATF / evidenze / motivazione`
 → schema SVI; autenticazione all'ambiente; gestione errori con retry;
 **idempotenza** (nessun alert duplicato su ripubblicazione).
 
-**Componenti.** `services/svi-publisher`.
+**Componenti.** `services/svi-publisher`; `services/worker-scraping` (payload SVI
+con evidenze/screening_id).
 
-**Dipendenze.** Specifica dello schema SVI di destinazione e credenziali
-dell'ambiente. `SVI_MODE=mock` resta selezionabile per lo sviluppo locale.
+**Dipendenze (per l'attivazione live).** Un ambiente **Viya/SVI** con il **data
+model** configurato (tipi oggetto/alert/coda) + credenziali OAuth. Oggi l'egress
+verso Viya è comunque bloccato dal proxy dell'ambiente; il ramo live è
+implementato e testato nelle parti pure, non ancora esercitato su Viya reale.
 
 **Definition of Done.** Un alert prodotto dalla pipeline compare in SVI con
 evidenze e motivazione; retry e idempotenza verificati; mock invariato in locale.

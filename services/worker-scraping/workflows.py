@@ -302,12 +302,9 @@ class ScreeningWorkflow:
             "disposition": ami["disposition"],
         }
 
-        svi_alert_id = await workflow.execute_activity(
-            publish_svi, alert_payload, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
-        )
-
         # Evidenze ancorate all'alert (una per articolo effettivamente recuperato
-        # e con hash: URL, snippet, hash, timestamp, WARC).
+        # e con hash: URL, snippet, hash, timestamp, WARC). Costruite PRIMA della
+        # pubblicazione così SVI riceve alert + evidenze insieme (B2).
         evidence = []
         for d in docs:
             prov = d.get("provenance") or {}
@@ -327,6 +324,17 @@ class ScreeningWorkflow:
                 "warc_key": prov.get("warc_key"),
                 "fonte_credibilita": d.get("_credibilita"),
             })
+
+        # Pubblicazione SVI (B2): payload con motivazione (drivers) + evidenze +
+        # screening_id (business key per l'idempotenza: nessun duplicato su retry).
+        svi_payload = {
+            **alert_payload,
+            "screening_id": req["screening_id"],
+            "evidence": evidence,
+        }
+        svi_alert_id = await workflow.execute_activity(
+            publish_svi, svi_payload, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
+        )
 
         alert_create = {
             **alert_payload,
