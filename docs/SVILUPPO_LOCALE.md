@@ -81,6 +81,19 @@ similarità **semantica** dei nomi (embedding via llm-gateway) con quella di str
 per le varianti/abbreviazioni (richiede `EMBEDDING_MODEL` su Foundry; senza, resta
 la sola stringa). Test: `python services/entity-resolution/tests/test_resolver_b7.py`.
 
+**Dati anagrafici della persona fisica (B7).** Tre presidi anti-omonimia aggiuntivi:
+- **Coerenza CF ↔ dati anagrafici.** Il Codice Fiscale codifica cognome, nome e
+  data di nascita: al gate, se non combaciano con quanto inserito → `needs_review`
+  (`incoerenza_CF_dati_anagrafici`); intercetta refusi e CF sbagliati. In console
+  un **avviso live** segnala l'incoerenza mentre digiti (endpoint `POST /cf-check`;
+  test `tests/test_codice_fiscale.py`).
+- **Luogo di nascita** (campo opzionale in Screening e Soggetti, colonna nel CSV):
+  ulteriore disambiguatore tra omonimi, come la data di nascita.
+- **Estrazione dagli articoli.** Età/anno/luogo di nascita citati nel testo vengono
+  confrontati col soggetto: se coincidono, l'identità è corroborata; se discordano
+  (es. "45 anni" per un soggetto che ne avrebbe 60), l'alert marca **"possibile
+  OMONIMO"**.
+
 > **Soggetto non a registro** (es. cerchi "Italware" e non è tra i soggetti noti):
 > di default il gate resta `unresolved` (HITL) — è corretto, in produzione il
 > registro contiene i beneficiari reali. Due modi per procedere:
