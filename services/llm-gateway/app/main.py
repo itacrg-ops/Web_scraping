@@ -9,7 +9,7 @@ import logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from app import foundry
+from app import foundry, ner
 from app.config import settings
 
 logger = logging.getLogger("llm-gateway")
@@ -46,6 +46,18 @@ class EmbedResponse(BaseModel):
     embeddings: list[list[float]] = []
 
 
+class NerRequest(BaseModel):
+    text: str
+
+
+class NerResponse(BaseModel):
+    available: bool
+    persons: list[str] = []
+    orgs: list[str] = []
+    locations: list[str] = []
+    entities: list[dict] = []
+
+
 @app.get("/healthz")
 def healthz() -> dict:
     return {
@@ -78,3 +90,10 @@ def embed(req: EmbedRequest) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Embedding fallito: %s", exc)
         raise HTTPException(status_code=502, detail=f"embedding non riuscito: {exc}") from exc
+
+
+@app.post("/v1/ner", response_model=NerResponse)
+def extract_entities(req: NerRequest) -> dict:
+    """NER italiano (spaCy) per la corroborazione anti-omonimia. Non richiede
+    Azure e degrada con `available: false` se il modello non è installato."""
+    return ner.extract(req.text)

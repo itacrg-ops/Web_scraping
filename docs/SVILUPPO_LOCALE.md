@@ -93,6 +93,13 @@ la sola stringa). Test: `python services/entity-resolution/tests/test_resolver_b
   confrontati col soggetto: se coincidono, l'identità è corroborata; se discordano
   (es. "45 anni" per un soggetto che ne avrebbe 60), l'alert marca **"possibile
   OMONIMO"**.
+- **NER (B7 parte 2).** Il worker chiede la NER italiana al llm-gateway
+  (`POST /v1/ner`, spaCy `it_core_news_sm`) e verifica se il soggetto è riconosciuto
+  come **persona** e l'azienda come **organizzazione** → corroborazione più robusta
+  del match a stringhe (driver *"NER: azienda riconosciuta come organizzazione…"*).
+  Toggle `NER_CORROBORATION` (default attivo); **non fatale**: se il modello non è
+  installato il gateway risponde `available:false` e si resta sulle stringhe. Lo
+  stesso `/v1/ner` abiliterà **B1.1** (redazione dei nomi di terzi prima dell'LLM).
 
 > **Soggetto non a registro** (es. cerchi "Italware" e non è tra i soggetti noti):
 > di default il gate resta `unresolved` (HITL) — è corretto, in produzione il

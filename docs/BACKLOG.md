@@ -181,8 +181,11 @@ Aggiunti (persona fisica): **coerenza CF ↔ dati anagrafici** (decode del CF; g
 disambiguatore, migrazione DB 0004), **estrazione anagrafica dagli articoli** (età/
 anno/luogo → corroborazione o "possibile OMONIMO", `worker/anagraphics.py`).
 
-**Parte 2 (da fare): NER spaCy** per la corroborazione sugli articoli (endpoint
-`/v1/ner` nel llm-gateway), che sblocca anche **B1.1** (redazione dei nomi di terzi).
+**Parte 2: ✅ FATTA.** NER italiana (spaCy `it_core_news_sm`) nel llm-gateway
+(`/v1/ner`); il worker la usa per corroborare (soggetto = persona, azienda =
+organizzazione), con toggle `NER_CORROBORATION` e degradazione graziosa se il
+modello non è installato. Sblocca **B1.1** (redazione dei nomi di terzi prima
+dell'LLM, ora fattibile riusando `/v1/ner`).
 
 **Perché.** Riduce gli alert HITL per omonimia irrisolta. L'Entity Resolution usa
 oggi match deterministico (CF/P.IVA) + similarità sul nome normalizzato: i casi

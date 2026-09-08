@@ -28,6 +28,10 @@ SEARCH_GATEWAY_URL = os.getenv("SEARCH_GATEWAY_URL", "http://search-gateway:8095
 INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "")
 # Fallback headless (Playwright) per pagine JS-rendered (B6): default attivo.
 HEADLESS_FALLBACK = os.getenv("HEADLESS_FALLBACK", "true").lower() == "true"
+# Corroborazione via NER (llm-gateway /v1/ner, B7 parte 2): default attivo, ma
+# non fatale — se il modello NER non è installato, il gateway risponde
+# available:false e si resta sulla corroborazione a stringhe.
+NER_CORROBORATION = os.getenv("NER_CORROBORATION", "true").lower() == "true"
 
 
 @activity.defn
@@ -96,12 +100,49 @@ async def resolve_entity(subject: dict) -> dict:
 @activity.defn
 async def verify_subject_mention(subject: dict, text: str) -> dict:
     """Verifica che il soggetto sia citato nell'evidenza (anti falsa attribuzione)
-    e corrobora l'identità con i dati anagrafici citati nell'articolo (B7)."""
+    e corrobora l'identità con i dati anagrafici citati nell'articolo (B7) e con
+    la NER (soggetto riconosciuto come persona, azienda come organizzazione)."""
     res = mention.check(subject, text)
     res["anagraphics"] = anagraphics.corroborate(subject, text)
-    activity.logger.info("verify_subject_mention: mentioned=%s matched=%s anagrafica=%s",
-                         res["mentioned"], res["matched"], res["anagraphics"]["status"])
+    res["ner"] = await _ner_corroborate(subject, text)
+    activity.logger.info("verify_subject_mention: mentioned=%s matched=%s anagrafica=%s ner=%s",
+                         res["mentioned"], res["matched"], res["anagraphics"]["status"],
+                         (res["ner"] or {}).get("available"))
     return res
+
+
+def _norm_ent(s: str) -> str:
+    return " ".join((s or "").upper().split())
+
+
+async def _ner_corroborate(subject: dict, text: str) -> dict | None:
+    """Chiede la NER al llm-gateway e verifica se il soggetto è riconosciuto come
+    PERSONA e l'azienda come ORGANIZZAZIONE. Non fatale: su assenza/errore o NER
+    non disponibile ritorna None (resta la corroborazione a stringhe)."""
+    if not NER_CORROBORATION or (subject.get("tipo_soggetto") or "persona_giuridica") != "persona_fisica":
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"{LLM_GATEWAY_URL}/v1/ner", json={"text": (text or "")[:20000]})
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+    except Exception as exc:  # noqa: BLE001 — non fatale
+        activity.logger.info("NER non raggiungibile (%s): corroborazione a stringhe", exc)
+        return None
+    if not data.get("available"):
+        return None
+
+    persons = {_norm_ent(p) for p in data.get("persons", [])}
+    orgs = {_norm_ent(o) for o in data.get("orgs", [])}
+    nome, cognome = _norm_ent(subject.get("nome")), _norm_ent(subject.get("cognome"))
+    subject_person = bool(cognome) and any(
+        cognome in p and (not nome or nome in p) for p in persons
+    )
+    azienda = _norm_ent(subject.get("azienda"))
+    azienda_org = bool(azienda) and any(azienda in o or o in azienda for o in orgs)
+    return {"available": True, "subject_person": subject_person, "azienda_org": azienda_org,
+            "n_persons": len(persons), "n_orgs": len(orgs)}
 
 
 @activity.defn

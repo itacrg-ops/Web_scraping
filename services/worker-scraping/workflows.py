@@ -152,6 +152,7 @@ class ScreeningWorkflow:
             doc["_mentioned"] = bool(men.get("mentioned"))
             doc["_context"] = men.get("context", [])
             doc["_anagraphics"] = men.get("anagraphics") or {"status": "n/a"}
+            doc["_ner"] = men.get("ner")
             doc["_credibilita"] = info.get("credibilita")
             doc["_domain"] = info.get("domain")
             any_mention = any_mention or doc["_mentioned"]
@@ -225,6 +226,15 @@ class ScreeningWorkflow:
             elif _conf:
                 drivers.insert(0, "Dati anagrafici confermati negli articoli ("
                                + "; ".join(sorted(set(_conf))) + "): identità corroborata")
+
+            # Corroborazione via NER (B7 parte 2): soggetto riconosciuto come
+            # persona, azienda come organizzazione negli articoli.
+            _ner = [d.get("_ner") for d in docs if d.get("_mentioned") and d.get("_ner")]
+            if any(n.get("azienda_org") for n in _ner):
+                drivers.insert(0, "NER: azienda riconosciuta come organizzazione negli articoli — "
+                               "corroborazione rafforzata")
+            elif any(n.get("subject_person") for n in _ner):
+                drivers.insert(0, "NER: soggetto riconosciuto come persona negli articoli")
 
         if resolution.get("status") == "provvisorio":
             drivers.insert(
