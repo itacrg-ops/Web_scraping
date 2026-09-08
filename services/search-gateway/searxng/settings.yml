@@ -1,0 +1,18 @@
+# SearXNG per il pilota adverse-media (provider "searxng").
+# Punto chiave: abilitare il formato **JSON** dell'API (di default disattivato),
+# così il search-gateway può consumare i risultati via /search?format=json.
+use_default_settings: true
+
+server:
+  # In locale va bene un segreto statico; in produzione usare un secret gestito.
+  secret_key: "adverse-media-dev-secret-change-me"
+  limiter: false
+  image_proxy: false
+
+search:
+  formats:
+    - html
+    - json
+  safe_search: 0
+  # Lingua di default coerente col pilota.
+  default_lang: "it"

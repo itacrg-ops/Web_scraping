@@ -72,6 +72,7 @@ class SearchResultOut(BaseModel):
     language: str | None = None
     provider: str
     score: float | None = None
+    corroborations: int | None = None  # da quanti provider è stato trovato (fan-out B8)
 
 
 class SearchResponse(BaseModel):

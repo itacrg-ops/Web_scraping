@@ -311,11 +311,121 @@ async def _brave(subject: dict, mode: str, max_results: int, lang: str,
     return [], last_q, _broadened_note(last_q, subject)
 
 
+# --- Provider SearXNG (meta-search self-hosted, keyless) -------------------
+async def _searxng_call(query_str: str, max_results: int) -> tuple[str, object]:
+    """Una chiamata all'API JSON di SearXNG. ("ok", list) | ("error", note)."""
+    params = {"q": query_str, "format": "json",
+              "language": settings.searxng_language, "categories": "news"}
+    try:
+        async with httpx.AsyncClient(timeout=settings.request_timeout) as c:
+            r = await c.get(f"{settings.searxng_url.rstrip('/')}/search", params=params)
+        if r.status_code != 200:
+            note = f"SearXNG ha risposto {r.status_code}."
+            if r.status_code in (403, 429):
+                note += " Abilita il formato JSON in searxng/settings.yml (formats: [html, json])."
+            return "error", note
+        data = r.json()
+    except Exception as exc:  # noqa: BLE001 — rete non fatale
+        logger.warning("SearXNG non raggiungibile: %s: %s", type(exc).__name__, exc)
+        return "error", f"SearXNG non raggiungibile ({type(exc).__name__})."
+    out: list[dict] = []
+    for a in (data.get("results") or []):
+        url = a.get("url")
+        if not url:
+            continue
+        pub = (a.get("publishedDate") or "")[:10] or None
+        out.append(_result(url=url, title=a.get("title"), snippet=a.get("content"),
+                           testata=None, data=pub, language=None,
+                           provider="searxng", score=a.get("score")))
+        if len(out) >= max_results:
+            break
+    return "ok", out
+
+
+async def _searxng(subject: dict, mode: str, max_results: int, lang: str,
+                   timespan: str) -> tuple[list[dict], str, str | None]:
+    """Scala di fallback come Brave (sintassi plain). SearXNG aggrega più motori:
+    niente chiave, niente rate-limit centralizzato."""
+    qvars = qb.build_query_variants(subject, mode, syntax="plain")
+    if not qvars:
+        return [], "", None
+    last_q = qvars[0]
+    for q in qvars:
+        last_q = q
+        status, payload = await _searxng_call(q, max_results)
+        if status == "error":
+            return [], q, payload
+        if payload:
+            return payload, q, _broadened_note(q, subject)
+    return [], last_q, _broadened_note(last_q, subject)
+
+
+# --- Dispatch: singolo provider o fan-out multi-provider (B8) ---------------
+def _provider_list() -> list[str]:
+    names = [p.strip().lower() for p in (settings.search_provider or "").split(",") if p.strip()]
+    return names or ["mock"]
+
+
+async def _run_one(name: str, subject: dict, mode: str, max_results: int,
+                   lang: str, timespan: str) -> tuple[list[dict], str, str | None]:
+    if name == "gdelt":
+        return await _gdelt(subject, mode, max_results, lang, timespan)
+    if name == "brave":
+        return await _brave(subject, mode, max_results, lang, timespan)
+    if name == "searxng":
+        return await _searxng(subject, mode, max_results, lang, timespan)
+    if name == "mock":
+        return _mock(subject, mode, max_results), qb.build_query(subject, mode), None
+    return [], "", f"provider sconosciuto: {name}"
+
+
 async def search(subject: dict, mode: str, max_results: int, lang: str,
                  timespan: str) -> tuple[list[dict], str, str | None]:
-    """Ritorna (risultati_grezzi, query_effettiva, note)."""
-    if settings.search_provider == "gdelt":
-        return await _gdelt(subject, mode, max_results, lang, timespan)
-    if settings.search_provider == "brave":
-        return await _brave(subject, mode, max_results, lang, timespan)
-    return _mock(subject, mode, max_results), qb.build_query(subject, mode), None
+    """Ritorna (risultati_grezzi, query_effettiva, note). Con un solo provider si
+    comporta come prima; con più provider (lista in SEARCH_PROVIDER) fa il
+    **fan-out parallelo** con merge, dedup per URL e boost di corroborazione."""
+    names = _provider_list()
+    if len(names) == 1:
+        return await _run_one(names[0], subject, mode, max_results, lang, timespan)
+
+    async def _guarded(n: str):
+        try:
+            return await asyncio.wait_for(
+                _run_one(n, subject, mode, max_results, lang, timespan),
+                timeout=settings.search_fanout_timeout,
+            )
+        except Exception as exc:  # noqa: BLE001 — un provider lento/rotto non blocca gli altri
+            return ([], "", f"{type(exc).__name__}")
+
+    outcomes = await asyncio.gather(*[_guarded(n) for n in names])
+    merged: dict[str, dict] = {}
+    order: list[str] = []
+    queries: list[str] = []
+    notes: list[str] = []
+    for name, (items, query, note) in zip(names, outcomes):
+        if query:
+            queries.append(f"{name}:{query}")
+        if note:
+            notes.append(f"{name}: {note}")
+        for it in items:
+            u = it.get("url")
+            if not u:
+                continue
+            if u not in merged:
+                merged[u] = {**it, "_providers": set()}
+                order.append(u)
+            merged[u]["_providers"].add(name)
+
+    # Corroborazione: i URL trovati da PIÙ provider vanno in cima (il postprocessing
+    # poi ordina per credibilità mantenendo quest'ordine dentro ciascun tier).
+    order.sort(key=lambda u: -len(merged[u]["_providers"]))
+    results: list[dict] = []
+    for u in order:
+        d = merged[u]
+        provs = sorted(d.pop("_providers"))
+        d["provider"] = "+".join(provs)
+        d["corroborations"] = len(provs)
+        results.append(d)
+
+    note = " · ".join(notes) if notes else None
+    return results, " | ".join(queries), note

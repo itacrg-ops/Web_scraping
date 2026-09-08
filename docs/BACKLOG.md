@@ -212,6 +212,13 @@ test, senza aumento dei falsi positivi di attribuzione.
 
 ## B8 — Multi-provider fan-out della ricerca · P2
 
+**Stato: ✅ FATTO.** `SEARCH_PROVIDER` accetta una lista (es. `searxng,gdelt,brave`):
+fan-out parallelo (`asyncio.gather`) con timeout per provider, merge + dedup per
+URL, boost di corroborazione (URL da più motori in cima; `provider="a+b"`,
+`corroborations=n`). Nuovo provider **SearXNG** (self-hosted, keyless) + servizio
+nel compose con JSON API abilitata. Postprocessing (credibilità/dedup dominio)
+invariato. Singolo provider = comportamento di prima.
+
 **Perché.** Oggi `SEARCH_PROVIDER` seleziona **un solo** motore per volta. Il
 fan-out parallelo su più motori aumenta **recall** (unione degli indici),
 **resilienza** (se uno va in 429/timeout gli altri coprono) e **corroborazione**

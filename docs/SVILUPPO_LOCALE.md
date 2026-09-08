@@ -226,6 +226,14 @@ Provider (`SEARCH_PROVIDER` nel `.env`):
   # nel .env: SEARCH_PROVIDER=brave e BRAVE_API_KEY=...
   docker compose -f docker-compose.dev.yml up -d --build search-gateway
   ```
+- **`searxng`** (meta-search self-hosted, **keyless**): aggrega più motori. Gira
+  come servizio nel compose (API JSON abilitata in `search-gateway/searxng/settings.yml`).
+- **Multi-provider (B8)**: metti una **lista** in `SEARCH_PROVIDER`
+  (es. `searxng,gdelt,brave`) → **fan-out parallelo** con timeout per provider,
+  **merge + dedup per URL** e **boost di corroborazione** (un URL trovato da più
+  motori sale in cima; il campo `provider` diventa es. `gdelt+searxng` e
+  `corroborations` conta i motori). Se tutti tornano a vuoto, la risposta è vuota
+  (nessun fallback al mock, per non introdurre dati finti). Consigliato: `searxng,gdelt`.
 - Altri provider (SerpAPI/Google CSE, o feed licenziati Dow Jones/Factiva) si
   innestano su `services/search-gateway/app/providers.py`.
 

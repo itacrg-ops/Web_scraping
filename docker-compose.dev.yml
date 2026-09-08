@@ -106,10 +106,21 @@ services:
   # ---- Search gateway (ricerca articoli adverse media) ----
   search-gateway:
     build: ./services/search-gateway
-    env_file: .env   # SEARCH_PROVIDER=mock (default) | gdelt (keyless)
+    env_file: .env   # SEARCH_PROVIDER=mock | gdelt | brave | searxng | lista "a,b,c" (fan-out B8)
     environment:
       SEARCH_PROVIDER: "${SEARCH_PROVIDER:-mock}"
+      SEARXNG_URL: "http://searxng:8080"
     ports: ["8095:8095"]
+
+  # ---- SearXNG: meta-search self-hosted (provider "searxng", keyless) ----
+  # API JSON abilitata via services/search-gateway/searxng/settings.yml.
+  searxng:
+    image: searxng/searxng:latest
+    volumes:
+      - ./services/search-gateway/searxng:/etc/searxng:rw
+    environment:
+      SEARXNG_BASE_URL: "http://localhost:8888/"
+    ports: ["8888:8080"]
 
   # ---- Publisher verso SAS Visual Investigator (mock in locale) ----
   svi-publisher:

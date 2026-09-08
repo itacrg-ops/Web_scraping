@@ -10,11 +10,20 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
 
-    # Provider di ricerca: "mock" (default locale, nessuna rete) | "gdelt" (news
-    # globale keyless, ma rate-limited/instabile) | "brave" (Brave Search API,
-    # a chiave, affidabile). Altri (SerpAPI/CSE, feed licenziati) si innestano
-    # sull'astrazione in providers.py.
+    # Provider di ricerca: "mock" (default locale) | "gdelt" (keyless) | "brave"
+    # (a chiave) | "searxng" (meta-search self-hosted). **Multi-provider (B8)**:
+    # una LISTA separata da virgola (es. "searxng,gdelt,brave") attiva il fan-out
+    # parallelo con merge, dedup per URL e boost di corroborazione.
     search_provider: str = "mock"
+
+    # SearXNG (provider "searxng"): URL del servizio (JSON API abilitata in
+    # searxng/settings.yml). Nel docker-compose gira come servizio locale.
+    searxng_url: str = "http://searxng:8080"
+    searxng_language: str = "it"
+
+    # Timeout per singolo provider nel fan-out multi-provider (uno lento non
+    # blocca gli altri).
+    search_fanout_timeout: float = 25.0
 
     # Numero massimo di risultati per ricerca.
     search_max_results: int = 10
