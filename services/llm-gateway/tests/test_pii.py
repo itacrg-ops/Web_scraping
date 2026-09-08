@@ -50,6 +50,22 @@ def test_toggle_e_vuoto() -> None:
     assert pii.redact("nessuna pii qui")[1]["total"] == 0
 
 
+def test_redazione_nomi_persona() -> None:
+    # B1.1: soggetto → [SOGGETTO], terzi → [PERSONA] (con NER simulata)
+    text = "Mario Rossi ha corrotto Luca Bianchi. Rossi risulta indagato."
+    out, c = pii.redact_persons(text, subject_name="Rossi Mario",
+                                ner_persons=["Mario Rossi", "Luca Bianchi", "Rossi"])
+    assert "Mario Rossi" not in out and "Luca Bianchi" not in out
+    assert "[SOGGETTO]" in out and "[PERSONA]" in out
+    assert c["soggetto"] >= 1 and c["persona"] >= 1
+
+
+def test_redazione_soggetto_senza_ner() -> None:
+    # senza NER: almeno il nome noto del soggetto viene pseudonimizzato
+    out, c = pii.redact_persons("Il RUP Rossi Mario è indagato.", subject_name="Rossi Mario")
+    assert "[SOGGETTO]" in out and c["soggetto"] == 1
+
+
 def _run() -> int:
     fails = 0
     for name, fn in sorted(globals().items()):

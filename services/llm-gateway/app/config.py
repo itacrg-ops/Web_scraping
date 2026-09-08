@@ -28,6 +28,9 @@ class Settings(BaseSettings):
 
     # Redazione PII prima dell'invio all'LLM (default: attiva).
     pii_redaction: bool = True
+    # B1.1: redazione dei NOMI di persona (soggetto → [SOGGETTO], terzi → [PERSONA])
+    # via NER. Sotto-flag di pii_redaction; default attiva, degrada se manca la NER.
+    redact_person_names: bool = True
 
     # Autenticazione. Due modalità (la API key ha la precedenza se valorizzata):
     #  A) API key: imposta AZURE_OPENAI_API_KEY (endpoint + key).

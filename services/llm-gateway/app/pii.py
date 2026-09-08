@@ -15,6 +15,7 @@ date o numeri di procedimento, che servono alla classificazione FATF a valle.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 # Codice Fiscale persona fisica: 6 lettere, 2 cifre, mese∈[A-EHLMPRST], 2 cifre,
 # lettera catastale, 3 cifre, char di controllo. Molto specifico → nessun falso positivo.
@@ -73,3 +74,55 @@ def redact(text: str) -> tuple[str, dict]:
             return _PLACEHOLDER[_cat]
         out = rx.sub(_sub, out)
     return out, {"total": sum(counts.values()), "by_category": counts}
+
+
+# --- Redazione dei NOMI di persona (B1.1, con NER) -------------------------
+def _norm(s: str) -> str:
+    s = unicodedata.normalize("NFKD", (s or "").upper())
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return " ".join(s.split())
+
+
+def _name_variants(name: str) -> list[str]:
+    """Il nome così com'è e — se due token — nell'ordine invertito
+    (Cognome Nome ↔ Nome Cognome)."""
+    n = " ".join((name or "").split())
+    if not n:
+        return []
+    out = {n}
+    parts = n.split()
+    if len(parts) == 2:
+        out.add(f"{parts[1]} {parts[0]}")
+    return sorted(out, key=len, reverse=True)
+
+
+def redact_persons(text: str, subject_name: str | None = None,
+                   ner_persons: list[str] | None = None) -> tuple[str, dict]:
+    """Redige i NOMI di persona (B1.1): il **soggetto** (se noto) → `[SOGGETTO]`,
+    gli **altri** (dalla NER) → `[PERSONA]`. Un nome NER che condivide un token
+    distintivo (es. il cognome) col soggetto è trattato come soggetto.
+
+    Ritorna `(testo, {"soggetto": n, "persona": n})`. NON solleva; senza NER
+    redige comunque il nome noto del soggetto."""
+    out = text or ""
+    counts = {"soggetto": 0, "persona": 0}
+    subj_variants = _name_variants(subject_name) if subject_name else []
+    subj_forms = {_norm(v) for v in subj_variants}
+    subj_tokens = {t for v in subj_variants for t in _norm(v).split() if len(t) >= 3}
+
+    def _is_subject(person: str) -> bool:
+        pn = _norm(person)
+        return pn in subj_forms or bool(subj_tokens & set(pn.split()))
+
+    # 1) Soggetto noto → [SOGGETTO] (anche senza NER).
+    for v in subj_variants:
+        out, n = re.subn(rf"\b{re.escape(v)}\b", "[SOGGETTO]", out, flags=re.IGNORECASE)
+        counts["soggetto"] += n
+    # 2) Persone dalla NER: soggetto (per token) → [SOGGETTO], altri → [PERSONA].
+    for p in sorted(set(ner_persons or []), key=len, reverse=True):
+        if not p.strip():
+            continue
+        repl, key = ("[SOGGETTO]", "soggetto") if _is_subject(p) else ("[PERSONA]", "persona")
+        out, n = re.subn(rf"\b{re.escape(p)}\b", repl, out)
+        counts[key] += n
+    return out, counts

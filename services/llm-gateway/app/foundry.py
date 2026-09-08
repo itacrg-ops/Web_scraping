@@ -16,7 +16,7 @@ from functools import lru_cache
 
 from openai import AzureOpenAI
 
-from app import fatf, pii
+from app import fatf, ner, pii
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -92,31 +92,43 @@ def _classify_one(client: AzureOpenAI, model: str, text: str) -> dict:
     return fatf.normalize(json.loads(content))
 
 
-def classify(text: str, *, dual: bool = True) -> dict:
+def classify(text: str, *, subject_name: str | None = None,
+             subject_person: bool = False, dual: bool = True) -> dict:
     """Classifica il testo con il modello primario e (se dual) lo valida col
-    secondario, riconciliando le categorie e segnalando l'eventuale disaccordo."""
+    secondario, riconciliando le categorie e segnalando l'eventuale disaccordo.
+    `subject_name`/`subject_person`: se il soggetto è una persona, il suo nome è
+    pseudonimizzato in `[SOGGETTO]` (B1.1)."""
     client = _client()
 
     # Redazione PII PRIMA di qualunque invio ad Azure (unico chokepoint di egress).
     # Si redige il testo completo e poi si tronca, così non si spezza un token PII
     # sul confine del cap.
     redaction = {"total": 0, "by_category": {}}
+    names = {"soggetto": 0, "persona": 0}
     raw = text or ""
     if settings.pii_redaction:
         raw, redaction = pii.redact(raw)
-        if redaction["total"]:
-            logger.info(
-                "PII redatte prima dell'invio all'LLM: %s (totale %d)",
-                redaction["by_category"], redaction["total"],
+        # B1.1: redazione dei NOMI di persona (soggetto → [SOGGETTO], terzi → [PERSONA])
+        # via NER; il nome del soggetto (noto) è redatto anche senza NER.
+        if settings.redact_person_names:
+            persons = ner.extract(raw).get("persons", [])
+            raw, names = pii.redact_persons(
+                raw, subject_name if subject_person else None, persons
             )
+        if redaction["total"] or names["soggetto"] or names["persona"]:
+            logger.info("PII redatte prima dell'LLM: strutturate=%s, nomi=%s",
+                        redaction["by_category"], names)
     text = raw[: settings.max_input_chars]
+    # Marcatore per l'analisi del ruolo (Victim-Bystander): il soggetto è [SOGGETTO].
+    if names["soggetto"]:
+        text = "Nota: il soggetto in esame è indicato nel testo come [SOGGETTO].\n\n" + text
 
     primary = _classify_one(client, settings.llm_model_primary, text)
     out = dict(primary)
     out["method"] = "llm_single"
     out["secondary_agreement"] = None
     out["models"] = {"primary": settings.llm_model_primary, "secondary": None}
-    out["pii_redaction"] = redaction
+    out["pii_redaction"] = {**redaction, "names": names}
 
     if dual and settings.llm_model_secondary:
         secondary = _classify_one(client, settings.llm_model_secondary, text)

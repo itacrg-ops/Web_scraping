@@ -54,8 +54,11 @@ procedimento (servono alla classificazione FATF). L'audit (conteggi per categori
 mai i valori) è loggato e restituito nel campo `pii_redaction` della risposta.
 - Attivo per default (`PII_REDACTION=true`); `false` solo in ambienti senza egress
   esterno.
-- **MVP**: maschera gli identificatori strutturati, non i **nomi** propri di terzi
-  (richiede NER → B1.1 nel backlog).
+- **Nomi di persona (B1.1)**: oltre agli identificatori strutturati, i **nomi**
+  vengono pseudonimizzati via NER — il soggetto (persona) → `[SOGGETTO]`, i terzi →
+  `[PERSONA]` — così ad Azure non arriva alcun nome reale. Il marcatore `[SOGGETTO]`
+  aiuta anche l'analisi Victim-Bystander. Sotto-flag `REDACT_PERSON_NAMES` (default
+  attivo); senza NER si redige almeno il nome noto del soggetto.
 - Test: `python services/llm-gateway/tests/test_pii.py`.
 
 ## Provare lo screening — persona giuridica e persona fisica

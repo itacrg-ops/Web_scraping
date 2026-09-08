@@ -228,14 +228,19 @@ async def extract_content(raw: dict) -> dict:
 
 
 @activity.defn
-async def classify_fatf(text: str) -> dict:
+async def classify_fatf(text: str, subject_name: str | None = None,
+                        subject_person: bool = False) -> dict:
     """Classificazione FATF strutturata via llm-gateway (dual-LLM su Foundry:
     categorie, ruolo processuale, Victim-Bystander, severità, confidence,
-    motivazione). Fallback onesto all'euristica a keyword se il gateway non è
+    motivazione). Il nome del soggetto/terzi è pseudonimizzato lato gateway (B1.1).
+    Fallback onesto all'euristica a keyword se il gateway non è
     configurato/raggiungibile."""
     try:
         async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(f"{LLM_GATEWAY_URL}/v1/classify", json={"text": text, "dual": True})
+            resp = await client.post(f"{LLM_GATEWAY_URL}/v1/classify", json={
+                "text": text, "dual": True,
+                "subject_name": subject_name, "subject_person": subject_person,
+            })
         if resp.status_code == 200:
             data = resp.json()
             data.setdefault("method", "llm")

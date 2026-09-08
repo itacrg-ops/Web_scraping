@@ -166,7 +166,9 @@ class ScreeningWorkflow:
 
         if combined:
             classification = await workflow.execute_activity(
-                classify_fatf, combined, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
+                classify_fatf,
+                args=[combined, subject["denominazione"], subject["tipo_soggetto"] == "persona_fisica"],
+                start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
             )
         else:
             classification = {"fatf_categories": [], "method": "nessun_contenuto"}

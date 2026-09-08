@@ -20,6 +20,8 @@ app = FastAPI(title="LLM Gateway — Azure AI Foundry", version="0.2.0")
 class ClassifyRequest(BaseModel):
     text: str
     dual: bool = True  # se True, esegue anche la validazione col modello secondario
+    subject_name: str | None = None  # nome del soggetto, per la pseudonimizzazione (B1.1)
+    subject_person: bool = False     # True se il soggetto è una persona fisica
 
 
 class ClassifyResponse(BaseModel):
@@ -71,7 +73,8 @@ def healthz() -> dict:
 @app.post("/v1/classify", response_model=ClassifyResponse)
 def classify(req: ClassifyRequest) -> dict:
     try:
-        return foundry.classify(req.text, dual=req.dual)
+        return foundry.classify(req.text, subject_name=req.subject_name,
+                                subject_person=req.subject_person, dual=req.dual)
     except RuntimeError as exc:  # configurazione/credenziale mancante
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 — errore modello/parsing JSON

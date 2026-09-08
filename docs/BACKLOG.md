@@ -40,10 +40,12 @@ B1 → (B2, B3, B4 in parallelo) → B8 → B5 → B6 → B7.
 
 ## B1 — Redazione PII prima dell'invio all'LLM · P0
 
-**Stato: ✅ FATTO (MVP regex).** Modulo `services/llm-gateway/app/pii.py` +
-hook in `foundry.classify` (chokepoint egress), toggle `PII_REDACTION`, audit nel
-campo `pii_redaction` della risposta, test `tests/test_pii.py`. Resta **B1.1**
-(mascheramento nomi via NER, dopo B7).
+**Stato: ✅ FATTO (con B1.1).** Modulo `services/llm-gateway/app/pii.py` + hook in
+`foundry.classify` (chokepoint egress), toggle `PII_REDACTION`, audit nel campo
+`pii_redaction`, test `tests/test_pii.py`. **B1.1 FATTA**: i **nomi di persona**
+sono pseudonimizzati via NER — soggetto → `[SOGGETTO]`, terzi → `[PERSONA]` (flag
+`REDACT_PERSON_NAMES`); ad Azure non arriva alcun nome reale e il marcatore aiuta
+la Victim-Bystander.
 
 **Perché.** È la voce più urgente per la compliance **GDPR / AI Act**. Oggi il
 testo degli articoli — che contiene dati personali di **terzi** (non solo il
@@ -62,9 +64,10 @@ nel worker, tra la costruzione di `combined` e `classify_fatf`
 (`services/worker-scraping/workflows.py`) — la verifica di menzione avviene **prima**,
 quindi la redazione non rompe il match del soggetto. Nuovo modulo `pii_redaction`.
 
-**Follow-up B1.1 (dopo B7).** Potenziare la redazione con **NER** per mascherare i
-**nomi** di terzi non-soggetto: il regex-MVP copre CF/P.IVA, email, telefoni, IBAN
-e indirizzi, ma non i nomi arbitrari, che richiedono il riconoscimento entità (B7).
+**B1.1 (✅ FATTA, dopo B7).** Redazione dei **nomi** via NER (`/v1/ner`): il nome
+del soggetto (persona) → `[SOGGETTO]` anche senza NER (è noto), i terzi → `[PERSONA]`
+quando la NER è disponibile. Il regex-MVP copre CF/P.IVA, email, telefoni, IBAN;
+i nomi arbitrari li copre la NER.
 
 **Definition of Done.**
 - il payload verso Azure non contiene PII non-soggetto (test di verifica);
