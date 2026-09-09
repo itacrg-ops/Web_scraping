@@ -21,14 +21,39 @@ il base è tutto ciò che precede `/SASVisualInvestigator`.)
 
 ---
 
-## Passo 1 — Credenziali OAuth (SASLogon)
+## Passo 1 — Ottenere un token
 
-Le API SVI si autenticano via OAuth2 su `POST {VIYA}/SASLogon/oauth/token` con un
-**client registrato**. Due strade:
+Le API SVI si autenticano via OAuth2 (`{VIYA}/SASLogon/oauth/token`). Con il
+**solo login web** (nessun client OAuth registrato) hai due modi.
 
-### A) Client dedicato (consigliato) — `client_credentials` o `password`
+### A) Via rapida — CLI `sas-viya` + modalità `token` (nessun client da registrare)
 
-Se hai (o il tuo **amministratore SAS** può creare) un client OAuth, ti servono
+La CLI ufficiale `sas-viya` usa un client OAuth **già integrato**: ti autentichi
+col tuo login web e ottieni un token, senza registrare nulla.
+
+```bash
+# installa la CLI SAS Viya, poi:
+sas-viya profile init          # Service Endpoint: https://viya-ddw4ej7fub.engage.sas.com
+sas-viya auth login            # inserisci utente/password del login web
+# il token finisce in ~/.sas/credentials.json → campo "access-token"
+```
+
+Copia quell'`access-token` nel `.env` e usa la modalità `token`:
+
+```dotenv
+SVI_MODE=live
+VIYA_ENDPOINT=https://viya-ddw4ej7fub.engage.sas.com
+SVI_AUTH_MODE=token
+SAS_BEARER_TOKEN=<incolla qui l'access-token>
+```
+
+> Il token **scade** (tipicamente qualche ora): perfetto per sbloccare subito
+> auth, discovery del modello dati e i primi test con lo smoke-test. Per il pilota
+> non presidiato passa alla via B.
+
+### B) Via robusta (consigliata per il pilota) — client registrato — `client_credentials` o `password`
+
+Un client dedicato dà token rinnovabili senza login interattivo. Ti servono
 `client_id` + `client_secret`. Registrazione tipica (richiede il *consul token* di
 amministrazione dell'ambiente):
 
@@ -54,13 +79,14 @@ curl -sk "$VIYA/SASLogon/oauth/clients" -H "Authorization: Bearer $REG" \
 - `password` → il servizio agisce come un **utente** SVI (servono anche
   `SAS_USERNAME`/`SAS_PASSWORD`); utile per rispettare i permessi per-utente.
 
-### B) Solo login utente (nessun client)
+Se non puoi registrare il client tu (serve il *consul token* o un client con
+`clients.write`, tipicamente in mano all'**amministratore** dell'ambiente Engage),
+chiedi all'admin SAS di crearlo e fartelo avere: passagli la specifica del blocco
+qui sopra (`client_id: adverse-media`, grant `client_credentials`/`password`).
 
-Se hai solo l'accesso web e non puoi registrare un client, chiedi all'admin SAS di
-crearne uno (passo A). Senza un client non è possibile ottenere un token via API.
-
-> Su SAS Viya **Engage** il consul token / la registrazione client sono in mano
-> all'amministratore dell'ambiente: se non li hai, è il passo da sbloccare per primo.
+> Su SAS Viya **Engage** la registrazione client è dell'amministratore
+> dell'ambiente. Nel frattempo la **via A** (CLI + token) ti sblocca con il solo
+> login web.
 
 ---
 

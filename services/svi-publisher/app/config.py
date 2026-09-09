@@ -18,9 +18,13 @@ class Settings(BaseSettings):
     svi_alerts_base: str = ""            # default: {viya}/svi-alert
 
     # --- Autenticazione (solo "live") ---
-    #   "oauth"  -> OAuth2 SASLogon ({viya}/SASLogon/oauth/token)
+    #   "oauth"  -> OAuth2 SASLogon ({viya}/SASLogon/oauth/token) — client registrato
+    #   "token"  -> bearer già ottenuto (es. da `sas-viya auth`), in SAS_BEARER_TOKEN;
+    #               utile con solo login web (nessun client). Token a scadenza: adatto
+    #               a test/pilota, non all'esecuzione non presidiata a lungo termine.
     #   "broker" -> token di servizio da un sidecar (sas_token_broker_url)
     svi_auth_mode: str = "oauth"
+    sas_bearer_token: str = ""           # usato con svi_auth_mode="token" (solo .env)
     sas_token_broker_url: str = "http://sas-token-broker:8099/token"
     # OAuth2: grant "client_credentials" (default) o "password".
     sas_oauth_grant: str = "client_credentials"

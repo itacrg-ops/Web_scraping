@@ -61,6 +61,10 @@ async def _fetch_token(client: httpx.AsyncClient) -> tuple[str, float]:
 
 async def bearer(client: httpx.AsyncClient) -> str:
     """Token valido dalla cache o rinnovato (margine di 30s sulla scadenza)."""
+    if settings.svi_auth_mode == "token":
+        if not settings.sas_bearer_token:
+            raise RuntimeError("SVI_AUTH_MODE=token ma SAS_BEARER_TOKEN è vuoto")
+        return settings.sas_bearer_token
     now = time.time()
     if _cache["token"] and now < _cache["exp"]:
         return _cache["token"]

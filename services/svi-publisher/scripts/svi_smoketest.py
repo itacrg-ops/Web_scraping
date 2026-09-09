@@ -53,7 +53,14 @@ def _line(ok: bool, msg: str) -> None:
 
 
 def get_token() -> str:
-    print("\n1) AUTH — SASLogon OAuth")
+    print("\n1) AUTH — SASLogon")
+    if settings.svi_auth_mode == "token":
+        if not settings.sas_bearer_token:
+            _line(False, "SVI_AUTH_MODE=token ma SAS_BEARER_TOKEN è vuoto nel .env")
+            raise SystemExit(2)
+        _line(True, f"bearer da .env ({len(settings.sas_bearer_token)} char) — "
+                    "modalità token (es. da `sas-viya auth`)")
+        return settings.sas_bearer_token
     print(f"  endpoint : {settings.token_url()}")
     print(f"  grant    : {settings.sas_oauth_grant}  ·  client_id: "
           f"{'(impostato)' if settings.sas_client_id else 'MANCANTE'}")
