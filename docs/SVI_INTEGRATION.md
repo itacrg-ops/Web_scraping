@@ -125,6 +125,9 @@ SVI_EXTERNAL_ID_ATTR=externalId
 (`svi-mock-…`), con la stessa idempotenza. La console mostra l'`svi_alert_id`
 sull'alert. Utile per validare la pipeline end-to-end senza ambiente SAS.
 
+> **Attivazione passo-passo:** [`SVI_GOLIVE.md`](SVI_GOLIVE.md) — runbook con
+> registrazione client OAuth, discovery del modello dati, `.env` e smoke-test.
+
 ## Cosa manca per l'attivazione live (checklist)
 
 - [ ] Ambiente **Viya/SVI** e **data model** configurato (tipi oggetto/alert/
