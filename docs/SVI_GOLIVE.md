@@ -26,16 +26,36 @@ il base è tutto ciò che precede `/SASVisualInvestigator`.)
 Le API SVI si autenticano via OAuth2 (`{VIYA}/SASLogon/oauth/token`). Con il
 **solo login web** (nessun client OAuth registrato) hai due modi.
 
+> **Ambiente con SSO SAML** (come questo: l'accesso passa da un IdP esterno).
+> Conseguenze pratiche:
+> - il login **utente/password via CLI fallisce** («bad user»): non esiste una
+>   password locale in SASLogon, l'identità è federata dall'IdP → **non usare** la
+>   via B con password;
+> - per un **servizio** (svi-publisher) la scelta giusta è un client
+>   **`client_credentials`** (via C): è il client stesso a identificarsi, **SAML non
+>   è coinvolto**;
+> - per i test **subito**, prendi il token dal **browser** (via A): lì il SAML è
+>   già stato completato.
+
 ### A) Via lampo — token dal browser (zero installazioni, sei già loggato)
 
 Sei già collegato a SVI nel browser: quel login **ha già un token**, basta copiarlo.
 
-1. Nel browser, con SVI aperto, premi **F12** (DevTools) → scheda **Network/Rete**.
-2. Ricarica la pagina o clicca in SVI: compaiono le chiamate all'API del server.
-3. Clicca una chiamata verso Viya (es. una `svi-*`, `identities`, `folders`) →
-   **Headers / Intestazioni** → **Request Headers**.
-4. Copia il valore dopo `authorization: Bearer ` — una stringa lunga che inizia con `eyJ`.
-5. Incollalo nel `.env` (modalità `token`):
+1. Nel browser, con SVI aperto e loggato, premi **F12** (DevTools) → scheda **Network/Rete**.
+2. Clicca il filtro **Fetch/XHR** (così vedi solo le chiamate API, non immagini/CSS).
+3. Ricarica la pagina (F5) o clicca qualcosa in SVI: si popolano le richieste.
+4. Clicca **più richieste** verso il server (es. `svi-datahub`, `svi-alert`,
+   `identities`, `folders`) → scheda **Headers / Intestazioni** → **Request Headers**.
+5. Cerca la riga `authorization: Bearer eyJ...` e copia **tutto ciò che segue `Bearer `**
+   (stringa lunghissima che inizia con `eyJ`).
+
+Se non trovi `authorization` su nessuna richiesta:
+- prova **Application/Applicazione → Storage → Local/Session Storage**: cerca una
+  chiave con un valore `eyJ...`;
+- se davvero non c'è alcun bearer (la SPA usa **solo cookie di sessione**), la via
+  browser non fa al caso tuo → passa alla **via C** (client `client_credentials`).
+
+6. Incolla il token nel `.env` (modalità `token`):
 
 ```dotenv
 SVI_MODE=live
@@ -76,8 +96,10 @@ SAS_BEARER_TOKEN=<incolla qui l'access-token>
 ### C) Via robusta (consigliata per il pilota) — client registrato — `client_credentials` o `password`
 
 Un client dedicato dà token rinnovabili senza login interattivo. Ti servono
-`client_id` + `client_secret`. Registrazione tipica (richiede il *consul token* di
-amministrazione dell'ambiente):
+`client_id` + `client_secret`. **In ambiente SAML usa il grant
+`client_credentials`**: il client è un'identità di servizio, indipendente
+dall'IdP (nessun SAML, nessun utente). Registrazione tipica (richiede il *consul
+token* di amministrazione dell'ambiente):
 
 ```bash
 VIYA=https://viya-ddw4ej7fub.engage.sas.com
@@ -98,8 +120,8 @@ curl -sk "$VIYA/SASLogon/oauth/clients" -H "Authorization: Bearer $REG" \
 
 - `client_credentials` → il servizio agisce con l'identità del client (serve che
   il client abbia i diritti sugli oggetti SVI).
-- `password` → il servizio agisce come un **utente** SVI (servono anche
-  `SAS_USERNAME`/`SAS_PASSWORD`); utile per rispettare i permessi per-utente.
+- `password` → il servizio agisce come un **utente** SVI (`SAS_USERNAME`/`SAS_PASSWORD`).
+  ⚠ **Non utilizzabile con SSO SAML** (nessuna password locale): usa `client_credentials`.
 
 Se non puoi registrare il client tu (serve il *consul token* o un client con
 `clients.write`, tipicamente in mano all'**amministratore** dell'ambiente Engage),
