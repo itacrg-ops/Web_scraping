@@ -26,19 +26,41 @@ il base è tutto ciò che precede `/SASVisualInvestigator`.)
 Le API SVI si autenticano via OAuth2 (`{VIYA}/SASLogon/oauth/token`). Con il
 **solo login web** (nessun client OAuth registrato) hai due modi.
 
-### A) Via rapida — CLI `sas-viya` + modalità `token` (nessun client da registrare)
+### A) Via lampo — token dal browser (zero installazioni, sei già loggato)
 
-La CLI ufficiale `sas-viya` usa un client OAuth **già integrato**: ti autentichi
-col tuo login web e ottieni un token, senza registrare nulla.
+Sei già collegato a SVI nel browser: quel login **ha già un token**, basta copiarlo.
 
-```bash
-# installa la CLI SAS Viya, poi:
-sas-viya profile init          # Service Endpoint: https://viya-ddw4ej7fub.engage.sas.com
-sas-viya auth login            # inserisci utente/password del login web
+1. Nel browser, con SVI aperto, premi **F12** (DevTools) → scheda **Network/Rete**.
+2. Ricarica la pagina o clicca in SVI: compaiono le chiamate all'API del server.
+3. Clicca una chiamata verso Viya (es. una `svi-*`, `identities`, `folders`) →
+   **Headers / Intestazioni** → **Request Headers**.
+4. Copia il valore dopo `authorization: Bearer ` — una stringa lunga che inizia con `eyJ`.
+5. Incollalo nel `.env` (modalità `token`):
+
+```dotenv
+SVI_MODE=live
+VIYA_ENDPOINT=https://viya-ddw4ej7fub.engage.sas.com
+SVI_AUTH_MODE=token
+SAS_BEARER_TOKEN=eyJ...        # il token copiato dal browser
+```
+
+> Zero installazioni. Il token **scade** (qualche ora): perfetto per auth +
+> discovery + primi test. Per il pilota non presidiato → via C.
+
+### B) Via CLI — `sas-viya` (token, nessun client da registrare)
+
+La CLI ufficiale `sas-viya` (un singolo eseguibile scaricabile da SAS: su Windows
+`sas-viya.exe`) usa un client OAuth **già integrato**. Da un terminale della **tua
+macchina** (PowerShell su Windows), nella cartella dove hai messo l'eseguibile:
+
+```powershell
+.\sas-viya.exe profile init     # Service Endpoint: https://viya-ddw4ej7fub.engage.sas.com
+.\sas-viya.exe auth login       # utente/password del login web
 # il token finisce in ~/.sas/credentials.json → campo "access-token"
 ```
 
-Copia quell'`access-token` nel `.env` e usa la modalità `token`:
+(Se aggiungi `sas-viya.exe` al PATH, lo lanci da qualsiasi cartella senza `.\`.)
+Copia quell'`access-token` nel `.env` con `SVI_AUTH_MODE=token` (come nel blocco A).
 
 ```dotenv
 SVI_MODE=live
@@ -51,7 +73,7 @@ SAS_BEARER_TOKEN=<incolla qui l'access-token>
 > auth, discovery del modello dati e i primi test con lo smoke-test. Per il pilota
 > non presidiato passa alla via B.
 
-### B) Via robusta (consigliata per il pilota) — client registrato — `client_credentials` o `password`
+### C) Via robusta (consigliata per il pilota) — client registrato — `client_credentials` o `password`
 
 Un client dedicato dà token rinnovabili senza login interattivo. Ti servono
 `client_id` + `client_secret`. Registrazione tipica (richiede il *consul token* di
@@ -85,7 +107,7 @@ chiedi all'admin SAS di crearlo e fartelo avere: passagli la specifica del blocc
 qui sopra (`client_id: adverse-media`, grant `client_credentials`/`password`).
 
 > Su SAS Viya **Engage** la registrazione client è dell'amministratore
-> dell'ambiente. Nel frattempo la **via A** (CLI + token) ti sblocca con il solo
+> dell'ambiente. Nel frattempo le **vie A/B** (token) ti sbloccano con il solo
 > login web.
 
 ---
@@ -144,15 +166,21 @@ SVI_EXTERNAL_ID_ATTR=externalId
 
 ## Passo 4 — Smoke-test (in locale)
 
-Dalla **root del repo**, con il `.env` valorizzato:
+Dalla **root del repo**, con il `.env` valorizzato. Modo consigliato — nel
+**container** (ha già Python e le dipendenze; legge il `.env` via `env_file`):
 
 ```bash
 # dry-run: auth + discovery + payload stampato (nessuna scrittura)
-python services/svi-publisher/scripts/svi_smoketest.py
+docker compose -f docker-compose.dev.yml run --build --rm svi-publisher \
+  python scripts/svi_smoketest.py
 
 # scrive davvero 1 documento + 1 alert di test
-python services/svi-publisher/scripts/svi_smoketest.py --create
+docker compose -f docker-compose.dev.yml run --build --rm svi-publisher \
+  python scripts/svi_smoketest.py --create
 ```
+
+In alternativa, sull'host se hai Python: `pip install httpx pydantic pydantic-settings`
+poi `python services/svi-publisher/scripts/svi_smoketest.py`.
 
 Lo script:
 
