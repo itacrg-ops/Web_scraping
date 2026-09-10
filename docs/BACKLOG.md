@@ -27,6 +27,7 @@ SVI mock, alert con evidenze). Questo documento traccia i passi successivi.
 | B7 | NER / Embedding per l'anti-omonimia | P2 | L | `entity-resolution`, `worker-scraping` |
 | B8 | Multi-provider fan-out ricerca | P2 | M | `search-gateway`, `docker-compose` |
 | B9 | Feed di rischio strutturato (Crime&tech) | P2 | M | `risk-gateway` (nuovo), `worker-scraping` |
+| B10 | Fonti istituzionali (White List antimafia, registri civili) | P2 | L | `risk-gateway`/registry-feed, catalogo fonti |
 
 **Sequenza adottata (pilota): B1 → B6 → B7 → B8** — compatibilità verificata sul
 codice. B1 parte in versione **MVP regex** (indipendente); dopo B7 va rifinita con
@@ -333,3 +334,47 @@ bloccato dal proxy dell'ambiente.
 implementato sullo schema reale; `_normalize_connections_response` confermata
 sui campi OpenAPI; DPIA/DPA firmati; un soggetto noto produce indicatori+
 connessioni mappati in AMI/driver, con test su risposta reale (oggi: mock).
+
+## B10 — Fonti istituzionali (White List antimafia, registri civili) · P2
+
+**Stato: 🔎 ANALISI (catalogato, non integrato).** Fonti **autoritative per identità**
+(come B9, non web-search): valutate per l'aggancio dietro il `risk-gateway`
+(pattern registry-feed). Registrate nel catalogo Fonti come *sospese/escluse*.
+
+**White List antimafia — integrabile (segnale POSITIVO/mitigante).** Elenchi delle
+imprese "pulite" nei settori a rischio infiltrazione (D.Lgs. 159/2011; L. 190/2012,
+art. 1 c. 52-57). Stato 2025:
+- **Portale nazionale** del Min. Interno `portalewl.interno.gov.it` (attivo dal
+  21/07/2025, PNRR 1.6.1) per iscrizione/aggiornamento/rinnovo;
+- **elenchi pubblicati per-Prefettura** su `prefettura.interno.gov.it`;
+- fonte autoritativa **BDNA** (`bdna.interno.gov.it`), accesso **accreditato** (PA).
+- **Nessuna API REST aperta** → integrazione via accesso accreditato BDNA / e-service
+  PDND (se l'amministrazione è titolata) o acquisizione controllata degli elenchi.
+- **Uso nel dominio:** check per identità; la presenza è un **mitigante** (impresa
+  verificata), non un segnale adverse. Va modellato come tale nell'AMI.
+
+**Sentenze civili di merito — ⚠ ESCLUSA per lo scopo.** La **Banca Dati di Merito
+pubblica** (Min. Giustizia, operativa dal 14/12/2023, ~3,5 mln sentenze civili dal
+2016, su `pst.giustizia.it`) è **pseudonimizzata** e vieta **espressamente**
+«classificazione, valutazione, comparazione, **profilazione** o simili» sui dati
+delle sentenze. Ne consegue che **non è utilizzabile** per uno screening per
+identità (sarebbe profilazione; inoltre l'anonimizzazione impedisce il match per
+nome). Catalogata come **esclusa**, `rischio_legale=alto`.
+
+**Alternative civili legalmente più solide (per identità)** — da valutare in luogo
+delle sentenze: **procedure concorsuali/fallimenti**, **protesti**, **pregiudizievoli
+di conservatoria**, **visure** (Registro Imprese / InfoCamere, via convenzione),
+**PVP** aste giudiziarie (`pvp.giustizia.it`), **ANAC** (già a catalogo). Sono
+segnali strutturati, ottenibili per soggetto e senza il divieto di profilazione.
+
+**Componenti (a integrazione).** `risk-gateway` (nuovo provider registry-feed per
+White List; mapping presenza→mitigante), catalogo fonti (righe `white-list`,
+`banca-dati-merito`).
+
+**Dipendenze.** Accreditamento BDNA / e-service PDND o convenzione InfoCamere;
+verifica base giuridica e finalità (le White List sono pubbliche; i registri
+camerali richiedono convenzione). Nessuno sviluppo finché l'accesso non è definito.
+
+**Definition of Done.** Per la White List: dato un soggetto risolto, il gateway
+restituisce presenza/assenza in elenco e la riflette come mitigante spiegabile
+nell'alert; fonte e provenienza tracciate.

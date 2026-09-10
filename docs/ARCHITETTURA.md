@@ -270,6 +270,8 @@ interrogato** dalla pipeline runtime: la discovery avviene tramite i motori sopr
 | BDNCP — ANAC (via PDND) | api | alta | basso | catalogata |
 | Albo pretorio | scraping | alta | basso | catalogata |
 | Crime&tech — Risk Indicators | feed | alta | medio | sospesa |
+| White List Antimafia (Prefetture / BDNA) | registro | alta | basso | sospesa (B10) |
+| Banca Dati di Merito — sentenze civili | banca dati | alta | alto | esclusa (divieto di profilazione) |
 
 ---
 

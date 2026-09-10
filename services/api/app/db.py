@@ -112,6 +112,18 @@ async def _seed_sources() -> None:
         # un processore esterno (DPA/DPIA richiesti). attiva=False = sospesa.
         Source(id="crimetech", nome="Crime&tech — Risk Indicators (AML/CFT)", tipo="feed",
                credibilita="alta", rischio_legale="medio", attiva=False),
+        # Fonti istituzionali candidate (B10), catalogate ma non ancora integrate.
+        # White List antimafia: check per identità AUTORITATIVO e segnale POSITIVO
+        # (impresa verificata). Accesso accreditato BDNA / portale nazionale; nessuna
+        # API aperta. Rischio legale basso (registro pubblico).
+        Source(id="white-list", nome="White List Antimafia (Prefetture / BDNA)", tipo="registro",
+               credibilita="alta", rischio_legale="basso", attiva=False),
+        # Banca Dati di Merito (sentenze civili, Min. Giustizia): pubblica ma
+        # PSEUDONIMIZZATA e con DIVIETO ESPRESSO di profilazione/comparazione →
+        # NON utilizzabile per screening per identità. Catalogata come ESCLUSA;
+        # rischio_legale "alto" per marcare il vincolo.
+        Source(id="banca-dati-merito", nome="Banca Dati di Merito — sentenze civili (Min. Giustizia)",
+               tipo="banca dati", credibilita="alta", rischio_legale="alto", attiva=False),
     ]
     async with SessionLocal() as session:
         existing = (await session.execute(select(Source.id))).scalars().all()
