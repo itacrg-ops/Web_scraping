@@ -41,10 +41,9 @@ SAMPLE_ALERT = {
 # code) sono CANDIDATI: confermare quelli che rispondono 200 sull'ambiente reale.
 DISCOVERY = [
     ("svi-datahub · documents", "/svi-datahub/documents?limit=1"),
-    ("svi-datahub · documentTypes", "/svi-datahub/documentTypes?limit=20"),
-    ("svi-datahub · objectTypes", "/svi-datahub/objectTypes?limit=20"),
+    ("svi-alert · alertTypes", "/svi-alert/alertTypes?limit=50"),
+    ("svi-alert · queues", "/svi-alert/queues?limit=50"),
     ("svi-alert · alerts", "/svi-alert/alerts?limit=1"),
-    ("svi-alert · queues", "/svi-alert/queues?limit=20"),
 ]
 
 
@@ -104,7 +103,7 @@ def discovery(token: str) -> None:
                 for lk in links[:30]:
                     print(f"      {str(lk.get('method', 'GET')):6} {str(lk.get('rel', '')):24} {lk.get('href', '')}")
             else:
-                print("      body:", (r.text or "").strip()[:400])
+                print("      body:", (r.text or "").strip()[:1200])
         # 2b. Endpoint candidati: stampa stato, header Allow (sui 405) e un estratto del corpo.
         for label, path in DISCOVERY:
             try:
@@ -118,7 +117,7 @@ def discovery(token: str) -> None:
             _line(ok, f"{label:28} HTTP {r.status_code}  {path}{extra}")
             body = (r.text or "").strip().replace("\n", " ")
             if body:
-                print("        body:", body[:280])
+                print("        body:", body[:2000])
     print("  → Cerca nei link/corpi qui sopra i valori reali di documentType / alertType /")
     print("    queue e mettili in SVI_OBJECT_TYPE / SVI_ALERT_TYPE / SVI_QUEUE.")
 
