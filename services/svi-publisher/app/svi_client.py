@@ -108,9 +108,10 @@ async def publish_alert(alert: dict[str, Any]) -> dict[str, Any]:
 
         event = mapping.build_alerting_event(alert, settings)
         mt = settings.svi_alertingevent_media_type
+        # L'endpoint crea una COLLEZIONE di eventi: il body è un array.
         ev_resp = await _retry(
             "alert/alertingEvents",
-            lambda: client.post(f"{settings.alerts_base()}/alertingEvents", json=event,
+            lambda: client.post(f"{settings.alerts_base()}/alertingEvents", json=[event],
                                 headers={**auth_h, "Content-Type": mt, "Accept": "application/json"}),
         )
         rj = ev_resp.json() if ev_resp.content else {}
