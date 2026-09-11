@@ -162,8 +162,8 @@ def discovery(token: str) -> None:
                 body = (r.text or "").strip().replace("\n", " ")
                 if body:
                     print("        body:", body[:800])
-    print("  → Cerca nei link/corpi qui sopra i valori reali di documentType / alertType /")
-    print("    queue e mettili in SVI_OBJECT_TYPE / SVI_ALERT_TYPE / SVI_QUEUE.")
+    print("  → Metti gli id reali in .env: SVI_DOMAIN_ID (domainId), SVI_ENTITY_TYPE")
+    print("    (entity type), SVI_QUEUE (queueId con acceptManualAlerts=true).")
 
 
 def payload(token: str, create: bool) -> None:
