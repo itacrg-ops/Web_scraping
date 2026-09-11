@@ -237,6 +237,13 @@ docker compose -f docker-compose.dev.yml run --build --rm svi-publisher \
 In alternativa, sull'host se hai Python: `pip install httpx pydantic pydantic-settings`
 poi `python services/svi-publisher/scripts/svi_smoketest.py`.
 
+> **Certificato self-signed** (`CERTIFICATE_VERIFY_FAILED ... self-signed certificate`,
+> tipico nei demo)? Due modi:
+> - rapido (solo demo): `SVI_VERIFY_TLS=false` nel `.env` — equivale a `curl -k`;
+> - pulito: esporta il certificato del server dal browser (lucchetto → esporta in
+>   `.pem`), mettilo nel repo montato e imposta `SVI_CA_BUNDLE=/percorso/cert.pem`
+>   (la verifica resta attiva). Vale sia per lo smoke-test sia per il publisher.
+
 Lo script:
 
 1. **AUTH** — ottiene un token dal grant configurato (fallisce subito se il client

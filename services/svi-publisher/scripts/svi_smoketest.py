@@ -67,7 +67,8 @@ def get_token() -> str:
     if settings.svi_auth_mode == "broker":
         print(f"  modo     : broker → {settings.sas_token_broker_url}")
     url, data, headers = auth.build_oauth_request(settings)
-    with httpx.Client(timeout=settings.svi_request_timeout, follow_redirects=False) as c:
+    with httpx.Client(timeout=settings.svi_request_timeout, follow_redirects=False,
+                      verify=settings.verify_opt()) as c:
         if settings.svi_auth_mode == "broker":
             r = c.get(settings.sas_token_broker_url)
         else:
@@ -86,7 +87,7 @@ def discovery(token: str) -> None:
     print("\n2) DISCOVERY — servizi SVI e modello dati (sola lettura)")
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     base = settings.viya_endpoint.rstrip("/")
-    with httpx.Client(timeout=settings.svi_request_timeout) as c:
+    with httpx.Client(timeout=settings.svi_request_timeout, verify=settings.verify_opt()) as c:
         for label, path in DISCOVERY:
             try:
                 r = c.get(base + path, headers=headers)
@@ -126,7 +127,7 @@ def payload(token: str, create: bool) -> None:
 
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
                "Accept": "application/json"}
-    with httpx.Client(timeout=settings.svi_request_timeout) as c:
+    with httpx.Client(timeout=settings.svi_request_timeout, verify=settings.verify_opt()) as c:
         print("\n  POST documento →", settings.datahub_base() + "/documents")
         rd = c.post(settings.datahub_base() + "/documents", json=document, headers=headers)
         _line(rd.status_code < 300, f"documento HTTP {rd.status_code}: {rd.text[:300]}")
@@ -147,6 +148,10 @@ def main() -> None:
 
     print("=" * 64)
     print("SVI smoke-test  ·  mode:", settings.svi_mode, " endpoint:", settings.viya_endpoint or "(vuoto!)")
+    if settings.svi_ca_bundle:
+        print("TLS: verifica attiva con CA bundle:", settings.svi_ca_bundle)
+    elif not settings.svi_verify_tls:
+        print("TLS: ⚠ verifica DISATTIVATA (SVI_VERIFY_TLS=false) — solo per demo self-signed")
     print("=" * 64)
     if settings.svi_mode != "live":
         print("ATTENZIONE: SVI_MODE non è 'live'. La pipeline resterebbe in mock.")

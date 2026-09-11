@@ -49,6 +49,18 @@ class Settings(BaseSettings):
     svi_retry_backoff: float = 1.5       # base backoff (s): 1.5, 3.0, 6.0...
     svi_idempotency_ttl: int = 86400     # cache business_key -> id (s)
 
+    # --- TLS ---
+    # Verifica del certificato del server Viya. Default: attiva.
+    #   DEMO con certificato self-signed → SVI_VERIFY_TLS=false (SOLO demo!).
+    #   Meglio: SVI_CA_BUNDLE = path al certificato/CA del demo (verifica attiva).
+    svi_verify_tls: bool = True
+    svi_ca_bundle: str = ""
+
+    def verify_opt(self):
+        """Valore `verify` per httpx: path del CA bundle se impostato, altrimenti
+        il bool di verifica (True/False)."""
+        return self.svi_ca_bundle or self.svi_verify_tls
+
     def datahub_base(self) -> str:
         return self.svi_datahub_base or (self.viya_endpoint.rstrip("/") + "/svi-datahub")
 

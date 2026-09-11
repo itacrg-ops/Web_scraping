@@ -92,7 +92,8 @@ async def publish_alert(alert: dict[str, Any]) -> dict[str, Any]:
 
     # --- Live: OAuth/broker → Data Hub document → Alert ---
     document = mapping.build_document(alert, settings)
-    async with httpx.AsyncClient(timeout=settings.svi_request_timeout) as client:
+    async with httpx.AsyncClient(timeout=settings.svi_request_timeout,
+                                 verify=settings.verify_opt()) as client:
         token = await auth.bearer(client)
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
                    "Accept": "application/json"}
@@ -120,7 +121,8 @@ async def publish_entities(entities: list[dict], relationships: list[dict]) -> N
     if _is_mock():
         logger.info("[MOCK] Data Hub: %d entità, %d relazioni", len(entities), len(relationships))
         return
-    async with httpx.AsyncClient(timeout=settings.svi_request_timeout) as client:
+    async with httpx.AsyncClient(timeout=settings.svi_request_timeout,
+                                 verify=settings.verify_opt()) as client:
         token = await auth.bearer(client)
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         await _retry("datahub/links", lambda: client.post(
