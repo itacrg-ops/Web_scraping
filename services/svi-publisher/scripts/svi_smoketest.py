@@ -51,6 +51,37 @@ def _line(ok: bool, msg: str) -> None:
     print(f"  [{'OK ' if ok else 'ERR'}] {msg}")
 
 
+def _self_id(obj: dict) -> str | None:
+    for lk in obj.get("links", []):
+        if lk.get("rel") == "self":
+            return (lk.get("href") or "").rsplit("/", 1)[-1]
+    return None
+
+
+def _summ_queues(j: dict) -> list[str]:
+    """Per ogni coda: id · dominio · se accetta alert manuali (→ target valido)."""
+    out = []
+    for q in (j.get("items") or []):
+        out.append(f"{_self_id(q) or q.get('name')}  domain={q.get('domainId')}  "
+                   f"acceptManualAlerts={q.get('acceptManualAlerts')}")
+    return out or ["(nessuna coda)"]
+
+
+def _summ_alert(j: dict) -> list[str]:
+    """Campi salienti di un alert esistente (modello per la creazione)."""
+    items = j.get("items") or []
+    if not items:
+        return ["(nessun alert esistente da cui dedurre lo schema)"]
+    it = items[0]
+    qref = next((lk.get("href") for lk in it.get("links", []) if lk.get("rel") == "queue"), None)
+    keys = ["domainId", "actionableEntityType", "actionableEntityId", "actionableEntityLabel",
+            "initialScore", "currentScore", "highScore", "alertOriginCode", "alertType", "status"]
+    lines = [f"{k}={it.get(k)}" for k in keys if k in it]
+    lines.append(f"queue={qref}")
+    lines.append("tutti i campi: " + ", ".join(list(it.keys())))
+    return lines
+
+
 def get_token() -> str:
     print("\n1) AUTH — SASLogon")
     if settings.svi_auth_mode == "token":
@@ -115,9 +146,22 @@ def discovery(token: str) -> None:
             allow = r.headers.get("allow") or r.headers.get("Allow")
             extra = f"  Allow: {allow}" if (r.status_code == 405 and allow) else ""
             _line(ok, f"{label:28} HTTP {r.status_code}  {path}{extra}")
-            body = (r.text or "").strip().replace("\n", " ")
-            if body:
-                print("        body:", body[:2000])
+            j = None
+            if ok:
+                try:
+                    j = r.json()
+                except Exception:  # noqa: BLE001
+                    j = None
+            if j is not None and "/queues" in path:
+                for ln in _summ_queues(j):
+                    print("        queue:", ln)
+            elif j is not None and "/alerts" in path:
+                for ln in _summ_alert(j):
+                    print("        alert:", ln)
+            else:
+                body = (r.text or "").strip().replace("\n", " ")
+                if body:
+                    print("        body:", body[:800])
     print("  → Cerca nei link/corpi qui sopra i valori reali di documentType / alertType /")
     print("    queue e mettili in SVI_OBJECT_TYPE / SVI_ALERT_TYPE / SVI_QUEUE.")
 
