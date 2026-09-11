@@ -153,6 +153,11 @@ def main() -> None:
     elif not settings.svi_verify_tls:
         print("TLS: ⚠ verifica DISATTIVATA (SVI_VERIFY_TLS=false) — solo per demo self-signed")
     print("=" * 64)
+    if settings.svi_ca_bundle and not os.path.exists(settings.svi_ca_bundle):
+        print(f"ERRORE: SVI_CA_BUNDLE punta a un file inesistente qui: {settings.svi_ca_bundle}")
+        print("  → per il demo usa SVI_VERIFY_TLS=false e lascia SVI_CA_BUNDLE vuoto,")
+        print("    oppure monta/copia il certificato a quel percorso nel container.")
+        raise SystemExit(1)
     if settings.svi_mode != "live":
         print("ATTENZIONE: SVI_MODE non è 'live'. La pipeline resterebbe in mock.")
     if not settings.viya_endpoint and settings.svi_auth_mode != "broker":

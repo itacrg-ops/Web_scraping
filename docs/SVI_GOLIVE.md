@@ -238,11 +238,15 @@ In alternativa, sull'host se hai Python: `pip install httpx pydantic pydantic-se
 poi `python services/svi-publisher/scripts/svi_smoketest.py`.
 
 > **Certificato self-signed** (`CERTIFICATE_VERIFY_FAILED ... self-signed certificate`,
-> tipico nei demo)? Due modi:
-> - rapido (solo demo): `SVI_VERIFY_TLS=false` nel `.env` — equivale a `curl -k`;
-> - pulito: esporta il certificato del server dal browser (lucchetto → esporta in
->   `.pem`), mettilo nel repo montato e imposta `SVI_CA_BUNDLE=/percorso/cert.pem`
->   (la verifica resta attiva). Vale sia per lo smoke-test sia per il publisher.
+> tipico nei demo)? Per il demo il modo semplice è `SVI_VERIFY_TLS=false` nel `.env`
+> (equivale a `curl -k`); **lascia `SVI_CA_BUNDLE` vuoto**.
+>
+> ⚠ `SVI_CA_BUNDLE` va usato **solo** se il file del certificato è davvero presente
+> **dentro il container** a quel percorso: altrimenti httpx solleva
+> `FileNotFoundError`. Per usarlo in Docker devi montarlo, es. aggiungendo al
+> servizio `svi-publisher` un volume `- ./certs/demo.pem:/app/certs/demo.pem:ro` e
+> impostando `SVI_CA_BUNDLE=/app/certs/demo.pem`. Per il demo, `SVI_VERIFY_TLS=false`
+> è più semplice.
 
 Lo script:
 
