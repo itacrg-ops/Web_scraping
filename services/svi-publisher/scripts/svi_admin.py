@@ -127,11 +127,15 @@ def main() -> None:
             # chiave è "identificativo". Aggiungi qui gli altri attributi obbligatori
             # che l'errore DH5104 dovesse segnalare.
             et = settings.svi_entity_type
+            # Nel 'data' le chiavi sono la colonna **Name** dei field (non la Label):
+            # il campo obbligatorio (label "identificativo") ha Name=CodiceFiscalePIVA.
+            # soggetto_id/version sono obbligatori ma read-only → li imposta il server.
             doc = {
                 "objectTypeName": et,
                 "data": {
-                    "identificativo": "00743110157",
-                    "denominazione": "ACME Costruzioni S.r.l.",
+                    "CodiceFiscalePIVA": "00743110157",
+                    "Denominazione": "ACME Costruzioni S.r.l.",
+                    "TipoSoggetto": "persona_giuridica",
                 },
             }
             print("   payload:", json.dumps(doc, ensure_ascii=False))
