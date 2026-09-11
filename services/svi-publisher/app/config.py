@@ -42,7 +42,10 @@ class Settings(BaseSettings):
     svi_alert_origin: str = ""              # alertOriginCode (vuoto = omesso)
     svi_alert_type_code: str = "DEFAULT"    # alertTypeCode
     # Creazione reale: POST /svi-alert/alertingEvents (il motore genera l'alert).
-    svi_alertingevent_media_type: str = "application/vnd.sas.investigation.triage.alerting.data.flat"
+    # Media type versionato SAS (il suffisso +json;version=1 è obbligatorio).
+    svi_alertingevent_media_type: str = (
+        "application/vnd.sas.investigation.triage.alerting.data.flat+json;version=1"
+    )
     # Includere l'enrichment (AMI/FATF/motivazione) nell'evento. Off al primo test:
     # SVI può validare le chiavi enrichment sul modello del dominio.
     svi_send_enrichment: bool = False
