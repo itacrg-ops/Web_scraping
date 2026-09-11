@@ -30,10 +30,18 @@ ENDPOINTS = [
     ("alert · queues", "/svi-alert/queues?limit=50"),
     ("alert · dispositions", "/svi-alert/dispositions?limit=50"),
     ("root svi-datahub", "/svi-datahub/"),
-    ("admin-metadata (guess)", "/svi-admin-metadata/"),
-    ("data-model (guess)", "/svi-data-model/"),
-    ("datahub · entityTypes (guess)", "/svi-datahub/entityTypes?limit=50"),
+    # Candidati per la CREAZIONE alert (leggi l'header Allow: POST = endpoint di create).
+    ("alert · alertingEvents?", "/svi-alert/alertingEvents?limit=1"),
+    ("alert · events?", "/svi-alert/events?limit=1"),
+    ("alert · manualAlerts?", "/svi-alert/manualAlerts?limit=1"),
+    ("datahub · alerts?", "/svi-datahub/alerts?limit=1"),
+    ("datahub · manualAlerts?", "/svi-datahub/manualAlerts?limit=1"),
+    ("datahub · documents (Allow)", "/svi-datahub/documents?limit=1"),
+    ("datahub · entities?", "/svi-datahub/entities?limit=1"),
 ]
+
+# Endpoint su cui provare anche OPTIONS (rivela i metodi ammessi / sotto-risorse).
+OPTIONS_PROBES = ["/svi-alert/alerts", "/svi-datahub/documents"]
 
 
 def get_token() -> str:
@@ -77,6 +85,15 @@ def main() -> None:
             if body:
                 print("       body:", body[:1500])
             print()
+
+        print("--- OPTIONS (metodi ammessi) ---")
+        for path in OPTIONS_PROBES:
+            try:
+                r = c.request("OPTIONS", base + path, headers=h)
+                allow = r.headers.get("allow") or r.headers.get("Allow") or "(nessun header Allow)"
+                print(f"   OPTIONS {path}  → {r.status_code}  Allow: {allow}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"   OPTIONS {path}: {exc}")
 
 
 if __name__ == "__main__":
