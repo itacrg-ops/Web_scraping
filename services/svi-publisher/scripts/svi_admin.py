@@ -121,33 +121,27 @@ def main() -> None:
                     print(f"   POST {path}: {exc}")
 
         if args.create_entity:
-            print("\n--- CREATE ENTITY (record Soggetto) — prova più nomi di campo per il TIPO ---")
+            print("\n--- CREATE ENTITY (record Soggetto) ---")
+            # Confermato: campo tipo = objectTypeName; envelope = {objectTypeName, data}.
+            # data usa i NOMI ATTRIBUTO reali dell'entity type (in italiano): il campo
+            # chiave è "identificativo". Aggiungi qui gli altri attributi obbligatori
+            # che l'errore DH5104 dovesse segnalare.
             et = settings.svi_entity_type
-            data = {"codiceFiscalePIVA": "00743110157", "denominazione": "ACME Costruzioni S.r.l."}
-            # DH3454 = manca 'object type name' o 'type ID'. Proviamo i nomi campo
-            # candidati per il tipo; il primo che NON dà DH3454 è quello giusto.
-            candidates = [
-                {"objectTypeName": et, "data": data},
-                {"dataObjectTypeName": et, "data": data},
-                {"objectType": et, "data": data},
-                {"type": et, "data": data},
-                {"typeName": et, "values": data},
-            ]
-            hdr = {**h, "Content-Type": "application/json"}
-            for doc in candidates:
-                key = next(iter(doc))
-                try:
-                    r = c.post(base + "/svi-datahub/documents", json=doc, headers=hdr)
-                except Exception as exc:  # noqa: BLE001
-                    print(f"   [{key}] errore: {exc}"); continue
-                body = (r.text or "").strip()
-                dh3454 = "DH3454" in body
-                print(f"   [{key:20}] → {r.status_code}{'  (DH3454 ancora)' if dh3454 else ''}")
-                print("       ", body[:600])
-                if r.status_code < 300:
-                    print("   ✓ creato con il campo:", key); break
-                if not dh3454:
-                    print("   → campo TIPO accettato:", key, "— l'errore ora è su altro (vedi sopra)"); break
+            doc = {
+                "objectTypeName": et,
+                "data": {
+                    "identificativo": "00743110157",
+                    "denominazione": "ACME Costruzioni S.r.l.",
+                },
+            }
+            print("   payload:", json.dumps(doc, ensure_ascii=False))
+            try:
+                r = c.post(base + "/svi-datahub/documents", json=doc,
+                           headers={**h, "Content-Type": "application/json"})
+                print(f"   POST /svi-datahub/documents → {r.status_code}")
+                print("       ", (r.text or "").strip()[:1200])
+            except Exception as exc:  # noqa: BLE001
+                print(f"   POST /svi-datahub/documents: {exc}")
 
 
 if __name__ == "__main__":
