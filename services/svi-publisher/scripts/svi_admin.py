@@ -11,6 +11,7 @@ SVI_VERIFY_TLS). Incolla l'output: da lì si scrivono le POST di creazione.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -58,6 +59,10 @@ def get_token() -> str:
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser(description="Discovery admin SVI (read-only)")
+    ap.add_argument("--probe", action="store_true",
+                    help="POST con body vuoto per far rivelare a SAS media type/campi richiesti (NON crea)")
+    args = ap.parse_args()
     print("SVI admin discovery ·", settings.viya_endpoint or "(endpoint vuoto!)")
     if settings.svi_ca_bundle and not os.path.exists(settings.svi_ca_bundle):
         print("ERRORE: SVI_CA_BUNDLE inesistente; usa SVI_VERIFY_TLS=false per il demo."); raise SystemExit(1)
@@ -101,6 +106,17 @@ def main() -> None:
                 print(f"   OPTIONS {path}  → {r.status_code}  Allow: {allow}")
             except Exception as exc:  # noqa: BLE001
                 print(f"   OPTIONS {path}: {exc}")
+
+        if args.probe:
+            print("\n--- PROBE CREATE (body vuoto → rivela media type/campi richiesti, NON crea) ---")
+            for path in ("/svi-datahub/documents", "/svi-alert/alertingEvents"):
+                try:
+                    r = c.post(base + path, json={},
+                               headers={**h, "Content-Type": "application/json"})
+                    print(f"   POST {path} (json {{}}) → {r.status_code}")
+                    print("       ", (r.text or "").strip()[:900])
+                except Exception as exc:  # noqa: BLE001
+                    print(f"   POST {path}: {exc}")
 
 
 if __name__ == "__main__":
