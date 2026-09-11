@@ -167,6 +167,10 @@ qui sopra (`client_id: adverse-media`, grant `client_credentials`/`password`).
 
 ---
 
+> **Manca il dominio adverse-media?** Se l'ambiente non ha un dominio/coda adatti
+> (es. un demo generico), va configurato lato SVI prima di poter creare alert:
+> guida passo-passo in [`SVI_DOMAIN_ADVERSE_MEDIA.md`](SVI_DOMAIN_ADVERSE_MEDIA.md).
+
 ## Passo 2 — Nomi del modello dati SVI
 
 SVI è guidato da un **data model configurato**: il publisher scrive un *documento*
