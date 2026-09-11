@@ -167,23 +167,24 @@ def discovery(token: str) -> None:
 
 
 def payload(token: str, create: bool) -> None:
-    print("\n3) PAYLOAD — alert SVI (triage) · business key:",
+    print("\n3) PAYLOAD — alerting event SVI (flat) · business key:",
           mapping.business_key(SAMPLE_ALERT))
-    alert = mapping.build_alert(SAMPLE_ALERT, settings)
-    print(json.dumps(alert, indent=2, ensure_ascii=False))
+    event = mapping.build_alerting_event(SAMPLE_ALERT, settings)
+    print(json.dumps(event, indent=2, ensure_ascii=False))
     missing = [k for k in ("svi_domain_id", "svi_queue") if not getattr(settings, k)]
     if missing:
         print("  ⚠ mancano in .env:", ", ".join(m.upper() for m in missing),
-              "→ necessari per creare l'alert (SVI_DOMAIN_ID / SVI_QUEUE).")
+              "→ necessari (SVI_DOMAIN_ID / SVI_QUEUE).")
     if not create:
         print("\n  (dry-run: nessuna scrittura. Ripeti con --create per creare davvero.)")
         return
-    mt = settings.svi_alert_media_type
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": mt, "Accept": mt}
+    mt = settings.svi_alertingevent_media_type
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": mt, "Accept": "application/json"}
+    url = settings.alerts_base() + "/alertingEvents"
     with httpx.Client(timeout=settings.svi_request_timeout, verify=settings.verify_opt()) as c:
-        print("\n  POST alert →", settings.alerts_base() + "/alerts")
-        ra = c.post(settings.alerts_base() + "/alerts", json=alert, headers=headers)
-        _line(ra.status_code < 300, f"alert HTTP {ra.status_code}: {ra.text[:600]}")
+        print("\n  POST alerting event →", url)
+        ra = c.post(url, json=event, headers=headers)
+        _line(ra.status_code < 300, f"alertingEvents HTTP {ra.status_code}: {ra.text[:800]}")
 
 
 def main() -> None:

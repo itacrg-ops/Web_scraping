@@ -70,19 +70,30 @@ def test_build_document_maps_fields_and_evidence():
     assert ev["credibility"] == "alta"
 
 
-def test_build_alert_real_triage_schema():
+def test_build_alerting_event_schema():
     settings.svi_domain_id = "d_test"
     settings.svi_entity_type = "Soggetto"
     settings.svi_queue = "queue_test"
     settings.svi_alert_origin = ""
-    a = mapping.build_alert(ALERT, settings)
-    assert a["domainId"] == "d_test"
-    assert a["actionableEntityType"] == "Soggetto"
-    assert a["actionableEntityId"] == "00743110157"          # CF/P.IVA del soggetto
-    assert a["actionableEntityLabel"] == "ACME Costruzioni S.r.l."
-    assert a["initialScore"] == 82                            # AMI
-    assert a["queueId"] == "queue_test"
-    assert "alertOriginCode" not in a                         # vuoto → omesso
+    settings.svi_alert_type_code = "DEFAULT"
+    settings.svi_send_enrichment = False
+    e = mapping.build_alerting_event(ALERT, settings)
+    assert e["domainId"] == "d_test"
+    assert e["actionableEntityType"] == "Soggetto"
+    assert e["actionableEntityId"] == "00743110157"          # CF/P.IVA del soggetto
+    assert e["actionableEntityLabel"] == "ACME Costruzioni S.r.l."
+    assert e["score"] == 82                                   # AMI
+    assert e["recommendedQueueId"] == "queue_test"
+    assert e["alertTypeCode"] == "DEFAULT"
+    assert "alertOriginCode" not in e                         # vuoto → omesso
+    assert "enrichment" not in e                              # off al primo test
+    # enrichment abilitato → porta AMI/FATF/motivazione (valori stringa)
+    settings.svi_send_enrichment = True
+    e2 = mapping.build_alerting_event(ALERT, settings)
+    assert e2["enrichment"]["ami_score"] == "82"
+    assert e2["enrichment"]["risk_level"] == "ALTO"
+    assert "Corruption & Bribery" in e2["enrichment"]["fatf_categories"]
+    settings.svi_send_enrichment = False
 
 
 def test_oauth_request_builder_is_pure_and_correct():

@@ -81,21 +81,41 @@ def build_document(alert: dict[str, Any], cfg) -> dict[str, Any]:
     return {"objectType": cfg.svi_object_type, "externalId": key, "attributes": attributes}
 
 
-def build_alert(alert: dict[str, Any], cfg) -> dict[str, Any]:
-    """Alert SVI **reale** (triage alert): dominio + entità azionabile + coda + score.
-    Schema `application/vnd.sas.investigation.triage.alert`. L'entità azionabile è il
-    soggetto (id = CF/P.IVA, label = denominazione); lo score è l'AMI."""
+def build_alerting_event(alert: dict[str, Any], cfg) -> dict[str, Any]:
+    """Alerting event SVI (flat): il motore lo trasforma in alert nella coda.
+    `POST /svi-alert/alertingEvents`, media type
+    `application/vnd.sas.investigation.triage.alerting.data.flat`.
+
+    Entità azionabile = soggetto (id = CF/P.IVA, label = denominazione); `score` =
+    AMI; `recommendedQueueId` = coda con acceptManualAlerts=true. L'`enrichment`
+    (AMI/FATF/motivazione) è opzionale (SVI può validarne le chiavi sul dominio)."""
     label = alert.get("subject") or ""
     entity_id = alert.get("cf_piva") or business_key(alert)
     score = int(alert.get("ami_score") or 0)
-    payload: dict[str, Any] = {
+    event: dict[str, Any] = {
         "domainId": cfg.svi_domain_id,
         "actionableEntityType": cfg.svi_entity_type,
         "actionableEntityId": entity_id,
         "actionableEntityLabel": label,
-        "initialScore": score,
-        "queueId": cfg.svi_queue,
+        "score": score,
+        "recommendedQueueId": cfg.svi_queue,
+        "alertTypeCode": cfg.svi_alert_type_code or "DEFAULT",
     }
     if cfg.svi_alert_origin:
-        payload["alertOriginCode"] = cfg.svi_alert_origin
-    return payload
+        event["alertOriginCode"] = cfg.svi_alert_origin
+    if getattr(cfg, "svi_send_enrichment", False):
+        enr = {"source": cfg.svi_source_system}
+        if alert.get("ami_score") is not None:
+            enr["ami_score"] = str(alert.get("ami_score"))
+        if alert.get("risk_level"):
+            enr["risk_level"] = str(alert.get("risk_level"))
+        cats = alert.get("fatf_categories") or []
+        if cats:
+            enr["fatf_categories"] = "; ".join(str(c) for c in cats)
+        if alert.get("disposition"):
+            enr["disposition"] = str(alert.get("disposition"))
+        rat = rationale(alert)
+        if rat:
+            enr["rationale"] = rat[:1000]
+        event["enrichment"] = enr
+    return event

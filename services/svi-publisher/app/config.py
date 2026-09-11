@@ -38,9 +38,15 @@ class Settings(BaseSettings):
     # Valori ricavati dall'ambiente (script svi_admin.py / UI amministrazione):
     svi_domain_id: str = ""                 # domainId, es. d_42843825 ("Adverse Media")
     svi_entity_type: str = "Soggetto"       # actionableEntityType (entity type creato in SVI)
-    svi_queue: str = ""                     # queueId con acceptManualAlerts=true, es. queue_3264317
-    svi_alert_origin: str = ""              # alertOriginCode (vuoto = default del server)
-    # Media type versionato SAS per la creazione dell'alert (triage).
+    svi_queue: str = ""                     # recommendedQueueId (acceptManualAlerts=true), es. queue_3264317
+    svi_alert_origin: str = ""              # alertOriginCode (vuoto = omesso)
+    svi_alert_type_code: str = "DEFAULT"    # alertTypeCode
+    # Creazione reale: POST /svi-alert/alertingEvents (il motore genera l'alert).
+    svi_alertingevent_media_type: str = "application/vnd.sas.investigation.triage.alerting.data.flat"
+    # Includere l'enrichment (AMI/FATF/motivazione) nell'evento. Off al primo test:
+    # SVI può validare le chiavi enrichment sul modello del dominio.
+    svi_send_enrichment: bool = False
+    # Media type versionato SAS (triage alert), usato solo in lettura.
     svi_alert_media_type: str = "application/vnd.sas.investigation.triage.alert+json"
     # Caricare l'entità nel Data Hub prima dell'alert (di norma non serve per il test).
     svi_load_entity: bool = False

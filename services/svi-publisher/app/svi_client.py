@@ -106,17 +106,19 @@ async def publish_alert(alert: dict[str, Any]) -> dict[str, Any]:
             )
             document_id = (doc_resp.json() or {}).get("id")
 
-        alert_payload = mapping.build_alert(alert, settings)
-        mt = settings.svi_alert_media_type
-        alert_resp = await _retry(
-            "alert/alerts",
-            lambda: client.post(f"{settings.alerts_base()}/alerts", json=alert_payload,
-                                headers={**auth_h, "Content-Type": mt, "Accept": mt}),
+        event = mapping.build_alerting_event(alert, settings)
+        mt = settings.svi_alertingevent_media_type
+        ev_resp = await _retry(
+            "alert/alertingEvents",
+            lambda: client.post(f"{settings.alerts_base()}/alertingEvents", json=event,
+                                headers={**auth_h, "Content-Type": mt, "Accept": "application/json"}),
         )
-        rj = alert_resp.json() if alert_resp.content else {}
-        alert_id = rj.get("alertId") or rj.get("id") or ""
+        rj = ev_resp.json() if ev_resp.content else {}
+        items = rj.get("items") if isinstance(rj, dict) else None
+        first = (items[0] if items else rj) or {}
+        alert_id = first.get("alertId") or first.get("alertingEventId") or ""
 
-    logger.info("Alert SVI creato live: %s (entity=%s)", alert_id, alert_payload.get("actionableEntityId"))
+    logger.info("Alerting event SVI creato: alert=%s entity=%s", alert_id, event.get("actionableEntityId"))
     _idem_put(key, alert_id, document_id)
     return {"svi_alert_id": alert_id, "document_id": document_id, "deduplicated": False}
 
