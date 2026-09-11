@@ -18,7 +18,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from typing import Any
+
+# Namespace stabile per derivare un alertingEventId deterministico dalla business
+# key (stesso screening → stesso id evento → idempotenza anche lato SVI).
+_EVENT_NS = uuid.uuid5(uuid.NAMESPACE_URL, "adverse-media-screening/alertingEvent")
 
 
 def business_key(alert: dict[str, Any]) -> str:
@@ -93,6 +98,7 @@ def build_alerting_event(alert: dict[str, Any], cfg) -> dict[str, Any]:
     entity_id = alert.get("cf_piva") or business_key(alert)
     score = int(alert.get("ami_score") or 0)
     event: dict[str, Any] = {
+        "alertingEventId": str(uuid.uuid5(_EVENT_NS, business_key(alert))),
         "domainId": cfg.svi_domain_id,
         "actionableEntityType": cfg.svi_entity_type,
         "actionableEntityId": entity_id,

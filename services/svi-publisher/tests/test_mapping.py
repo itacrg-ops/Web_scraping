@@ -85,6 +85,8 @@ def test_build_alerting_event_schema():
     assert e["score"] == 82                                   # AMI
     assert e["recommendedQueueId"] == "queue_test"
     assert e["alertTypeCode"] == "DEFAULT"
+    # alertingEventId deterministico dalla business key (idempotenza lato SVI)
+    assert e["alertingEventId"] == mapping.build_alerting_event(ALERT, settings)["alertingEventId"]
     assert "alertOriginCode" not in e                         # vuoto → omesso
     assert "enrichment" not in e                              # off al primo test
     # enrichment abilitato → porta AMI/FATF/motivazione (valori stringa)

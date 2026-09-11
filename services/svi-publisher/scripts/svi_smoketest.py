@@ -182,8 +182,8 @@ def payload(token: str, create: bool) -> None:
     headers = {"Authorization": f"Bearer {token}", "Content-Type": mt, "Accept": "application/json"}
     url = settings.alerts_base() + "/alertingEvents"
     with httpx.Client(timeout=settings.svi_request_timeout, verify=settings.verify_opt()) as c:
-        print("\n  POST alerting event (array) →", url)
-        ra = c.post(url, json=[event], headers=headers)   # collezione: body = array
+        print("\n  POST alerting event →", url)
+        ra = c.post(url, json=event, headers=headers)
         _line(ra.status_code < 300, f"alertingEvents HTTP {ra.status_code}: {ra.text[:800]}")
 
 
