@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from typing import Any
 
@@ -86,42 +87,127 @@ def build_document(alert: dict[str, Any], cfg) -> dict[str, Any]:
     return {"objectType": cfg.svi_object_type, "externalId": key, "attributes": attributes}
 
 
-def build_alerting_event(alert: dict[str, Any], cfg) -> dict[str, Any]:
-    """Alerting event SVI (flat): il motore lo trasforma in alert nella coda.
-    `POST /svi-alert/alertingEvents`, media type
-    `application/vnd.sas.investigation.triage.alerting.data.flat`.
+def event_id(alert: dict[str, Any]) -> str:
+    """`alertingEventId` deterministico dalla business key (idempotenza lato SVI:
+    stesso screening → stesso id evento → nessun duplicato)."""
+    return str(uuid.uuid5(_EVENT_NS, business_key(alert)))
 
-    Entità azionabile = soggetto (id = CF/P.IVA, label = denominazione); `score` =
-    AMI; `recommendedQueueId` = coda con acceptManualAlerts=true. L'`enrichment`
-    (AMI/FATF/motivazione) è opzionale (SVI può validarne le chiavi sul dominio)."""
-    label = alert.get("subject") or ""
+
+def trigger_text(alert: dict[str, Any]) -> str:
+    """Testo di innesco dell'alert (`alertTriggerText`): la motivazione leggibile,
+    o in mancanza un riepilogo sintetico rischio/AMI/categorie."""
+    rat = rationale(alert)
+    if rat:
+        return rat[:2000]
+    parts: list[str] = []
+    if alert.get("risk_level"):
+        parts.append(f"Rischio {alert['risk_level']}")
+    if alert.get("ami_score") is not None:
+        parts.append(f"AMI {alert['ami_score']}")
+    cats = alert.get("fatf_categories") or []
+    if cats:
+        parts.append("categorie FATF: " + ", ".join(str(c) for c in cats))
+    return " · ".join(parts) or "Adverse media screening"
+
+
+def build_alerting_event(alert: dict[str, Any], cfg) -> dict[str, Any]:
+    """Singolo oggetto `alertingEvent` (flat) da inserire nell'array `alertingEvents`
+    dell'envelope (vedi `build_alerting_payload`). Struttura confermata dall'SVI Admin:
+    **niente `domainId` / `actionableEntityLabel`**, presente `alertTriggerText`.
+
+    Entità azionabile = soggetto (id = CF/P.IVA); `score` = AMI; `recommendedQueueId`
+    = coda con acceptManualAlerts=true; `alertTypeCode` = tipo alert della strategia."""
     entity_id = alert.get("cf_piva") or business_key(alert)
     score = int(alert.get("ami_score") or 0)
     event: dict[str, Any] = {
-        "alertingEventId": str(uuid.uuid5(_EVENT_NS, business_key(alert))),
-        "domainId": cfg.svi_domain_id,
+        "alertingEventId": event_id(alert),
         "actionableEntityType": cfg.svi_entity_type,
         "actionableEntityId": entity_id,
-        "actionableEntityLabel": label,
         "score": score,
+        "alertTypeCode": cfg.svi_alert_type_code or "strategy_default",
         "recommendedQueueId": cfg.svi_queue,
-        "alertTypeCode": cfg.svi_alert_type_code or "DEFAULT",
+        "alertTriggerText": trigger_text(alert),
     }
     if cfg.svi_alert_origin:
         event["alertOriginCode"] = cfg.svi_alert_origin
-    if getattr(cfg, "svi_send_enrichment", False):
-        enr = {"source": cfg.svi_source_system}
-        if alert.get("ami_score") is not None:
-            enr["ami_score"] = str(alert.get("ami_score"))
-        if alert.get("risk_level"):
-            enr["risk_level"] = str(alert.get("risk_level"))
-        cats = alert.get("fatf_categories") or []
-        if cats:
-            enr["fatf_categories"] = "; ".join(str(c) for c in cats)
-        if alert.get("disposition"):
-            enr["disposition"] = str(alert.get("disposition"))
-        rat = rationale(alert)
-        if rat:
-            enr["rationale"] = rat[:1000]
-        event["enrichment"] = enr
     return event
+
+
+def build_enrichment(alert: dict[str, Any], cfg) -> dict[str, Any]:
+    """Riga di `enrichment` (custom fields del dominio) collegata all'evento tramite
+    `alertingEventId`. Valori stringa: SVI può validarne le chiavi sul modello dominio."""
+    enr: dict[str, Any] = {"alertingEventId": event_id(alert), "source": cfg.svi_source_system}
+    if alert.get("ami_score") is not None:
+        enr["ami_score"] = str(alert.get("ami_score"))
+    if alert.get("risk_level"):
+        enr["risk_level"] = str(alert.get("risk_level"))
+    cats = alert.get("fatf_categories") or []
+    if cats:
+        enr["fatf_categories"] = "; ".join(str(c) for c in cats)
+    if alert.get("disposition"):
+        enr["disposition"] = str(alert.get("disposition"))
+    rat = rationale(alert)
+    if rat:
+        enr["rationale"] = rat[:1000]
+    return enr
+
+
+def build_scenario_fired_events(alert: dict[str, Any], cfg) -> list[dict[str, Any]]:
+    """Findings → `scenarioFiredEvents`: una riga per categoria FATF (lo scenario che
+    ha "sparato"), collegata all'evento. Concettualmente i driver del nostro AMI."""
+    eid = event_id(alert)
+    score = int(alert.get("ami_score") or 0)
+    rat = rationale(alert)
+    out: list[dict[str, Any]] = []
+    for cat in (alert.get("fatf_categories") or []):
+        slug = re.sub(r"[^a-z0-9]+", "_", str(cat).lower()).strip("_")
+        out.append({
+            "alertingEventId": eid,
+            "scenarioId": (f"fatf_{slug}")[:64],
+            "scenarioName": str(cat),
+            "score": score,
+            "messageTemplateText": rat or str(cat),
+        })
+    return out
+
+
+def build_contributing_objects(alert: dict[str, Any], cfg) -> list[dict[str, Any]]:
+    """Evidenze → `contributingObjects`: gli oggetti (articoli/fonti) che hanno
+    contribuito all'alert, collegati all'evento."""
+    eid = event_id(alert)
+    out: list[dict[str, Any]] = []
+    for e in _map_evidence(alert.get("evidence")):
+        out.append({"alertingEventId": eid, **{k: v for k, v in e.items() if v is not None}})
+    return out
+
+
+def build_alerting_payload(alert: dict[str, Any], cfg) -> dict[str, Any]:
+    """**Envelope completo** per `POST /svi-alert/alertingEvents` (jsonLayout flat).
+
+    Struttura fornita dall'SVI Admin (il motivo dei precedenti `500 tdc.bad.request`:
+    mancavano il discriminatore `jsonLayout` e l'involucro ad array):
+
+        {"jsonLayout": "flat",
+         "alertingEvents": [ <evento> ],
+         "enrichment": [ <custom fields> ],            # opzionale
+         "scenarioFiredEvents": [ <findings> ],        # opzionale
+         "contributingObjects": [ <evidenze> ]}        # opzionale
+
+    Le tre sezioni opzionali sono gated da config (off al primo test: minimizza le
+    superfici di validazione lato dominio). Ogni riga è collegata all'evento via
+    `alertingEventId`."""
+    payload: dict[str, Any] = {
+        "jsonLayout": "flat",
+        "alertingEvents": [build_alerting_event(alert, cfg)],
+    }
+    if getattr(cfg, "svi_send_enrichment", False):
+        payload["enrichment"] = [build_enrichment(alert, cfg)]
+    if getattr(cfg, "svi_send_scenario_events", False):
+        sfe = build_scenario_fired_events(alert, cfg)
+        if sfe:
+            payload["scenarioFiredEvents"] = sfe
+    if getattr(cfg, "svi_send_contributing_objects", False):
+        co = build_contributing_objects(alert, cfg)
+        if co:
+            payload["contributingObjects"] = co
+    return payload

@@ -36,19 +36,25 @@ class Settings(BaseSettings):
 
     # --- Modello alert SVI reale (triage: Dominio → Entità azionabile → Coda) ---
     # Valori ricavati dall'ambiente (script svi_admin.py / UI amministrazione):
-    svi_domain_id: str = ""                 # domainId, es. d_42843825 ("Adverse Media")
+    # Informativo: il dominio è implicito nella coda/strategia (l'envelope alerting
+    # event NON porta domainId). Utile solo per discovery/documentazione ambiente.
+    svi_domain_id: str = ""                 # es. d_42843825 ("Adverse Media")
     svi_entity_type: str = "Soggetto"       # actionableEntityType (entity type creato in SVI)
     svi_queue: str = ""                     # recommendedQueueId (acceptManualAlerts=true), es. queue_3264317
     svi_alert_origin: str = ""              # alertOriginCode (vuoto = omesso)
-    svi_alert_type_code: str = "DEFAULT"    # alertTypeCode
+    svi_alert_type_code: str = "strategy_default"   # alertTypeCode (es. demo: strategy_default)
     # Creazione reale: POST /svi-alert/alertingEvents (il motore genera l'alert).
-    # Media type versionato SAS (il suffisso +json;version=1 è obbligatorio).
+    # Body = ENVELOPE {jsonLayout:"flat", alertingEvents:[...], ...} (struttura
+    # confermata dall'SVI Admin). Media type versionato SAS (suffisso +json;version=1
+    # obbligatorio).
     svi_alertingevent_media_type: str = (
         "application/vnd.sas.investigation.triage.alerting.data.flat+json;version=1"
     )
-    # Includere l'enrichment (AMI/FATF/motivazione) nell'evento. Off al primo test:
-    # SVI può validare le chiavi enrichment sul modello del dominio.
-    svi_send_enrichment: bool = False
+    # Sezioni opzionali dell'envelope. Off al primo test: SVI può validare le chiavi
+    # (enrichment / scenario / oggetti contribuenti) sul modello del dominio.
+    svi_send_enrichment: bool = False            # enrichment[] (AMI/FATF/motivazione)
+    svi_send_scenario_events: bool = False       # scenarioFiredEvents[] (findings per categoria FATF)
+    svi_send_contributing_objects: bool = False  # contributingObjects[] (evidenze)
     # Media type versionato SAS (triage alert), usato solo in lettura.
     svi_alert_media_type: str = "application/vnd.sas.investigation.triage.alert+json"
     # Caricare l'entità nel Data Hub prima dell'alert (di norma non serve per il test).

@@ -167,14 +167,18 @@ def discovery(token: str) -> None:
 
 
 def payload(token: str, create: bool) -> None:
-    print("\n3) PAYLOAD — alerting event SVI (flat) · business key:",
+    print("\n3) PAYLOAD — envelope alerting event SVI (jsonLayout flat) · business key:",
           mapping.business_key(SAMPLE_ALERT))
-    event = mapping.build_alerting_event(SAMPLE_ALERT, settings)
-    print(json.dumps(event, indent=2, ensure_ascii=False))
-    missing = [k for k in ("svi_domain_id", "svi_queue") if not getattr(settings, k)]
+    body = mapping.build_alerting_payload(SAMPLE_ALERT, settings)
+    print(json.dumps(body, indent=2, ensure_ascii=False))
+    # Sezioni opzionali attive? (gated in .env; off = payload minimo)
+    print("  sezioni:", ", ".join(k for k in
+          ("alertingEvents", "enrichment", "scenarioFiredEvents", "contributingObjects")
+          if k in body) or "(nessuna)")
+    missing = [k for k in ("svi_queue",) if not getattr(settings, k)]
     if missing:
-        print("  ⚠ mancano in .env:", ", ".join(m.upper() for m in missing),
-              "→ necessari (SVI_DOMAIN_ID / SVI_QUEUE).")
+        print("  ⚠ manca in .env:", ", ".join(m.upper() for m in missing),
+              "→ necessario (SVI_QUEUE = coda con acceptManualAlerts=true).")
     if not create:
         print("\n  (dry-run: nessuna scrittura. Ripeti con --create per creare davvero.)")
         return
@@ -182,8 +186,8 @@ def payload(token: str, create: bool) -> None:
     headers = {"Authorization": f"Bearer {token}", "Content-Type": mt, "Accept": "application/json"}
     url = settings.alerts_base() + "/alertingEvents"
     with httpx.Client(timeout=settings.svi_request_timeout, verify=settings.verify_opt()) as c:
-        print("\n  POST alerting event →", url)
-        ra = c.post(url, json=event, headers=headers)
+        print("\n  POST alerting event (envelope) →", url)
+        ra = c.post(url, json=body, headers=headers)
         _line(ra.status_code < 300, f"alertingEvents HTTP {ra.status_code}: {ra.text[:800]}")
 
 

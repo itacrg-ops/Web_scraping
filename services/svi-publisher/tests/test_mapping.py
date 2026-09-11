@@ -71,31 +71,63 @@ def test_build_document_maps_fields_and_evidence():
 
 
 def test_build_alerting_event_schema():
-    settings.svi_domain_id = "d_test"
     settings.svi_entity_type = "Soggetto"
     settings.svi_queue = "queue_test"
     settings.svi_alert_origin = ""
-    settings.svi_alert_type_code = "DEFAULT"
-    settings.svi_send_enrichment = False
+    settings.svi_alert_type_code = "strategy_default"
     e = mapping.build_alerting_event(ALERT, settings)
-    assert e["domainId"] == "d_test"
+    # Struttura confermata dall'SVI Admin: NIENTE domainId / actionableEntityLabel.
+    assert "domainId" not in e
+    assert "actionableEntityLabel" not in e
     assert e["actionableEntityType"] == "Soggetto"
     assert e["actionableEntityId"] == "00743110157"          # CF/P.IVA del soggetto
-    assert e["actionableEntityLabel"] == "ACME Costruzioni S.r.l."
     assert e["score"] == 82                                   # AMI
     assert e["recommendedQueueId"] == "queue_test"
-    assert e["alertTypeCode"] == "DEFAULT"
+    assert e["alertTypeCode"] == "strategy_default"
+    assert e["alertTriggerText"].startswith("Categorie FATF")  # motivazione/driver
     # alertingEventId deterministico dalla business key (idempotenza lato SVI)
     assert e["alertingEventId"] == mapping.build_alerting_event(ALERT, settings)["alertingEventId"]
+    assert e["alertingEventId"] == mapping.event_id(ALERT)
     assert "alertOriginCode" not in e                         # vuoto → omesso
-    assert "enrichment" not in e                              # off al primo test
-    # enrichment abilitato → porta AMI/FATF/motivazione (valori stringa)
-    settings.svi_send_enrichment = True
-    e2 = mapping.build_alerting_event(ALERT, settings)
-    assert e2["enrichment"]["ami_score"] == "82"
-    assert e2["enrichment"]["risk_level"] == "ALTO"
-    assert "Corruption & Bribery" in e2["enrichment"]["fatf_categories"]
+    # alertOriginCode valorizzato → incluso
+    settings.svi_alert_origin = "AdverseMedia"
+    assert mapping.build_alerting_event(ALERT, settings)["alertOriginCode"] == "AdverseMedia"
+    settings.svi_alert_origin = ""
+
+
+def test_build_alerting_payload_envelope():
+    settings.svi_entity_type = "Soggetto"
+    settings.svi_queue = "queue_test"
     settings.svi_send_enrichment = False
+    settings.svi_send_scenario_events = False
+    settings.svi_send_contributing_objects = False
+    # Minimo: solo il discriminatore flat + l'array alertingEvents (1 evento).
+    p = mapping.build_alerting_payload(ALERT, settings)
+    assert p["jsonLayout"] == "flat"
+    assert isinstance(p["alertingEvents"], list) and len(p["alertingEvents"]) == 1
+    assert p["alertingEvents"][0]["actionableEntityId"] == "00743110157"
+    assert "enrichment" not in p and "scenarioFiredEvents" not in p and "contributingObjects" not in p
+    # enrichment abilitato → array di 1 riga collegata all'evento (valori stringa)
+    settings.svi_send_enrichment = True
+    p2 = mapping.build_alerting_payload(ALERT, settings)
+    enr = p2["enrichment"][0]
+    assert enr["alertingEventId"] == mapping.event_id(ALERT)
+    assert enr["ami_score"] == "82"
+    assert enr["risk_level"] == "ALTO"
+    assert "Corruption & Bribery" in enr["fatf_categories"]
+    # scenario + contributing abilitati → una riga per categoria FATF / evidenza
+    settings.svi_send_scenario_events = True
+    settings.svi_send_contributing_objects = True
+    p3 = mapping.build_alerting_payload(ALERT, settings)
+    sfe = p3["scenarioFiredEvents"]
+    assert {s["scenarioName"] for s in sfe} == set(ALERT["fatf_categories"])
+    assert all(s["alertingEventId"] == mapping.event_id(ALERT) for s in sfe)
+    co = p3["contributingObjects"]
+    assert co[0]["url"] == "https://news.example/a"
+    assert co[0]["alertingEventId"] == mapping.event_id(ALERT)
+    settings.svi_send_enrichment = False
+    settings.svi_send_scenario_events = False
+    settings.svi_send_contributing_objects = False
 
 
 def test_oauth_request_builder_is_pure_and_correct():
