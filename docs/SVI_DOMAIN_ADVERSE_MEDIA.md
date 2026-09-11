@@ -17,6 +17,25 @@ SVI** (data model → dominio → coda/alert), da svolgere con un profilo
 > dalla documentazione; il riferimento autorevole è l'*Administrator's Guide* (link
 > in fondo). I passi sono concettuali e vanno adattati alla tua UI.
 
+## 0. Dove si configura (orientamento nell'amministrazione)
+
+L'amministrazione di SVI è nell'app **Manage Investigate and Search** (area
+Administration). Punti che useremo:
+
+- **Data Objects** (pagina iniziale dell'amministrazione): qui si creano e gestiscono
+  gli **Entity Type** (object type) con i loro attributi, e si abilita il pulsante
+  **Create Alert** per un object type. Le entità possono essere **internal** (gestite
+  da SVI — usa questa per `soggetto`) o **external** (da sistemi sorgente).
+- **Alerting / Triage** (gestione code): si creano le **Queue** e le **dispositions**;
+  nelle *Settings* della coda si abilita **"Allow Manually created alerts to be routed
+  to the queue"**.
+- *(opz.)* **Page Builder / Manage Pages**: le schermate per gli investigatori.
+
+> Le etichette esatte cambiano con la versione. Alternativa **via API**: SVI espone
+> una **AdminMetadataApi** per definire gli entity type programmaticamente (posso
+> aiutarti a scriptarla se preferisci non usare la UI). Per i click con screenshot,
+> il riferimento è il *Tutorials and Examples* della tua versione.
+
 ## 1. Concetti SVI (mappati sul nostro caso)
 
 | Concetto SVI | Cos'è | Nel nostro caso |
@@ -130,7 +149,9 @@ SVI_ALERT_ORIGIN=
 
 ## Riferimenti
 
-- [SAS Visual Investigator — Administrator's Guide](https://documentation.sas.com/api/docsets/visgatorag/v_039/content/visgatorag.pdf)
+- [SAS Visual Investigator — Administrator's Guide](https://documentation.sas.com/api/docsets/visgatorag/v_039/content/visgatorag.pdf) — capitoli su *Entity Types* e *Data Object Types*
+- [SAS Visual Investigator — Tutorials and Examples](https://documentation.sas.com/api/docsets/visgatorex/10.5/content/visgatorex.pdf) — esempi passo-passo con screenshot
+- [SAS Visual Investigator — AdminMetadataApi](https://developer.sas.com/apis/vi/apiDocs/AdminMetadataApi.html) — definizione entity type via API
 - [Creare alert manualmente in Visual Investigator (SAS Communities)](https://communities.sas.com/t5/SAS-Communities-Library/Can-I-Create-Alerts-Manually-in-Visual-Investigator-Yes-as-of/ta-p/396109)
 - [Visual Investigator Alerts API](https://developer.sas.com/rest-apis/svi-alert)
 - [SAS Visual Investigator — Data Dictionary](https://support.sas.com/documentation/prod-h/visgator/vidd/106/SASVisualInvestigator10.6.pdf)
