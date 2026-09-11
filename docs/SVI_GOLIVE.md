@@ -5,6 +5,9 @@ ambiente SAS Viya / Visual Investigator reale. Il design del publisher (payload,
 auth, retry, idempotenza) è in [`SVI_INTEGRATION.md`](SVI_INTEGRATION.md); qui i
 passi concreti di attivazione e verifica.
 
+> **Stato attuale dell'attivazione live** (ambiente RACE demo, cosa è validato e i
+> blocchi aperti): [`SVI_LIVE_STATUS.md`](SVI_LIVE_STATUS.md).
+
 > **Importante — dove si esegue.** Le chiamate a Viya vanno fatte **dalla macchina
 > dove gira l'app** (Docker Desktop). Dalla sessione Claude l'egress verso
 > `*.engage.sas.com` è **bloccato dalla policy di rete** (403 sul CONNECT), quindi
