@@ -121,37 +121,35 @@ def main() -> None:
                     print(f"   POST {path}: {exc}")
 
         if args.create_entity:
-            print("\n--- CREATE ENTITY (record Soggetto) — prova più STRUTTURE del data ---")
+            print("\n--- CREATE ENTITY (record Soggetto) — CHIAVE × STRUTTURA (esaustivo) ---")
             et = settings.svi_entity_type
-            # objectTypeName è confermato; il campo (Name) è CodiceFiscalePIVA. Ma né
-            # data{Name} né data{Label} popolano il campo → è la STRUTTURA del data.
-            # Proviamo diverse forme; la vincente crea (2xx) o cambia l'errore.
-            flat = {"CodiceFiscalePIVA": "00743110157",
-                    "Denominazione": "ACME Costruzioni S.r.l.",
-                    "TipoSoggetto": "persona_giuridica"}
-            arr = [{"name": k, "value": v} for k, v in flat.items()]
-            candidates = [
-                ("top-level", {"objectTypeName": et, **flat}),
-                ("values", {"objectTypeName": et, "values": flat}),
-                ("attributes", {"objectTypeName": et, "attributes": flat}),
-                ("fields", {"objectTypeName": et, "fields": flat}),
-                ("data-array", {"objectTypeName": et, "data": arr}),
-                ("fields-array", {"objectTypeName": et, "fields": arr}),
-            ]
+            cf = "00743110157"
+            # 2 chiavi (Name=CodiceFiscalePIVA, Label=identificativo) × 5 strutture.
+            combos = []
+            for kname, k in (("Name", "CodiceFiscalePIVA"), ("Label", "identificativo")):
+                f = {k: cf}
+                combos += [
+                    (f"data/{kname}", {"objectTypeName": et, "data": f}),
+                    (f"top/{kname}", {"objectTypeName": et, **f}),
+                    (f"values/{kname}", {"objectTypeName": et, "values": f}),
+                    (f"attributes/{kname}", {"objectTypeName": et, "attributes": f}),
+                    (f"fields/{kname}", {"objectTypeName": et, "fields": f}),
+                ]
             hdr = {**h, "Content-Type": "application/json"}
-            for label, doc in candidates:
+            for label, doc in combos:
                 try:
                     r = c.post(base + "/svi-datahub/documents", json=doc, headers=hdr)
                 except Exception as exc:  # noqa: BLE001
                     print(f"   [{label}] errore: {exc}"); continue
                 body = (r.text or "").strip()
                 still_missing = "DH5104" in body and "identificativo" in body
-                print(f"   [{label:13}] → {r.status_code}{'  (identificativo ancora mancante)' if still_missing else ''}")
-                print("       ", body[:500])
+                print(f"   [{label:16}] → {r.status_code}{'  (id mancante)' if still_missing else '  <-- DIVERSO'}")
+                if not still_missing or r.status_code < 300:
+                    print("       ", body[:500])
                 if r.status_code < 300:
-                    print("   ✓ CREATO con struttura:", label); break
+                    print("   ✓ CREATO:", label); break
                 if not still_missing:
-                    print("   → struttura promettente:", label, "(errore diverso → siamo vicini)"); break
+                    print("   → combinazione giusta:", label, "(l'errore è cambiato)"); break
 
 
 if __name__ == "__main__":

@@ -54,12 +54,32 @@ SVI_QUEUE=queue_3264317
      strategia PI di esempio era `INACTIVE`); **e/o**
    - l'**entità `Soggetto`** referenziata (`actionableEntityId`) deve **esistere**
      come record nel Data Hub.
-2. **Creazione entità Soggetto** — `POST /svi-datahub/documents` accetta
-   `application/json` ma richiede il **campo del tipo** (errore `DH3454`: "object
-   type name or the type ID"). Il campo **non** è `typeName`; da individuare tra
-   `objectTypeName` / `dataObjectTypeName` / `objectType` / `type` (lo prova
-   `svi_admin.py --create-entity`), insieme ai **nomi attributo reali** definiti
-   sull'entity type `Soggetto` (in *Data Objects → Soggetto*).
+2. **Creazione entità Soggetto** — `POST /svi-datahub/documents` (`application/json`).
+   Confermato: il tipo si passa con **`objectTypeName`** (non `typeName`). Nel Data
+   Hub ogni entity type è una **tabella**; il campo obbligatorio non-readonly è
+   **`identificativo`** (Name `CodiceFiscalePIVA`), mentre PK `soggetto_id` e
+   `version` sono **read-only** (impostati dal server). **Ancora aperto: la
+   rappresentazione del body di insert** — né `data{Name/Label}` né top-level /
+   `values` / `attributes` / `fields` / array popolano il campo (sempre `DH5104`
+   "identificativo mancante"). Va ricavata dalla **doc datahub SAS** o **catturando
+   la request reale della UI** (creazione record).
+
+### Data model `Soggetto` (da *Data Objects → Soggetto*)
+
+Nel `data` le chiavi sono la colonna **Name** (non la Label):
+
+| Label | Name | Required | Read-only |
+|---|---|:--:|:--:|
+| identificativo | `CodiceFiscalePIVA` | ✔ | — |
+| Denominazione | `Denominazione` | — | — |
+| Tiposoggetto | `TipoSoggetto` | — | — |
+| Cup | `CUP` | — | — |
+| Ruolo | `Ruolo` | — | — |
+| Datanascita | `datanascita` | — | — |
+| Luogonascita | `luogoNascita` | — | — |
+| Soggetto ID | `soggetto_id` | ✔ | ✔ (PK, server) |
+| Version | `version` | ✔ | ✔ (server) |
+| Created/Modified By·Date | (sistema) | — | ✔ |
 
 ## Strumenti di diagnosi (nel repo)
 
