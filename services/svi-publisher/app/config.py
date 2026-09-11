@@ -34,14 +34,20 @@ class Settings(BaseSettings):
     sas_password: str = ""               # solo grant "password"
     sas_oauth_scope: str = ""            # opzionale (spazio-separato)
 
-    # --- Modello dati SVI (deployment-specific: valorizzare da .env) ---
-    # I nomi di tipo oggetto/alert/coda dipendono dal data model configurato nel
-    # cliente: qui default sensati, sovrascrivibili senza toccare il codice.
-    svi_object_type: str = "adverse_media_alert"    # tipo documento nel Data Hub
-    svi_alert_type: str = "AdverseMediaAlert"        # tipo alert
-    svi_queue: str = "screening-primo-livello"       # coda di destinazione (I livello)
+    # --- Modello alert SVI reale (triage: Dominio → Entità azionabile → Coda) ---
+    # Valori ricavati dall'ambiente (script svi_admin.py / UI amministrazione):
+    svi_domain_id: str = ""                 # domainId, es. d_42843825 ("Adverse Media")
+    svi_entity_type: str = "Soggetto"       # actionableEntityType (entity type creato in SVI)
+    svi_queue: str = ""                     # queueId con acceptManualAlerts=true, es. queue_3264317
+    svi_alert_origin: str = ""              # alertOriginCode (vuoto = default del server)
+    # Media type versionato SAS per la creazione dell'alert (triage).
+    svi_alert_media_type: str = "application/vnd.sas.investigation.triage.alert+json"
+    # Caricare l'entità nel Data Hub prima dell'alert (di norma non serve per il test).
+    svi_load_entity: bool = False
+    # (retro-compat: usati solo dal caricamento documento opzionale)
+    svi_object_type: str = "Soggetto"
     svi_source_system: str = "adverse-media-screening"
-    svi_external_id_attr: str = "externalId"         # attributo per la dedup lato SVI
+    svi_external_id_attr: str = "externalId"
 
     # --- Robustezza ---
     svi_request_timeout: float = 30.0

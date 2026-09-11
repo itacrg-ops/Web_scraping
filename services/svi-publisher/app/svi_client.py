@@ -90,27 +90,33 @@ async def publish_alert(alert: dict[str, Any]) -> dict[str, Any]:
         _idem_put(key, alert_id, doc_id)
         return {"svi_alert_id": alert_id, "document_id": doc_id, "deduplicated": False}
 
-    # --- Live: OAuth/broker → Data Hub document → Alert ---
-    document = mapping.build_document(alert, settings)
+    # --- Live: OAuth/broker → (opz. entità nel Data Hub) → Alert (triage) ---
     async with httpx.AsyncClient(timeout=settings.svi_request_timeout,
                                  verify=settings.verify_opt()) as client:
         token = await auth.bearer(client)
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
-                   "Accept": "application/json"}
-        doc_resp = await _retry(
-            "datahub/documents",
-            lambda: client.post(f"{settings.datahub_base()}/documents", json=document, headers=headers),
-        )
-        document_id = (doc_resp.json() or {}).get("id")
+        auth_h = {"Authorization": f"Bearer {token}"}
+        document_id = None
+        if settings.svi_load_entity:
+            document = mapping.build_document(alert, settings)
+            doc_resp = await _retry(
+                "datahub/documents",
+                lambda: client.post(f"{settings.datahub_base()}/documents", json=document,
+                                    headers={**auth_h, "Content-Type": "application/json",
+                                             "Accept": "application/json"}),
+            )
+            document_id = (doc_resp.json() or {}).get("id")
 
-        alert_payload = mapping.build_alert(alert, document_id, settings)
+        alert_payload = mapping.build_alert(alert, settings)
+        mt = settings.svi_alert_media_type
         alert_resp = await _retry(
             "alert/alerts",
-            lambda: client.post(f"{settings.alerts_base()}/alerts", json=alert_payload, headers=headers),
+            lambda: client.post(f"{settings.alerts_base()}/alerts", json=alert_payload,
+                                headers={**auth_h, "Content-Type": mt, "Accept": mt}),
         )
-        alert_id = (alert_resp.json() or {}).get("id", "")
+        rj = alert_resp.json() if alert_resp.content else {}
+        alert_id = rj.get("alertId") or rj.get("id") or ""
 
-    logger.info("Alert SVI creato live: %s (document=%s)", alert_id, document_id)
+    logger.info("Alert SVI creato live: %s (entity=%s)", alert_id, alert_payload.get("actionableEntityId"))
     _idem_put(key, alert_id, document_id)
     return {"svi_alert_id": alert_id, "document_id": document_id, "deduplicated": False}
 

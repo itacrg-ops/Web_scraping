@@ -81,25 +81,21 @@ def build_document(alert: dict[str, Any], cfg) -> dict[str, Any]:
     return {"objectType": cfg.svi_object_type, "externalId": key, "attributes": attributes}
 
 
-def build_alert(alert: dict[str, Any], document_id: str | None, cfg) -> dict[str, Any]:
-    """Alert SVI (tipo/coda configurati) collegato al documento del Data Hub."""
-    key = business_key(alert)
-    subject = alert.get("subject")
-    ami = alert.get("ami_score")
-    risk = alert.get("risk_level")
+def build_alert(alert: dict[str, Any], cfg) -> dict[str, Any]:
+    """Alert SVI **reale** (triage alert): dominio + entità azionabile + coda + score.
+    Schema `application/vnd.sas.investigation.triage.alert`. L'entità azionabile è il
+    soggetto (id = CF/P.IVA, label = denominazione); lo score è l'AMI."""
+    label = alert.get("subject") or ""
+    entity_id = alert.get("cf_piva") or business_key(alert)
+    score = int(alert.get("ami_score") or 0)
     payload: dict[str, Any] = {
-        "alertType": cfg.svi_alert_type,
-        "queue": cfg.svi_queue,
-        "status": "NEW",
-        "score": ami,
-        "riskLevel": risk,
-        "subject": subject,
-        "categories": alert.get("fatf_categories") or [],
-        "summary": f"AMI {ami} ({risk}) — {subject}",
-        "disposition": alert.get("disposition"),
-        "sourceSystem": cfg.svi_source_system,
-        cfg.svi_external_id_attr: key,
+        "domainId": cfg.svi_domain_id,
+        "actionableEntityType": cfg.svi_entity_type,
+        "actionableEntityId": entity_id,
+        "actionableEntityLabel": label,
+        "initialScore": score,
+        "queueId": cfg.svi_queue,
     }
-    if document_id:
-        payload["documentId"] = document_id
+    if cfg.svi_alert_origin:
+        payload["alertOriginCode"] = cfg.svi_alert_origin
     return payload

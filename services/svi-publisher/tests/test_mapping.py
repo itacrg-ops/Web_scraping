@@ -70,15 +70,19 @@ def test_build_document_maps_fields_and_evidence():
     assert ev["credibility"] == "alta"
 
 
-def test_build_alert_links_document_and_uses_config():
-    a = mapping.build_alert(ALERT, "DOC-1", settings)
-    assert a["alertType"] == settings.svi_alert_type
-    assert a["queue"] == settings.svi_queue
-    assert a["score"] == 82
-    assert a["riskLevel"] == "ALTO"
-    assert a["documentId"] == "DOC-1"
-    assert a["categories"] == ["Corruption & Bribery", "Money Laundering"]
-    assert a[settings.svi_external_id_attr] == "ams-SCR-123"
+def test_build_alert_real_triage_schema():
+    settings.svi_domain_id = "d_test"
+    settings.svi_entity_type = "Soggetto"
+    settings.svi_queue = "queue_test"
+    settings.svi_alert_origin = ""
+    a = mapping.build_alert(ALERT, settings)
+    assert a["domainId"] == "d_test"
+    assert a["actionableEntityType"] == "Soggetto"
+    assert a["actionableEntityId"] == "00743110157"          # CF/P.IVA del soggetto
+    assert a["actionableEntityLabel"] == "ACME Costruzioni S.r.l."
+    assert a["initialScore"] == 82                            # AMI
+    assert a["queueId"] == "queue_test"
+    assert "alertOriginCode" not in a                         # vuoto → omesso
 
 
 def test_oauth_request_builder_is_pure_and_correct():
