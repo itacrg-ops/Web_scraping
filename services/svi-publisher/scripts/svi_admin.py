@@ -11,6 +11,7 @@ SVI_VERIFY_TLS). Incolla l'output: da lì si scrivono le POST di creazione.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -81,6 +82,12 @@ def main() -> None:
             if isinstance(j, dict) and isinstance(j.get("links"), list):
                 for lk in j["links"][:40]:
                     print(f"       {str(lk.get('method', 'GET')):6} {str(lk.get('rel', '')):26} {lk.get('href', '')}")
+            # Per gli endpoint chiave, dump COMPLETO del primo item (schema reale).
+            if isinstance(j, dict) and j.get("items") and ("alertingEvents" in path or "/alerts?" in path):
+                print("       item[0]:")
+                print(json.dumps(j["items"][0], indent=2, ensure_ascii=False)[:3500])
+                print()
+                continue
             body = (r.text or "").strip().replace("\n", " ")
             if body:
                 print("       body:", body[:1500])
