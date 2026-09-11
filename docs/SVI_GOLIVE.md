@@ -123,6 +123,39 @@ curl -sk "$VIYA/SASLogon/oauth/clients" -H "Authorization: Bearer $REG" \
 - `password` → il servizio agisce come un **utente** SVI (`SAS_USERNAME`/`SAS_PASSWORD`).
   ⚠ **Non utilizzabile con SSO SAML** (nessuna password locale): usa `client_credentials`.
 
+### Demo con autenticazione locale (client `sas.ec`, grant `password`)
+
+Gli ambienti **demo/training** SAS usano tipicamente l'**auth locale** (non SAML):
+lì il **password grant funziona**, con il client integrato **`sas.ec`** che ha il
+**secret vuoto**. È l'equivalente del classico `proc http` verso `SASLogon`.
+
+Token al volo con `curl` (sostituisci host e credenziali):
+
+```bash
+curl -k -X POST "https://<viya-host>/SASLogon/oauth/token" \
+  -H "Accept: application/json" -u "sas.ec:" \
+  -d "grant_type=password&username=<utente>&password=<password>"
+```
+
+`-u "sas.ec:"` = client `sas.ec` con secret vuoto (Basic auth di `sas.ec:`); `-k`
+solo per i certificati self-signed dei demo. Il token è in `access_token`.
+
+Oppure — **senza curl** — lascia che sia il publisher a ottenerlo/rinnovarlo:
+
+```dotenv
+SVI_MODE=live
+VIYA_ENDPOINT=https://<viya-host>
+SVI_AUTH_MODE=oauth
+SAS_OAUTH_GRANT=password
+SAS_CLIENT_ID=sas.ec
+SAS_CLIENT_SECRET=
+SAS_USERNAME=<utente>
+SAS_PASSWORD=<password>
+```
+
+(Il publisher costruisce la stessa richiesta del `proc http`: Basic `sas.ec:` +
+`grant_type=password`.)
+
 Se non puoi registrare il client tu (serve il *consul token* o un client con
 `clients.write`, tipicamente in mano all'**amministratore** dell'ambiente Engage),
 chiedi all'admin SAS di crearlo e fartelo avere: passagli la specifica del blocco
