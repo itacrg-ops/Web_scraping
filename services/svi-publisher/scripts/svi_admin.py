@@ -121,31 +121,37 @@ def main() -> None:
                     print(f"   POST {path}: {exc}")
 
         if args.create_entity:
-            print("\n--- CREATE ENTITY (record Soggetto) ---")
-            # Confermato: campo tipo = objectTypeName; envelope = {objectTypeName, data}.
-            # data usa i NOMI ATTRIBUTO reali dell'entity type (in italiano): il campo
-            # chiave è "identificativo". Aggiungi qui gli altri attributi obbligatori
-            # che l'errore DH5104 dovesse segnalare.
+            print("\n--- CREATE ENTITY (record Soggetto) — prova più STRUTTURE del data ---")
             et = settings.svi_entity_type
-            # Nel 'data' le chiavi sono la colonna **Name** dei field (non la Label):
-            # il campo obbligatorio (label "identificativo") ha Name=CodiceFiscalePIVA.
-            # soggetto_id/version sono obbligatori ma read-only → li imposta il server.
-            doc = {
-                "objectTypeName": et,
-                "data": {
-                    "CodiceFiscalePIVA": "00743110157",
+            # objectTypeName è confermato; il campo (Name) è CodiceFiscalePIVA. Ma né
+            # data{Name} né data{Label} popolano il campo → è la STRUTTURA del data.
+            # Proviamo diverse forme; la vincente crea (2xx) o cambia l'errore.
+            flat = {"CodiceFiscalePIVA": "00743110157",
                     "Denominazione": "ACME Costruzioni S.r.l.",
-                    "TipoSoggetto": "persona_giuridica",
-                },
-            }
-            print("   payload:", json.dumps(doc, ensure_ascii=False))
-            try:
-                r = c.post(base + "/svi-datahub/documents", json=doc,
-                           headers={**h, "Content-Type": "application/json"})
-                print(f"   POST /svi-datahub/documents → {r.status_code}")
-                print("       ", (r.text or "").strip()[:1200])
-            except Exception as exc:  # noqa: BLE001
-                print(f"   POST /svi-datahub/documents: {exc}")
+                    "TipoSoggetto": "persona_giuridica"}
+            arr = [{"name": k, "value": v} for k, v in flat.items()]
+            candidates = [
+                ("top-level", {"objectTypeName": et, **flat}),
+                ("values", {"objectTypeName": et, "values": flat}),
+                ("attributes", {"objectTypeName": et, "attributes": flat}),
+                ("fields", {"objectTypeName": et, "fields": flat}),
+                ("data-array", {"objectTypeName": et, "data": arr}),
+                ("fields-array", {"objectTypeName": et, "fields": arr}),
+            ]
+            hdr = {**h, "Content-Type": "application/json"}
+            for label, doc in candidates:
+                try:
+                    r = c.post(base + "/svi-datahub/documents", json=doc, headers=hdr)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"   [{label}] errore: {exc}"); continue
+                body = (r.text or "").strip()
+                still_missing = "DH5104" in body and "identificativo" in body
+                print(f"   [{label:13}] → {r.status_code}{'  (identificativo ancora mancante)' if still_missing else ''}")
+                print("       ", body[:500])
+                if r.status_code < 300:
+                    print("   ✓ CREATO con struttura:", label); break
+                if not still_missing:
+                    print("   → struttura promettente:", label, "(errore diverso → siamo vicini)"); break
 
 
 if __name__ == "__main__":
