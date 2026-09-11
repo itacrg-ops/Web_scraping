@@ -88,6 +88,24 @@ def discovery(token: str) -> None:
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     base = settings.viya_endpoint.rstrip("/")
     with httpx.Client(timeout=settings.svi_request_timeout, verify=settings.verify_opt()) as c:
+        # 2a. Root dei servizi: elenca i link/operazioni esposti (discovery SAS Viya).
+        for root in ("/svi-datahub/", "/svi-alert/"):
+            try:
+                r = c.get(base + root, headers=headers)
+            except Exception as exc:  # noqa: BLE001
+                _line(False, f"root {root}: {exc}"); continue
+            print(f"  --- {root}  (HTTP {r.status_code}) ---")
+            try:
+                j = r.json()
+                links = j.get("links") if isinstance(j, dict) else None
+            except Exception:  # noqa: BLE001
+                links = None
+            if isinstance(links, list):
+                for lk in links[:30]:
+                    print(f"      {str(lk.get('method', 'GET')):6} {str(lk.get('rel', '')):24} {lk.get('href', '')}")
+            else:
+                print("      body:", (r.text or "").strip()[:400])
+        # 2b. Endpoint candidati: stampa stato, header Allow (sui 405) e un estratto del corpo.
         for label, path in DISCOVERY:
             try:
                 r = c.get(base + path, headers=headers)
@@ -95,21 +113,14 @@ def discovery(token: str) -> None:
                 _line(False, f"{label}: {exc}")
                 continue
             ok = r.status_code < 300
-            hint = ""
-            if ok:
-                try:
-                    j = r.json()
-                    items = j.get("items") if isinstance(j, dict) else None
-                    if isinstance(items, list):
-                        names = [it.get("name") or it.get("label") or it.get("id") for it in items[:12]]
-                        hint = "  → " + ", ".join(str(n) for n in names if n)
-                    elif isinstance(j, dict):
-                        hint = "  → " + ", ".join(list(j.keys())[:8])
-                except Exception:  # noqa: BLE001
-                    hint = ""
-            _line(ok, f"{label:28} HTTP {r.status_code}  {path}{hint}")
-    print("  Nota: i tipi documento/alert e le code elencati sopra sono i valori da")
-    print("        mettere in SVI_OBJECT_TYPE / SVI_ALERT_TYPE / SVI_QUEUE.")
+            allow = r.headers.get("allow") or r.headers.get("Allow")
+            extra = f"  Allow: {allow}" if (r.status_code == 405 and allow) else ""
+            _line(ok, f"{label:28} HTTP {r.status_code}  {path}{extra}")
+            body = (r.text or "").strip().replace("\n", " ")
+            if body:
+                print("        body:", body[:280])
+    print("  → Cerca nei link/corpi qui sopra i valori reali di documentType / alertType /")
+    print("    queue e mettili in SVI_OBJECT_TYPE / SVI_ALERT_TYPE / SVI_QUEUE.")
 
 
 def payload(token: str, create: bool) -> None:
