@@ -62,6 +62,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Discovery admin SVI (read-only)")
     ap.add_argument("--probe", action="store_true",
                     help="POST con body vuoto per far rivelare a SAS media type/campi richiesti (NON crea)")
+    ap.add_argument("--create-entity", action="store_true",
+                    help="crea un record Soggetto di prova nel Data Hub (POST /svi-datahub/documents)")
     args = ap.parse_args()
     print("SVI admin discovery ·", settings.viya_endpoint or "(endpoint vuoto!)")
     if settings.svi_ca_bundle and not os.path.exists(settings.svi_ca_bundle):
@@ -117,6 +119,26 @@ def main() -> None:
                     print("       ", (r.text or "").strip()[:900])
                 except Exception as exc:  # noqa: BLE001
                     print(f"   POST {path}: {exc}")
+
+        if args.create_entity:
+            print("\n--- CREATE ENTITY (record Soggetto di prova) ---")
+            # Envelope tentativo: typeName + attributi. I nomi attributo devono
+            # combaciare con quelli definiti sull'entity type in Data Objects.
+            doc = {
+                "typeName": settings.svi_entity_type,
+                "data": {
+                    "codiceFiscalePIVA": "00743110157",
+                    "denominazione": "ACME Costruzioni S.r.l.",
+                },
+            }
+            print("   payload:", json.dumps(doc, ensure_ascii=False))
+            try:
+                r = c.post(base + "/svi-datahub/documents", json=doc,
+                           headers={**h, "Content-Type": "application/json"})
+                print(f"   POST /svi-datahub/documents → {r.status_code}")
+                print("       ", (r.text or "").strip()[:1200])
+            except Exception as exc:  # noqa: BLE001
+                print(f"   POST /svi-datahub/documents: {exc}")
 
 
 if __name__ == "__main__":
