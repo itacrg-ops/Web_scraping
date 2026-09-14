@@ -33,6 +33,11 @@ modello dominio: [`SVI_DOMAIN_ADVERSE_MEDIA.md`](SVI_DOMAIN_ADVERSE_MEDIA.md).
   L'oggetto evento **NON** ha `domainId` né `actionableEntityLabel` (il dominio è
   implicito nella coda/strategia). Le tre sezioni opzionali sono gated da config
   (off al primo test). Codice: `mapping.build_alerting_payload()`.
+- **Envelope ACCETTATO dal parser** ✅ — con la struttura corretta l'errore è
+  **cambiato**: da `500 tdc.bad.request` (rifiuto di struttura/parse, identico anche
+  a body vuoto) a **`500 errorCode 1008` "A data error occurred"**. Significa che SVI
+  ha superato la validazione della richiesta ed è entrato nell'elaborazione: la
+  **forma del payload è giusta**; resta un errore di **dato/riferimento** (vedi sotto).
 
 ## Configurazione trovata nell'ambiente
 
@@ -66,15 +71,20 @@ SVI_ALERT_TYPE_CODE=strategy_default   # tipo alert della strategia (demo: strat
 
 ## Blocchi aperti (config SVI, **non** codice)
 
-1. **Alerting event → HTTP 500 `tdc.bad.request`** — **RISOLTO in codice** con la
-   struttura envelope confermata dall'Admin (`jsonLayout:"flat"` + array). Da
-   **verificare live** rieseguendo `svi_smoketest.py --create`. Se persiste un errore
-   dopo l'envelope corretto, restano due prerequisiti di **configurazione**:
-   - la **strategia** del dominio Adverse Media dev'essere **ATTIVA/deployata**
-     (una strategia `INACTIVE` non elabora gli alerting event — nell'ambiente la
-     strategia PI di esempio era `INACTIVE`); **e/o**
-   - l'**entità `Soggetto`** referenziata (`actionableEntityId`) deve **esistere**
-     come record nel Data Hub (vedi punto 2).
+1. **Alerting event → `500 errorCode 1008` "data error"** (dopo aver risolto la
+   struttura). La forma è corretta; è un errore di **dato/riferimento**. Cause in
+   ordine di probabilità, da isolare con `svi_smoketest.py --diagnose`:
+   - **entità inesistente**: `actionableEntity` (`Soggetto` / CF `00743110157`) non
+     è un record del Data Hub → l'engine non la risolve → data error. Crearla prima
+     (punto 2). ⟵ *sospetto principale*.
+   - **`alertTypeCode` non valido** per il dominio Adverse Media: `strategy_default`
+     veniva dall'esempio Admin (dominio `tender`), potrebbe non esistere qui. Usare
+     un `code` reale dalla discovery (righe `alertType:` dello smoke-test).
+   - **strategia INACTIVE/non deployata** → non elabora gli eventi (verificare nelle
+     righe `strategy: … state=…`).
+   - `recommendedQueueId` inesistente (improbabile: `queue_3264317` verificata).
+   Il `--diagnose` invia varianti con omissioni controllate: se l'`errorCode` non
+   cambia mai, il problema è entità/strategia (non type/queue).
 2. **Creazione entità Soggetto** — `POST /svi-datahub/documents` (`application/json`).
    Confermato: il tipo si passa con **`objectTypeName`** (non `typeName`). Nel Data
    Hub ogni entity type è una **tabella**; il campo obbligatorio non-readonly è
@@ -104,29 +114,37 @@ Nel `data` le chiavi sono la colonna **Name** (non la Label):
 
 ## Strumenti di diagnosi (nel repo)
 
-- `services/svi-publisher/scripts/svi_smoketest.py` — auth + discovery + `--create`
-  (crea l'alerting event dell'alert di prova).
+- `services/svi-publisher/scripts/svi_smoketest.py` — auth + discovery + `--create`.
+  Nuovi flag: `--diagnose` (isola il campo che causa il data error, non crea),
+  `--unique` (alertingEventId nuovo → esclude collisioni di id). La discovery ora
+  elenca `alertType:` (codici validi per `SVI_ALERT_TYPE_CODE`) e `strategy:` (stato).
 - `services/svi-publisher/scripts/svi_admin.py` — discovery admin (domini/strategie/
   code/eventi); `--probe` (rivela media type/campi con POST vuoto, non crea);
   `--create-entity` (prova più nomi campo per creare il record `Soggetto`).
 
 Esecuzione (dalla macchina che raggiunge Viya):
 ```powershell
+docker compose -f docker-compose.dev.yml run --build --rm svi-publisher python scripts/svi_smoketest.py --diagnose
 docker compose -f docker-compose.dev.yml run --build --rm svi-publisher python scripts/svi_admin.py --create-entity
-docker compose -f docker-compose.dev.yml run --build --rm svi-publisher python scripts/svi_smoketest.py --create
+docker compose -f docker-compose.dev.yml run --build --rm svi-publisher python scripts/svi_smoketest.py --create --unique
 ```
 
 ## Prossimi passi
 
-1. **Rieseguire `svi_smoketest.py --create`** con l'envelope corretto (`jsonLayout`
-   flat) → l'alert deve comparire in `queue_3264317`. Questo è il test decisivo:
-   l'errore `500 tdc.bad.request` era la struttura del body, ora sistemata.
-2. Se resta un errore: **attivare/deployare la strategia** Adverse Media (verificare
-   in *Alerts → Domains → strategia* che lo stato non sia `INACTIVE`) e/o **creare il
-   record `Soggetto`** `00743110157` (`svi_admin.py --create-entity`).
-3. Ad alert creato: abilitare `SVI_SEND_ENRICHMENT=true` (poi scenario/contributing)
+1. **`svi_smoketest.py --diagnose`** → guarda le righe `alertType:` e `strategy:`
+   della discovery (codice alertType valido + stato strategia) e l'esito delle
+   varianti: dicono se il `1008` dipende da `alertTypeCode`/`recommendedQueueId`
+   oppure da entità/strategia.
+2. In base all'esito:
+   - `alertTypeCode` sbagliato → mettere in `.env` un `SVI_ALERT_TYPE_CODE` reale;
+   - strategia `INACTIVE` → **attivarla/deployarla**;
+   - entità mancante → **creare il record `Soggetto` `00743110157`** (punto 2 blocchi;
+     `svi_admin.py --create-entity`, o cattura UI dell'off-ramp).
+3. Poi **`svi_smoketest.py --create --unique`** → l'alert deve comparire in
+   `queue_3264317`.
+4. Ad alert creato: abilitare `SVI_SEND_ENRICHMENT=true` (poi scenario/contributing)
    per portare AMI/FATF/motivazione ed evidenze nell'evento.
-4. **Off-ramp per lo schema documento Data Hub** (se serve creare il `Soggetto` e
+5. **Off-ramp per lo schema documento Data Hub** (se serve creare il `Soggetto` e
    `--create-entity` non converge): catturare la request reale dalla **UI**
    (F12 → Network creando un record) e replicarla 1:1. Il formato "alerting data
    flat" **non** è più un'incognita: fornito dall'SVI Admin e implementato.

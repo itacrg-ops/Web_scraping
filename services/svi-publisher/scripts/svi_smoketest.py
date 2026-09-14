@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -42,6 +43,7 @@ SAMPLE_ALERT = {
 DISCOVERY = [
     ("svi-datahub · documents", "/svi-datahub/documents?limit=1"),
     ("svi-alert · alertTypes", "/svi-alert/alertTypes?limit=50"),
+    ("svi-alert · strategies", "/svi-alert/strategies?limit=50"),
     ("svi-alert · queues", "/svi-alert/queues?limit=50"),
     ("svi-alert · alerts", "/svi-alert/alerts?limit=1"),
 ]
@@ -75,11 +77,31 @@ def _summ_alert(j: dict) -> list[str]:
     it = items[0]
     qref = next((lk.get("href") for lk in it.get("links", []) if lk.get("rel") == "queue"), None)
     keys = ["domainId", "actionableEntityType", "actionableEntityId", "actionableEntityLabel",
-            "initialScore", "currentScore", "highScore", "alertOriginCode", "alertType", "status"]
+            "initialScore", "currentScore", "highScore", "alertOriginCode", "alertType",
+            "alertTypeCode", "strategyId", "status"]
     lines = [f"{k}={it.get(k)}" for k in keys if k in it]
     lines.append(f"queue={qref}")
     lines.append("tutti i campi: " + ", ".join(list(it.keys())))
     return lines
+
+
+def _summ_alert_types(j: dict) -> list[str]:
+    """Codici alertType validi → da mettere in SVI_ALERT_TYPE_CODE."""
+    out = []
+    for t in (j.get("items") or []):
+        code = t.get("code") or t.get("alertTypeCode") or _self_id(t)
+        out.append(f"code={code}  name={t.get('name') or t.get('label')}")
+    return out or ["(nessun alertType definito nel dominio)"]
+
+
+def _summ_strategies(j: dict) -> list[str]:
+    """Strategie e loro stato: una strategia NON attiva/deployata non elabora gli eventi."""
+    out = []
+    for s in (j.get("items") or []):
+        state = s.get("state") or s.get("status") or s.get("deploymentState")
+        out.append(f"{_self_id(s) or s.get('name')}  name={s.get('name')}  "
+                   f"state={state}  active={s.get('active')}  domain={s.get('domainId')}")
+    return out or ["(nessuna strategia)"]
 
 
 def get_token() -> str:
@@ -155,6 +177,12 @@ def discovery(token: str) -> None:
             if j is not None and "/queues" in path:
                 for ln in _summ_queues(j):
                     print("        queue:", ln)
+            elif j is not None and "/alertTypes" in path:
+                for ln in _summ_alert_types(j):
+                    print("        alertType:", ln)
+            elif j is not None and "/strategies" in path:
+                for ln in _summ_strategies(j):
+                    print("        strategy:", ln)
             elif j is not None and "/alerts" in path:
                 for ln in _summ_alert(j):
                     print("        alert:", ln)
@@ -166,10 +194,37 @@ def discovery(token: str) -> None:
     print("    (entity type), SVI_QUEUE (queueId con acceptManualAlerts=true).")
 
 
-def payload(token: str, create: bool) -> None:
+def _sample(unique: bool) -> dict:
+    """L'alert di prova; con --unique cambia lo screening_id → alertingEventId nuovo
+    (esclude che il 'data error' sia una collisione di id da un tentativo precedente)."""
+    if not unique:
+        return SAMPLE_ALERT
+    return {**SAMPLE_ALERT, "screening_id": f"SMOKETEST-{int(time.time())}"}
+
+
+def _hint_500(resp: httpx.Response) -> None:
+    """Interpreta gli errori noti di /alertingEvents per orientare la diagnosi."""
+    try:
+        code = str((resp.json() or {}).get("errorCode") or "")
+    except Exception:  # noqa: BLE001
+        code = ""
+    if resp.status_code < 300:
+        return
+    if "tdc.bad.request" in (resp.text or ""):
+        print("     ↳ tdc.bad.request = struttura/media type rifiutati (envelope o Content-Type errato).")
+    elif code == "1008" or "data error" in (resp.text or "").lower():
+        print("     ↳ errorCode 1008 = STRUTTURA OK, errore di DATO/riferimento. Cause tipiche:")
+        print("        • l'entità actionableEntity (Soggetto/CF) NON esiste nel Data Hub → crearla prima;")
+        print("        • alertTypeCode non valido per il dominio → usa un code dalla discovery (alertType:);")
+        print("        • strategia INACTIVE/non deployata → attivarla;")
+        print("        • recommendedQueueId inesistente. Usa --diagnose per isolare type/queue.")
+
+
+def payload(token: str, create: bool, unique: bool = False) -> None:
+    alert = _sample(unique)
     print("\n3) PAYLOAD — envelope alerting event SVI (jsonLayout flat) · business key:",
-          mapping.business_key(SAMPLE_ALERT))
-    body = mapping.build_alerting_payload(SAMPLE_ALERT, settings)
+          mapping.business_key(alert))
+    body = mapping.build_alerting_payload(alert, settings)
     print(json.dumps(body, indent=2, ensure_ascii=False))
     # Sezioni opzionali attive? (gated in .env; off = payload minimo)
     print("  sezioni:", ", ".join(k for k in
@@ -189,12 +244,52 @@ def payload(token: str, create: bool) -> None:
         print("\n  POST alerting event (envelope) →", url)
         ra = c.post(url, json=body, headers=headers)
         _line(ra.status_code < 300, f"alertingEvents HTTP {ra.status_code}: {ra.text[:800]}")
+        _hint_500(ra)
+
+
+def diagnose(token: str) -> None:
+    """Isola il campo che causa il data error: POST dello stesso envelope con
+    omissioni controllate. Tutte le varianti falliscono (500) SENZA creare nulla; è
+    l'errorCode che cambia (o no) a dirci dove sta il problema. Ogni variante usa uno
+    screening_id unico → alertingEventId nuovo (niente collisioni tra varianti)."""
+    print("\n3b) DIAGNOSE — isola il campo che innesca il data error (nessuna creazione)")
+    mt = settings.svi_alertingevent_media_type
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": mt, "Accept": "application/json"}
+    url = settings.alerts_base() + "/alertingEvents"
+
+    def variant(label: str, mutate) -> None:
+        a = {**SAMPLE_ALERT, "screening_id": f"DIAG-{label}-{int(time.time())}"}
+        body = mapping.build_alerting_payload(a, settings)
+        mutate(body["alertingEvents"][0])
+        try:
+            with httpx.Client(timeout=settings.svi_request_timeout, verify=settings.verify_opt()) as c:
+                r = c.post(url, json=body, headers=headers)
+        except Exception as exc:  # noqa: BLE001
+            print(f"   [{label:20}] errore trasporto: {exc}"); return
+        code = ""
+        try:
+            code = str((r.json() or {}).get("errorCode") or "")
+        except Exception:  # noqa: BLE001
+            pass
+        print(f"   [{label:20}] HTTP {r.status_code}  errorCode={code or '—'}  {(r.text or '')[:140]}")
+
+    variant("baseline", lambda e: None)
+    variant("no-alertTypeCode", lambda e: e.pop("alertTypeCode", None))
+    variant("no-queue", lambda e: e.pop("recommendedQueueId", None))
+    variant("no-type+no-queue", lambda e: (e.pop("alertTypeCode", None), e.pop("recommendedQueueId", None)))
+    print("   → Se tutte danno lo STESSO errorCode: il problema NON è type/queue, ma")
+    print("     l'ESISTENZA dell'entità Soggetto o lo stato della strategia.")
+    print("   → Se rimuovendo un campo l'errore CAMBIA/sparisce: è quel campo (valore non valido).")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Smoke-test live SVI")
     ap.add_argument("--create", action="store_true", help="scrive davvero 1 documento+alert (default: dry-run)")
     ap.add_argument("--skip-discovery", action="store_true")
+    ap.add_argument("--unique", action="store_true",
+                    help="alertingEventId nuovo a ogni run (esclude collisioni di id nel data error)")
+    ap.add_argument("--diagnose", action="store_true",
+                    help="POST varianti dell'envelope per isolare il campo che causa il data error (non crea)")
     args = ap.parse_args()
 
     print("=" * 64)
@@ -217,7 +312,9 @@ def main() -> None:
     token = get_token()
     if not args.skip_discovery:
         discovery(token)
-    payload(token, args.create)
+    payload(token, args.create, unique=args.unique)
+    if args.diagnose:
+        diagnose(token)
     print("\nFatto.")
 
 
