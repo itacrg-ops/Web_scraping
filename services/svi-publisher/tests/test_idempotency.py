@@ -40,9 +40,11 @@ class _FakeResp:
 
 
 class _FakeClient:
-    """Sostituto di httpx.AsyncClient: ogni POST/GET ritorna la risposta preimpostata."""
-    def __init__(self, resp: _FakeResp):
-        self._resp = resp
+    """Sostituto di httpx.AsyncClient. `spec` è una risposta unica (per ogni POST/GET)
+    oppure un dict {sottostringa-url: risposta} per instradare chiamate diverse
+    (es. /svi-datahub/documents vs /svi-alert/alertingEvents)."""
+    def __init__(self, spec):
+        self._spec = spec
 
     async def __aenter__(self):
         return self
@@ -50,17 +52,25 @@ class _FakeClient:
     async def __aexit__(self, *exc):
         return False
 
-    async def post(self, *a, **k):
-        return self._resp
+    def _pick(self, url: str) -> _FakeResp:
+        if isinstance(self._spec, dict):
+            for frag, resp in self._spec.items():
+                if frag in url:
+                    return resp
+            raise AssertionError(f"nessuna risposta finta per {url}")
+        return self._spec
 
-    async def get(self, *a, **k):
-        return self._resp
+    async def post(self, url, *a, **k):
+        return self._pick(url)
+
+    async def get(self, url, *a, **k):
+        return self._pick(url)
 
 
-def _run_live(resp: _FakeResp, alert: dict) -> dict:
+def _run_live(spec, alert: dict, load_entity: bool = False) -> dict:
     """Esegue publish_alert nel ramo live con client/auth finti, poi ripristina."""
     settings.svi_mode = "live"
-    settings.svi_load_entity = False
+    settings.svi_load_entity = load_entity
     settings.svi_queue = "queue_test"
     settings.svi_alert_type_code = "strategy_default"
     svi_client.reset_idempotency()
@@ -69,7 +79,7 @@ def _run_live(resp: _FakeResp, alert: dict) -> dict:
     async def _fake_bearer(_client):
         return "tok"
 
-    svi_client.httpx.AsyncClient = lambda *a, **k: _FakeClient(resp)
+    svi_client.httpx.AsyncClient = lambda *a, **k: _FakeClient(spec)
     svi_client.auth.bearer = _fake_bearer
     try:
         return asyncio.run(svi_client.publish_alert(alert))
@@ -77,6 +87,7 @@ def _run_live(resp: _FakeResp, alert: dict) -> dict:
         svi_client.httpx.AsyncClient = orig_client
         svi_client.auth.bearer = orig_bearer
         settings.svi_mode = "mock"
+        settings.svi_load_entity = False
 
 
 def test_mock_publish_is_idempotent_per_screening():
@@ -114,6 +125,20 @@ def test_live_success_201_returns_event_id():
     r = _run_live(_FakeResp(201, {"links": [{"rel": "self", "href": "/svi-alert/alertingEvents"}]}), a)
     assert r["deduplicated"] is False
     assert r["svi_alert_id"] == mapping.event_id(a)
+
+
+def test_live_entity_load_failure_does_not_block_alert():
+    """SVI_LOAD_ENTITY=true: un 400 sul documento Data Hub NON deve bloccare l'alert
+    (l'entità non è richiesta) → si prosegue con l'alerting event, document_id=None."""
+    a = {**ALERT, "screening_id": "DOC-400"}
+    spec = {
+        "/svi-datahub/documents": _FakeResp(400, {"errorCode": 5104, "message": "identificativo"}),
+        "/svi-alert/alertingEvents": _FakeResp(201, {"links": []}),
+    }
+    r = _run_live(spec, a, load_entity=True)
+    assert r["deduplicated"] is False
+    assert r["svi_alert_id"] == mapping.event_id(a)   # alert creato comunque
+    assert r["document_id"] is None                   # documento non creato (non blocca)
 
 
 def _run() -> int:

@@ -111,14 +111,22 @@ async def publish_alert(alert: dict[str, Any]) -> dict[str, Any]:
         auth_h = {"Authorization": f"Bearer {token}"}
         document_id = None
         if settings.svi_load_entity:
+            # Il record entità nel Data Hub è OPZIONALE: l'alerting event crea l'alert
+            # anche senza (verificato). Se il caricamento fallisce (es. schema documento
+            # non ancora allineato → 400/DH5104) NON deve bloccare l'alert: logga e prosegue.
             document = mapping.build_document(alert, settings)
-            doc_resp = await _retry(
-                "datahub/documents",
-                lambda: client.post(f"{settings.datahub_base()}/documents", json=document,
-                                    headers={**auth_h, "Content-Type": "application/json",
-                                             "Accept": "application/json"}),
-            )
-            document_id = (doc_resp.json() or {}).get("id")
+            try:
+                doc_resp = await _retry(
+                    "datahub/documents",
+                    lambda: client.post(f"{settings.datahub_base()}/documents", json=document,
+                                        headers={**auth_h, "Content-Type": "application/json",
+                                                 "Accept": "application/json"}),
+                )
+                document_id = (doc_resp.json() or {}).get("id")
+            except (httpx.HTTPStatusError, httpx.TransportError) as exc:
+                status = getattr(getattr(exc, "response", None), "status_code", "—")
+                logger.warning("SVI Data Hub: caricamento entità fallito (HTTP %s) key=%s → "
+                               "proseguo con l'alert senza record entità: %s", status, key, exc)
 
         payload = mapping.build_alerting_payload(alert, settings)
         mt = settings.svi_alertingevent_media_type

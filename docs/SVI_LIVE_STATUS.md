@@ -142,6 +142,10 @@ docker compose -f docker-compose.dev.yml run --build --rm svi-publisher python s
    client registrato; riattivare la verifica TLS (`SVI_CA_BUNDLE` col cert del server).
 5. *(Opzionale, fuori percorso critico)* schema del documento Data Hub per l'anagrafica
    `Soggetto`: ricavarlo catturando la request reale dalla **UI** (F12 → Network).
+   ⚠ Nel servizio tenere **`SVI_LOAD_ENTITY=false`** (default): con `true` il publisher
+   tenta prima `POST /svi-datahub/documents`, che oggi dà `400/DH5104` (schema non
+   allineato). Il caricamento entità è comunque **non bloccante** (una sua failure
+   logga un warning e prosegue con l'alert), ma con `false` si evita la chiamata inutile.
 
 > Nota: dalla sessione Claude l'egress verso `*.race.sas.com` è **bloccato dalla
 > policy di rete**, quindi tutte le chiamate live si eseguono e si verificano dalla
