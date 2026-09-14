@@ -340,6 +340,7 @@ python services/svi-publisher/tests/test_idempotency.py   # 5/5
 | `405` su `POST /svi-alert/alerts` | gli alert non si creano lì | usare `/svi-alert/alertingEvents` (già a posto) |
 | `svi_alert_id` = `svi-mock-…` | servizio in **mock** | `SVI_MODE=live` nel `.env` + ricreare il container |
 | `CERTIFICATE_VERIFY_FAILED` | cert self-signed | `SVI_VERIFY_TLS=false` (demo) o `SVI_CA_BUNDLE` |
+| `SSL: UNEXPECTED_EOF_WHILE_READING` | connessione chiusa **durante l'handshake TLS** (non è il cert) — tipico dopo un cambio ambiente | `SVI_VERIFY_TLS=false` NON aiuta. Verifica `VIYA_ENDPOINT` (https, host/porta, no path/spazi), raggiungibilità/VPN, `env\|grep -i proxy`, eventuale mTLS/versione TLS. Diagnosi: `curl -vk https://<host>/SASLogon/oauth/token`, `openssl s_client -connect <host>:443 -servername <host>` |
 | enrichment non visibile (AMI sì) | è memorizzato in `enrichmentJson` | **visualizzazione**: Page Builder ([`SVI_ENRICHMENT_FIELDS.md`](SVI_ENRICHMENT_FIELDS.md)) |
 | alert con label = hash `ams-…` | soggetto senza CF/P.IVA | ora `actionableEntityLabel` = denominazione (nuovi alert) |
 
