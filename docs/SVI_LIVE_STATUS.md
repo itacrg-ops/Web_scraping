@@ -49,10 +49,12 @@ modello dominio: [`SVI_DOMAIN_ADVERSE_MEDIA.md`](SVI_DOMAIN_ADVERSE_MEDIA.md).
   - **`recommendedQueueId` è OPZIONALE** — 201 anche senza (lo teniamo per il routing).
   - **L'entità NON deve pre-esistere** — l'alert si crea anche senza aver caricato il
     record `Soggetto` nel Data Hub (chiude il blocco "creazione entità" come *requisito*).
-- **`errorCode 1008` = duplicato / dato mancante** (NON struttura): con `alertTypeCode`
-  valorizzato, un 1008 significa **alertingEventId già esistente** (stesso screening →
-  id deterministico → SVI rifiuta i duplicati). Il publisher ora lo tratta come
-  **idempotenza** (successo, `deduplicated=true`), mai come errore, e non lo ritenta.
+- **`errorCode 1008` = "data error" AMBIGUO** (NON struttura): può essere un
+  `alertingEventId` duplicato **oppure** un riferimento non valido per l'ambiente
+  (dominio/coda/entityType/alertTypeCode assenti — emerso cambiando ambiente RACE).
+  Perciò il publisher di **default lo solleva** (l'alert NON è creato: non lo maschera da
+  successo); `SVI_DEDUP_ON_1008=true` lo tratta come duplicato idempotente solo dove i
+  riferimenti sono validi. La dedup primaria resta la cache in-process (prima della POST).
 - **Pipeline reale live** ✅ — `worker → svi-publisher (/publish/alert) → SVI`: lo screening
   end-to-end crea l'alert. Prerequisiti risolti: `SVI_MODE=live` onorato dal `.env`
   (rimosso l'override compose che forzava mock); `SVI_LOAD_ENTITY=false` (il documento

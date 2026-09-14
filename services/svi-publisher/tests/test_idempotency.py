@@ -29,6 +29,7 @@ class _FakeResp:
         self.status_code = status_code
         self._payload = payload
         self.content = b"{}"
+        self.text = str(payload)
         self.request = httpx.Request("POST", "https://viya.example/svi-alert/alertingEvents")
 
     def json(self):
@@ -67,10 +68,11 @@ class _FakeClient:
         return self._pick(url)
 
 
-def _run_live(spec, alert: dict, load_entity: bool = False) -> dict:
+def _run_live(spec, alert: dict, load_entity: bool = False, dedup_on_1008: bool = False) -> dict:
     """Esegue publish_alert nel ramo live con client/auth finti, poi ripristina."""
     settings.svi_mode = "live"
     settings.svi_load_entity = load_entity
+    settings.svi_dedup_on_1008 = dedup_on_1008
     settings.svi_queue = "queue_test"
     settings.svi_alert_type_code = "strategy_default"
     svi_client.reset_idempotency()
@@ -88,6 +90,7 @@ def _run_live(spec, alert: dict, load_entity: bool = False) -> dict:
         svi_client.auth.bearer = orig_bearer
         settings.svi_mode = "mock"
         settings.svi_load_entity = False
+        settings.svi_dedup_on_1008 = False
 
 
 def test_mock_publish_is_idempotent_per_screening():
@@ -110,13 +113,23 @@ def test_different_screening_yields_different_id():
     assert r1["deduplicated"] is False and r2["deduplicated"] is False
 
 
-def test_live_duplicate_1008_is_treated_as_idempotent():
-    """SVI rifiuta un alertingEventId già esistente con errorCode 1008: essendo l'id
-    deterministico, è un DUPLICATO dello stesso screening → idempotenza, non errore."""
+def test_live_1008_raises_by_default():
+    """errorCode 1008 è ambiguo (config errata vs duplicato): di default NON va mascherato
+    da successo → deve sollevare, così l'errore reale (alert NON creato) è visibile."""
+    a = {**ALERT, "screening_id": "ERR-1008"}
+    try:
+        _run_live(_FakeResp(500, {"errorCode": 1008, "message": "A data error occurred"}), a)
+    except httpx.HTTPStatusError:
+        return
+    raise AssertionError("un 1008 di default deve sollevare, non ritornare deduplicated")
+
+
+def test_live_1008_dedup_only_when_optin():
+    """Con SVI_DEDUP_ON_1008=true il 1008 è trattato come duplicato idempotente."""
     a = {**ALERT, "screening_id": "DUP-1008"}
-    r = _run_live(_FakeResp(500, {"errorCode": 1008, "message": "A data error occurred"}), a)
+    r = _run_live(_FakeResp(500, {"errorCode": 1008, "message": "A data error occurred"}), a, dedup_on_1008=True)
     assert r["deduplicated"] is True
-    assert r["svi_alert_id"] == mapping.event_id(a)     # id deterministico, non vuoto
+    assert r["svi_alert_id"] == mapping.event_id(a)
 
 
 def test_live_success_201_returns_event_id():

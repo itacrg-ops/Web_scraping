@@ -100,16 +100,19 @@ screening già pubblicato (nessun nuovo alert).
    **Non bloccante**: un errore (es. `400 DH5104`) logga un warning e prosegue con l'alert.
 4. **Alert**: `POST {alerts_base}/alertingEvents` con l'**envelope** (§4) e il media type
    versionato. `_retry` gestisce il backoff sugli errori transitori.
-5. **Esito**: risposta `2xx` → alert creato; **`500 errorCode 1008`** con `alertTypeCode`
-   valorizzato → `alertingEventId` già esistente = **duplicato** → trattato come
-   idempotenza (`deduplicated: true`), **mai** come errore, e non ritentato.
+5. **Esito**: risposta `2xx` → alert creato. **`500 errorCode 1008`** ("data error") è
+   **ambiguo** — duplicato **oppure** riferimento non valido (dominio/coda/entityType/
+   alertTypeCode assenti nell'ambiente): di **default** viene **sollevato** come errore
+   (l'alert NON è creato; non lo si maschera da successo) e non ritentato. Con
+   `SVI_DEDUP_ON_1008=true` lo si tratta come duplicato idempotente (`deduplicated: true`).
 6. **id**: `alertId` dalla risposta, o (fallback) l'`alertingEventId` deterministico.
 
 ### Idempotenza (design)
 - `business_key(alert)` = `ams-<screening_id>`; in mancanza, `ams-<sha256(canonico)[:16]>`.
 - `alertingEventId` = `uuid5(NS, business_key)` → **deterministico**: stesso screening →
-  stesso id. SVI rifiuta i duplicati (1008) → gestito come dedup. Doppia protezione:
-  cache in-process **e** rifiuto lato SVI.
+  stesso id. La dedup **primaria** è la cache in-process (prima della POST). Il 1008 lato
+  SVI **non** è una dedup affidabile (è ambiguo col config error) → di default solleva;
+  `SVI_DEDUP_ON_1008=true` lo riattiva dove i riferimenti sono validi.
 
 ### Robustezza (retry)
 `_retry` ritenta su **429/500/502/503/504** con backoff `SVI_RETRY_BACKOFF × 2^tentativo`
@@ -258,6 +261,7 @@ arriva dal `.env`, default `mock`).
 | `SVI_ENRICH_KEY_RATIONALE` | `rationale` | " |
 | `SVI_ENRICH_KEY_SOURCE` | `source` | " |
 | `SVI_LOAD_ENTITY` | `false` | carica il documento Data Hub prima dell'alert (non bloccante) |
+| `SVI_DEDUP_ON_1008` | `false` | tratta `errorCode 1008` come duplicato idempotente invece di sollevarlo — solo su ambienti a riferimenti validi |
 
 ### Robustezza e TLS
 | Variabile | Default | Significato |
@@ -333,8 +337,7 @@ python services/svi-publisher/tests/test_idempotency.py   # 5/5
 | Sintomo | Causa | Rimedio |
 |---|---|---|
 | `500 tdc.bad.request` (anche a body vuoto) | manca l'**envelope** (`jsonLayout`/array) | usare `build_alerting_payload` (già a posto) |
-| `500 errorCode 1008` senza `alertTypeCode` | `alertTypeCode` **obbligatorio** | valorizzare `SVI_ALERT_TYPE_CODE` |
-| `500 errorCode 1008` con `alertTypeCode` | `alertingEventId` **duplicato** | è idempotenza: usare uno `screening_id` nuovo |
+| `500 errorCode 1008` ("data error") | **ambiguo**: `alertTypeCode` mancante/non valido, oppure dominio/coda/entityType **inesistenti in questo ambiente** (tipico dopo un cambio ambiente), oppure `alertingEventId` **duplicato** | di default il publisher **solleva** (alert NON creato). Ricontrolla i valori del **nuovo** ambiente (`svi_smoketest.py --diagnose`, `svi_inspect.py`) nel `.env`. Solo se è un vero duplicato su ambiente valido → `SVI_DEDUP_ON_1008=true` |
 | `400` su `/svi-datahub/documents` (DH5104) | `SVI_LOAD_ENTITY=true`, schema doc non allineato | `SVI_LOAD_ENTITY=false` (l'entità non serve) |
 | `415 unsupported media type` | manca `+json;version=1` | media type versionato (già default) |
 | `405` su `POST /svi-alert/alerts` | gli alert non si creano lì | usare `/svi-alert/alertingEvents` (già a posto) |

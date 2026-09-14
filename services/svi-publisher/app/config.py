@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     svi_source_system: str = "adverse-media-screening"
     svi_external_id_attr: str = "externalId"
 
+    # errorCode 1008 = "data error" AMBIGUO (duplicato OPPURE riferimento non valido:
+    # dominio/coda/entityType/alertTypeCode inesistenti). Default: sollevalo come errore
+    # (l'alert non è creato). True SOLO in ambienti con riferimenti validi dove vuoi che
+    # la ripubblicazione dello stesso screening sia idempotente (1008 = duplicato).
+    svi_dedup_on_1008: bool = False
+
     # --- Robustezza ---
     svi_request_timeout: float = 30.0
     svi_max_retries: int = 3

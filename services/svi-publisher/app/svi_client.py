@@ -144,14 +144,24 @@ async def publish_alert(alert: dict[str, Any]) -> dict[str, Any]:
             )
             duplicate = False
         except httpx.HTTPStatusError as exc:
-            # L'alertingEventId è deterministico (business key): se SVI risponde 1008
-            # "data error" con alertTypeCode valorizzato, l'evento ESISTE GIÀ → stesso
-            # screening già pubblicato → idempotenza, non un errore. (alertTypeCode è
-            # sempre impostato da config, quindi il 1008 qui = duplicato.)
+            # `errorCode 1008` ("data error") è AMBIGUO: può essere un alertingEventId
+            # duplicato (idempotenza), MA anche un riferimento non risolvibile
+            # (dominio/coda/entityType/alertTypeCode inesistenti per l'ambiente). NON va
+            # mascherato da successo: di default lo solleviamo come errore reale — l'alert
+            # NON è stato creato. Solo con SVI_DEDUP_ON_1008=true lo trattiamo come dedup
+            # (ambienti dove i riferimenti sono validi e si vogliono ripubblicazioni idempotenti).
             resp = exc.response
-            if resp is not None and resp.status_code == 500 and _errcode(resp) == "1008":
-                logger.info("SVI alertingEvent già presente (1008 duplicato) key=%s → idempotente", key)
+            if resp is not None and resp.status_code == 500 and _errcode(resp) == "1008" \
+                    and settings.svi_dedup_on_1008:
+                logger.info("SVI 1008 key=%s → trattato come duplicato (SVI_DEDUP_ON_1008=true)", key)
                 ev_resp, duplicate = resp, True
+            elif resp is not None and resp.status_code == 500 and _errcode(resp) == "1008":
+                logger.error(
+                    "SVI 1008 'data error' su alertingEvents key=%s: ALERT NON CREATO. Cause tipiche: "
+                    "dominio/coda/entityType/alertTypeCode non validi per QUESTO ambiente, oppure "
+                    "alertingEventId duplicato. Verifica il .env e usa svi_smoketest.py --diagnose. Body: %s",
+                    key, (resp.text or "")[:400])
+                raise
             else:
                 raise
         if duplicate:

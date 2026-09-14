@@ -53,5 +53,8 @@ SVI risponde `500 tdc.bad.request` (rifiuto di struttura, identico anche a body 
 ## Idempotenza
 - `alertingEventId` deterministico (`uuid5` dalla `business_key`) → stessa business key,
   stesso id evento.
-- SVI **rifiuta i duplicati** con `500 errorCode 1008`: `svi_core` lo tratta come
-  **successo idempotente** (`deduplicated=true`), non come errore, e non lo ritenta.
+- SVI rifiuta i duplicati con `500 errorCode 1008` — **ma lo stesso codice 1008 vale anche
+  per riferimenti non risolvibili** (dominio/coda/entityType/alertTypeCode assenti). È
+  ambiguo: `svi_core` di **default solleva** il 1008 (l'alert non è creato). Per trattarlo
+  come duplicato idempotente su ambienti a riferimenti validi: `SVI_DEDUP_ON_1008=true`.
+  In ogni caso il 1008 non è transitorio e non viene ritentato.

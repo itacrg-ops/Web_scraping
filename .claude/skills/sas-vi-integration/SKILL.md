@@ -34,8 +34,11 @@ diagnosticare errori di pubblicazione. Vale anche se l'utente non nomina l'envel
   con `POST /svi-alert/alerts` (405). Dettagli: [`references/envelope.md`](references/envelope.md).
 - `alertTypeCode` è **obbligatorio**; `recommendedQueueId` è opzionale; l'entità **non**
   deve pre-esistere; l'evento non porta `domainId`.
-- Idempotenza: `alertingEventId` deterministico dalla `business_key`; SVI rifiuta i
-  duplicati con `errorCode 1008` → trattato come successo idempotente, non errore.
+- Idempotenza: `alertingEventId` deterministico dalla `business_key`. Attenzione: SVI usa
+  `errorCode 1008` sia per un **duplicato** sia per **riferimenti non validi**
+  (dominio/coda/entityType/alertTypeCode assenti nell'ambiente): è **ambiguo**, quindi di
+  default `publish()` lo **solleva** (non lo maschera da successo). Su un ambiente a
+  riferimenti validi, per ripubblicazioni idempotenti abilita `SVI_DEDUP_ON_1008=true`.
 - `score` e `alertTriggerText` sono campi core **sempre mostrati** (metti la motivazione
   in `alertTriggerText`). L'`enrichment` è memorizzato in `enrichmentJson` ma **mostrarlo
   è config di pagina** (Page Builder), non definizione di attributi.

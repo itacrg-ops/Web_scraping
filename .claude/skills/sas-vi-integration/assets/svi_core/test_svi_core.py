@@ -69,6 +69,7 @@ def test_mock_publish_idempotent():
 class _Resp:
     def __init__(self, status, payload):
         self.status_code, self._p, self.content = status, payload, b"{}"
+        self.text = str(payload)
         self.request = httpx.Request("POST", "https://viya.example/svi-alert/alertingEvents")
 
     def json(self):
@@ -96,10 +97,11 @@ class _Client:
         return self._r
 
 
-def _run_live(resp, alert):
+def _run_live(resp, alert, dedup_on_1008=False):
     settings.svi_mode = "live"
     settings.svi_queue = "queue_test"
     settings.svi_alert_type_code = "strategy_default"
+    settings.svi_dedup_on_1008 = dedup_on_1008
     reset_idempotency()
     oc, ob = _client.httpx.AsyncClient, _auth.bearer
 
@@ -114,11 +116,22 @@ def _run_live(resp, alert):
         _client.httpx.AsyncClient = oc
         _auth.bearer = ob
         settings.svi_mode = "mock"
+        settings.svi_dedup_on_1008 = False
 
 
-def test_live_1008_is_idempotent():
+def test_live_1008_raises_by_default():
+    # 1008 è ambiguo (config errata vs duplicato): di default NON va mascherato da successo
+    a = SviAlert(business_key="ERR", entity_id="1")
+    try:
+        _run_live(_Resp(500, {"errorCode": 1008, "message": "data error"}), a)
+    except httpx.HTTPStatusError:
+        return
+    raise AssertionError("un 1008 di default deve sollevare, non ritornare successo")
+
+
+def test_live_1008_dedup_when_optin():
     a = SviAlert(business_key="DUP", entity_id="1")
-    r = _run_live(_Resp(500, {"errorCode": 1008, "message": "data error"}), a)
+    r = _run_live(_Resp(500, {"errorCode": 1008, "message": "data error"}), a, dedup_on_1008=True)
     assert r["deduplicated"] is True and r["svi_alert_id"] == a.event_id()
 
 

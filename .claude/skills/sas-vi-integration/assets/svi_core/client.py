@@ -110,10 +110,20 @@ async def publish(alert: SviAlert, cfg=None) -> dict[str, Any]:
                                 lambda: client.post(f"{cfg.alerts_base()}/alertingEvents", json=payload, headers=headers))
             duplicate = False
         except httpx.HTTPStatusError as exc:
+            # errorCode 1008 ("data error") è AMBIGUO: duplicato OPPURE riferimento non
+            # risolvibile (dominio/coda/entityType/alertTypeCode inesistenti per l'ambiente).
+            # Non mascherarlo da successo: di default lo solleviamo (alert NON creato).
+            # cfg.svi_dedup_on_1008=true lo tratta come dedup (ambienti a riferimenti validi).
             r = exc.response
-            if r is not None and r.status_code == 500 and _errcode(r) == "1008":
-                logger.info("SVI alertingEvent già presente (1008 duplicato) key=%s → idempotente", key)
+            if r is not None and r.status_code == 500 and _errcode(r) == "1008" \
+                    and getattr(cfg, "svi_dedup_on_1008", False):
+                logger.info("SVI 1008 key=%s → trattato come duplicato (svi_dedup_on_1008=true)", key)
                 resp, duplicate = r, True
+            elif r is not None and r.status_code == 500 and _errcode(r) == "1008":
+                logger.error("SVI 1008 'data error' key=%s: ALERT NON CREATO. Verifica dominio/coda/"
+                             "entityType/alertTypeCode per QUESTO ambiente (svi_inspect.py) e il .env. Body: %s",
+                             key, (r.text or "")[:400])
+                raise
             else:
                 raise
         if duplicate:

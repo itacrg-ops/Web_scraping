@@ -8,8 +8,8 @@ usa `scripts/svi_smoketest.py --diagnose` per isolare il campo che innesca il pr
 | `500 tdc.bad.request` (anche a body vuoto) | manca l'**envelope** (`jsonLayout:"flat"` + array) o il media type | usare `build_alerting_payload` di svi_core + media type versionato |
 | `415 unsupported media type` | manca il suffisso `+json;version=1` | usare `svi_alertingevent_media_type` (già default) |
 | `405` su `POST /svi-alert/alerts` | gli alert non si creano lì | usare `POST /svi-alert/alertingEvents` |
-| `500 errorCode 1008` **senza** `alertTypeCode` | `alertTypeCode` è **obbligatorio** | valorizzare `SVI_ALERT_TYPE_CODE` |
-| `500 errorCode 1008` **con** `alertTypeCode` | `alertingEventId` **duplicato** (stessa business key già pubblicata) | è idempotenza (atteso); per un alert nuovo usa una business key nuova (`--unique` nel test) |
+| `500 errorCode 1008` ("data error") | **AMBIGUO**: (a) `alertTypeCode` mancante/**non valido per questo ambiente**, (b) `recommendedQueueId`/`actionableEntityType`/dominio **inesistenti** in questo ambiente (tipico dopo un **cambio ambiente**), **oppure** (c) `alertingEventId` **duplicato** | di default `svi_core` **solleva** (l'alert NON è creato — non lo maschera da successo). Verifica dominio/coda/entityType/alertTypeCode del **nuovo** ambiente con `svi_inspect.py` + `--diagnose`, e allinea il `.env`. Solo se è davvero un duplicato su ambiente valido → `SVI_DEDUP_ON_1008=true` |
+| "sembra creare l'alert ma non si vede", log `dedup=True http=500` | il 1008 era un **errore reale** mascherato da duplicato (heuristica vecchia) | aggiornato: ora di default il 1008 solleva. Ricontrolla config del nuovo ambiente (vedi riga sopra) |
 | `400` con `DH...` su `/svi-datahub/documents` | schema documento Data Hub non allineato | l'entità **non serve** per l'alert: non caricare il documento |
 | `svi_alert_id` inizia con `svi-mock-` | servizio in **mock** | `SVI_MODE=live` nel `.env` **e** ricreare il container/processo (l'env si legge all'avvio) |
 | `CERTIFICATE_VERIFY_FAILED` (self-signed) | cert non fidato | demo: `SVI_VERIFY_TLS=false`; meglio: `SVI_CA_BUNDLE` col certificato del server |

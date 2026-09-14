@@ -51,6 +51,12 @@ class SviConfig(BaseSettings):
     svi_send_scenario_events: bool = False
     svi_send_contributing_objects: bool = False
 
+    # errorCode 1008 = "data error" AMBIGUO (duplicato OPPURE riferimento non valido:
+    # dominio/coda/entityType/alertTypeCode inesistenti). Default: sollevalo (alert NON
+    # creato). True SOLO in ambienti a riferimenti validi dove vuoi ripubblicazioni
+    # idempotenti (1008 = duplicato).
+    svi_dedup_on_1008: bool = False
+
     # --- Robustezza ---
     svi_request_timeout: float = 30.0
     svi_max_retries: int = 3
