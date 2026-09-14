@@ -1,96 +1,93 @@
 # SVI — far comparire l'enrichment (FATF, motivazione, risk, disposition) sull'alert
 
 Guida operativa **lato SVI** per rendere **visibili** nell'alert i campi che il
-publisher invia nell'`enrichment` dell'alerting event. È configurazione di
-amministrazione del dominio (non codice). Collegata a: [`SVI_LIVE_STATUS.md`](SVI_LIVE_STATUS.md),
+publisher invia nell'`enrichment`. È configurazione di **visualizzazione** del dominio
+(non codice, non definizione di attributi). Collegata a: [`SVI_LIVE_STATUS.md`](SVI_LIVE_STATUS.md),
 [`SVI_DOMAIN_ADVERSE_MEDIA.md`](SVI_DOMAIN_ADVERSE_MEDIA.md).
 
-## Perché serve (il principio)
+> **Accertato dai dati (dump di un alert reale).** L'enrichment è **già memorizzato**
+> sull'alert nel campo **`enrichmentJson`**:
+> ```json
+> "enrichmentJson": { "risk_level": "BASSO",
+>                     "fatf_categories": "Fraud & Financial Crime; Organized Crime; …",
+>                     "rationale": "⚠ Screening ESPLORATIVO…",
+>                     "disposition": "AUTO_CHIUSO", "ami_score": "25" }
+> ```
+> Quindi **non è un problema di dato né di metadati**: la pipeline invia tutto e SVI lo
+> salva. È **solo visualizzazione** — la scheda/griglia alert non mostra i campi annidati
+> in `enrichmentJson`. Non serve definire attributi né l'AdminMetadataApi.
 
-Nell'alerting event (flat) inviamo:
-
-```json
-{ "jsonLayout": "flat",
-  "alertingEvents": [ { "score": 82, "alertTypeCode": "strategy_default", … } ],
-  "enrichment":     [ { "alertingEventId": "…",
-                        "risk_level": "ALTO",
-                        "fatf_categories": "Corruption & Bribery; Money Laundering",
-                        "disposition": "ESCALATION_I_LIVELLO",
-                        "rationale": "Categorie FATF: … • AMI = 82" } ] }
-```
+## Il principio
 
 - **L'AMI si vede** perché è il campo **core `score`** dell'alert (sempre mostrato).
-- **L'`enrichment` si vede SOLO se ogni sua chiave = un ATTRIBUTO definito** nel modello
-  alert del dominio. Se l'attributo non esiste, SVI **accetta** l'evento (HTTP 201) ma
-  **non mostra** quel campo. È esattamente il caso attuale di `fatf_categories`/`rationale`.
-
-Obiettivo: definire nel dominio gli attributi con **gli stessi nomi** che inviamo (o
-rimappare i nomi via `.env`, vedi §5), così i valori compaiono nella scheda/griglia alert.
+- **La motivazione completa È GIÀ VISIBILE** nel campo core **`alertTriggerText`** (che
+  contiene categorie FATF, ruolo, motivazione, calcolo AMI…): l'istruttore non è "cieco".
+- I campi **strutturati** (`risk_level`, `fatf_categories`, `rationale`, `disposition`)
+  vivono in `enrichmentJson`: per mostrarli come campi/colonne dedicati serve configurare
+  la **pagina alert** (Page Builder) e/o le **colonne dell'Alert Grid** del dominio.
 
 ## Scorciatoia consigliata (chiedila all'Admin)
 
-Il tuo Admin SVI ha già fatto funzionare un campo enrichment nell'esempio che ti ha
-dato: **`categoria_tender`**. Quindi nel vostro ambiente **esiste già il punto esatto**
-dove si definiscono questi attributi. La via più rapida e sicura:
+Il tuo Admin SVI ha già fatto **vedere** un campo enrichment nell'esempio che ti ha dato:
+**`categoria_tender`** (stesso meccanismo: sta nell'`enrichmentJson`). Quindi nella loro UI
+**esiste già una pagina alert che mostra un campo da `enrichmentJson`**. La via più rapida:
 
-> «Dove è definito `categoria_tender` (in quale schermata/oggetto)? Devo creare lì gli
-> attributi analoghi per il dominio Adverse Media.»
+> «Come fai a mostrare `categoria_tender` (che sta in `enrichmentJson`) sulla scheda/griglia
+> alert? Devo mostrare allo stesso modo `risk_level`, `fatf_categories`, `rationale`,
+> `disposition` per il dominio Adverse Media.»
 
-Replica per i nostri campi ciò che è stato fatto per `categoria_tender`. Se preferisci
-farlo da solo, segui i passi sotto.
+Replica quella configurazione di pagina per i nostri campi. Se preferisci farlo da solo,
+segui i passi sotto.
 
-## Campi da creare (nomi e tipi)
+## Campi da mostrare (già presenti in `enrichmentJson`)
 
-Usa **esattamente** questi nomi (case-sensitive): combaciano con i default del publisher
-(`SVI_ENRICH_KEY_*`), così non serve toccare il `.env`. Inviamo tutti i valori come
-**stringa**, quindi definiscili come **String/Text**.
+Questi campi **esistono già** dentro `enrichmentJson` di ogni alert (Name case-sensitive =
+default del publisher, `SVI_ENRICH_KEY_*`). Vanno solo **portati a video** (colonna Alert
+Grid e/o campo nella scheda alert), non creati. Sono tutti stringhe.
 
-| Nome attributo (Name) | Tipo SVI | Contenuto inviato | Priorità |
-|---|---|---|---|
-| `risk_level` | String | `ALTO` / `MEDIO` / `BASSO` | alta |
-| `fatf_categories` | String (testo) | categorie unite: `"A; B; C"` | alta |
-| `rationale` | String **lungo** / Text | motivazione (driver dell'AMI), fino a ~1000 char | alta |
-| `disposition` | String | es. `ESCALATION_I_LIVELLO` | media |
-| `ami_score` | String | `"82"` (ridondante: c'è già il core `score`) | bassa/opz. |
-| `source` | String | `adverse-media-screening` (provenienza) | opzionale |
+| Chiave in `enrichmentJson` | Contenuto | Priorità |
+|---|---|---|
+| `risk_level` | `ALTO` / `MEDIO` / `BASSO` | alta |
+| `fatf_categories` | categorie unite: `"A; B; C"` | alta |
+| `rationale` | motivazione (driver dell'AMI), fino a ~1000 char | alta |
+| `disposition` | es. `ESCALATION_I_LIVELLO`, `AUTO_CHIUSO` | media |
+| `ami_score` | `"25"` (ridondante: c'è già il core `score`) | bassa/opz. |
+| `source` | `adverse-media-screening` (provenienza) | opzionale |
 
-Note:
-- **`fatf_categories`**: le inviamo come **una stringa** con separatore `"; "`. Se preferisci
-  un attributo **multi-valore/lista**, dimmelo: cambio il publisher per inviare una lista.
-- **`ami_score`**: puoi ometterlo (l'AMI è già il core `score`). Se lo vuoi anche in
-  enrichment e definisci l'attributo come **numerico**, avvisami: oggi lo invio come stringa.
-- **`rationale`**: usa un tipo **testo lungo** (la motivazione può essere una frase).
+Nota: `fatf_categories` è **una stringa** con separatore `"; "`. Se la UI/griglia sa
+gestire un multi-valore e lo preferisci, dimmelo: cambio il publisher per inviare una lista.
 
-## Passi (UI amministrazione SVI)
+## Passi (UI di visualizzazione SVI)
 
 > Le etichette esatte variano tra versioni (SVI 10.x vs Viya 2025.xx). Usa i **nomi delle
 > funzioni**; il riferimento è l'*Administrator's Guide* della tua versione.
 
-1. **Accedi** all'app **Manage Investigate and Search** → area **Administration** con
-   profilo amministratore.
-2. **Apri il modello alert del dominio Adverse Media** (`domainId = d_42843825`). A seconda
-   della versione è sotto: *Alerts → Domains →* (il tuo dominio) *→* configurazione
-   **Alert Type / Alert Modeling / attributi dell'oggetto alert**. È lo stesso posto dove
-   sono definiti i campi che compaiono nell'**Alert Grid**. (In caso di dubbio: è dove è
-   definito `categoria_tender` — vedi scorciatoia sopra.)
-3. **Aggiungi un attributo** per ogni riga della tabella §Campi: imposta **Name** = il nome
-   esatto (`risk_level`, `fatf_categories`, `rationale`, `disposition`) e **tipo** = String/Text.
-   (La *Label* può essere in chiaro, es. «Categorie FATF», «Motivazione»: è solo l'etichetta
-   mostrata; ciò che deve combaciare è il **Name**.)
-4. **Rendi visibili** i nuovi attributi:
-   - aggiungili alle **colonne dell'Alert Grid** (per vederli nella lista alert), e/o
-   - alla **scheda di dettaglio** dell'alert (Page Builder / Manage Pages).
-5. **Salva** e, se la tua versione lo richiede, **ri-deploya la strategia/il dominio**.
+L'obiettivo non è definire attributi (i dati ci sono in `enrichmentJson`), ma **mostrarli**:
+
+1. **Accedi** all'app **Manage Investigate and Search** con profilo amministratore e apri
+   il **Page Builder / Manage Pages** (progettazione delle schermate) per il dominio
+   Adverse Media (`domainId = d_42843825`).
+2. Apri la **scheda di dettaglio dell'alert** (alert workspace/page) usata dalla coda
+   `queue_3264317`.
+3. **Aggiungi i campi** che leggono da `enrichmentJson`: un componente "campo/attributo"
+   legato a `enrichmentJson.risk_level`, `enrichmentJson.fatf_categories`,
+   `enrichmentJson.rationale`, `enrichmentJson.disposition` (il percorso esatto dipende
+   dalla versione — **è lo stesso modo con cui è mostrato `categoria_tender`**: vedi
+   scorciatoia).
+4. *(Opz.)* Aggiungi le stesse voci come **colonne dell'Alert Grid** per vederle nella lista.
+5. **Salva/pubblica** la pagina.
+
+> Se la tua versione **non** consente di legare direttamente `enrichmentJson.*`: la
+> motivazione completa è comunque già leggibile nel campo **`alertTriggerText`** (mostrato
+> di default). L'enrichment strutturato serve soprattutto per **colonne/filtri**.
 
 ## Verifica
 
-1. Rilancia uno screening **con un soggetto/`screening_id` nuovo** (per evitare la dedup
-   idempotente: stesso screening = stesso `alertingEventId` = nessun nuovo alert).
-2. Apri l'alert in coda `queue_3264317`: nella scheda/griglia devono ora comparire
-   `risk_level`, `fatf_categories`, `rationale`, `disposition` (oltre all'AMI = score).
-3. Se un campo ancora non si vede: il **Name** dell'attributo non combacia byte-per-byte con
-   la chiave inviata → correggi il Name in SVI **oppure** allinea il publisher con
-   `SVI_ENRICH_KEY_*` (§5).
+1. Apri un alert esistente in coda `queue_3264317` (i dati sono già in `enrichmentJson`,
+   non serve rigenerarlo): nella scheda devono ora comparire i campi aggiunti.
+2. Se un campo non appare: il **binding** alla chiave in `enrichmentJson` non è corretto
+   (nome/percorso) → correggi il binding, oppure allinea il nome della chiave lato publisher
+   con `SVI_ENRICH_KEY_*` (§5) al nome che la tua pagina si aspetta.
 
 ## §5 — In alternativa: rimappare i nomi lato publisher
 

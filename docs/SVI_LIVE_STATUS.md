@@ -57,12 +57,12 @@ modello dominio: [`SVI_DOMAIN_ADVERSE_MEDIA.md`](SVI_DOMAIN_ADVERSE_MEDIA.md).
   Data Hub, opzionale e non ancora mappato, non blocca più l'alert).
 - **Enrichment attivo** ✅ — `SVI_SEND_ENRICHMENT=true`: l'evento porta AMI, risk level,
   categorie FATF, disposition e motivazione (sezione `enrichment[]` collegata all'evento).
-  ⚠ **Visualizzazione**: SVI mostra un campo enrichment **solo se la sua chiave combacia
-  con un attributo definito nel dominio**; altrimenti accetta l'evento ma non lo mostra.
-  L'AMI si vede sempre perché è il campo **core `score`**, non enrichment. Le chiavi sono
-  ora configurabili (`SVI_ENRICH_KEY_*`) per allinearle ai nomi attributi del dominio;
-  in alternativa definire nel dominio gli attributi `fatf_categories`/`rationale`/…
-  **Guida operativa**: [`SVI_ENRICHMENT_FIELDS.md`](SVI_ENRICHMENT_FIELDS.md).
+  ⚠ **Visualizzazione**: accertato dal dump di un alert reale che l'enrichment è **già
+  memorizzato** sull'alert nel campo `enrichmentJson` (tutti i campi presenti). Quindi
+  **non è un problema di dato/metadati** ma di **visualizzazione**: i campi annidati in
+  `enrichmentJson` vanno portati sulla scheda/Alert Grid (Page Builder). L'AMI si vede
+  perché è il core `score`; la motivazione completa è già leggibile in `alertTriggerText`.
+  Chiavi rimappabili con `SVI_ENRICH_KEY_*`. **Guida**: [`SVI_ENRICHMENT_FIELDS.md`](SVI_ENRICHMENT_FIELDS.md).
 - **Osservabilità** — i log applicativi (`svi_publisher`) sono visibili sotto uvicorn e
   distinguono **CREATO vs DUPLICATO** (con score/coda/tipo/sezioni); il worker logga
   `id/mode/dedup`.
