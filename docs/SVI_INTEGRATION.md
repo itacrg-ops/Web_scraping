@@ -1,10 +1,12 @@
 # Integrazione SAS Visual Investigator (SVI) — configurazione e payload (B2)
 
-> Stato: **publisher reale implementato**, `SVI_MODE=mock` di default. Il ramo
-> `live` costruisce auth + payload + retry + idempotenza; **non ancora
-> esercitato** su una Viya reale (nessun ambiente disponibile e egress verso Viya
-> bloccato dal proxy). Le parti pure (mapping, business key, auth builder) sono
-> testate offline (7/7).
+> ⚠️ **SUPERATO — vedi [`SVI_PUBLISHER.md`](SVI_PUBLISHER.md).** Questo documento
+> descrive il **design iniziale** (B2) con il vecchio modello di creazione alert
+> (`POST /svi-alert/alerts` + documento Data Hub). L'integrazione **live** reale usa
+> invece l'**envelope alerting event** (`POST /svi-alert/alertingEvents`,
+> `jsonLayout:"flat"`). Per la configurazione e il payload **aggiornati e as-built**
+> fai riferimento a [`SVI_PUBLISHER.md`](SVI_PUBLISHER.md). Questo file resta per
+> contesto storico sul design.
 
 ## Architettura
 
