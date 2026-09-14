@@ -62,6 +62,7 @@ modello dominio: [`SVI_DOMAIN_ADVERSE_MEDIA.md`](SVI_DOMAIN_ADVERSE_MEDIA.md).
   L'AMI si vede sempre perché è il campo **core `score`**, non enrichment. Le chiavi sono
   ora configurabili (`SVI_ENRICH_KEY_*`) per allinearle ai nomi attributi del dominio;
   in alternativa definire nel dominio gli attributi `fatf_categories`/`rationale`/…
+  **Guida operativa**: [`SVI_ENRICHMENT_FIELDS.md`](SVI_ENRICHMENT_FIELDS.md).
 - **Osservabilità** — i log applicativi (`svi_publisher`) sono visibili sotto uvicorn e
   distinguono **CREATO vs DUPLICATO** (con score/coda/tipo/sezioni); il worker logga
   `id/mode/dedup`.
