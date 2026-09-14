@@ -86,23 +86,24 @@ Il **Field Name deve combaciare byte-per-byte** con la chiave in `enrichmentJson
 incluso — la `F` maiuscola di `Fatf_categories` è stata il classico intoppo).
 
 ### B) Scheda di dettaglio — `Pages` → Page Template `alert-detail`
-Per il `rationale` completo (testo lungo) e i `fonti`. La pagina ha già un **Text Input**
-"Alert-trigger text" (`Data source = Fields.Alert-trigger text`, Multi-line, *Show full text
-in view mode*): è il pattern da riusare.
-1. menu **Pages** → apri la Page Template della scheda alert (es. `alert-detail`), tab **Alert Details**;
-2. **scorciatoia**: seleziona il componente "Alert-trigger text" → **duplicalo** (icona nella
-   sua toolbar) due volte;
-3. su ogni copia, nel pannello a destra, cambia **Data source** sul campo enrichment
-   (`rationale` per la prima, `fonti` per la seconda — stessi Field Name dell'Alert Grid) e
-   il **Title text** ("Motivazione", "Fonti"); tieni Multi-line ✓ e *Show full text* ✓;
-4. in alternativa trascina un **Text Input** dal pannello **Controls** e imposta Data source/Title;
-5. **Salva** la pagina (icona salva) e **Preview**.
+⚠ **Attenzione**: sul Page Template i componenti si legano ai **field del modello alert**
+(tab **Data → Fields**: Alert ID, Score, Disposition, Actionable entity…, **Alert-trigger
+text**…). **`enrichmentJson.*` NON compare** in quella lista (a differenza dell'Alert Grid,
+dove il *Field Name* è un path libero). Quindi:
 
-Se il campo non appare nel menu **Data source**, cercalo nel tab **Data** (a sinistra); se
-`fonti`/`rationale_sintesi` mancano è perché sono **nuovi** → servono rebuild + un alert nuovo.
-Per le evidenze **strutturate** (cliccabili) usa un **Grid**/**Child-Object Viewer** legato ai
-`contributingObjects`. La pagina ha già un **Network Diagram** (colonna *Network*): si popola
-con entità+relazioni nel Data Hub (fase 2).
+- **Motivazione completa**: è **già sulla scheda** nel campo core **`Alert-trigger text`**
+  (contiene tutta la motivazione che inviamo). Basta renderlo visibile/allargarlo (colonna
+  *Scorecard*), eventualmente Title = "Motivazione". Nessun campo enrichment da aggiungere.
+- **`fonti` / `rationale_sintesi` come campi separati sul dettaglio**: due strade —
+  1. *(consigliata)* tienili nell'**Alert Grid** (lì `enrichmentJson.*` è bindabile);
+  2. **esponili come field del modello** in **Data Objects** (nuovo field dell'oggetto alert
+     con sorgente `enrichmentJson.fonti` / `enrichmentJson.rationale_sintesi`) → poi
+     compaiono nella lista **Fields** e li leghi a un **Text Input** sul Page Template.
+- **Evidenze strutturate / network**: tab **Data → Child Objects** (`alerting_event`,
+  `alert_action`) con un componente **Grid/Child-Object Viewer**; il **Network Diagram** è già
+  in pagina e si popola con entità+relazioni nel Data Hub (fase 2).
+
+Salva la pagina (icona salva) e **Preview**.
 
 > Se `enrichmentJson.*` non è direttamente legabile nella tua versione, la motivazione
 > completa è comunque già leggibile nel campo core **`alertTriggerText`** (mostrato di
