@@ -46,15 +46,27 @@ Verifica che l'alert compaia nella coda `SVI_QUEUE`.
 
 ## 6. (Opzionale) Mostrare l'enrichment sull'alert
 I campi `enrichment` sono **memorizzati** in `enrichmentJson`, ma la loro
-**visualizzazione** è configurazione di pagina lato SVI:
-- apri **Manage Investigate and Search → Page Builder / Manage Pages** per il dominio;
-- nella scheda alert (e/o colonne Alert Grid) aggiungi campi legati a
-  `enrichmentJson.<chiave>` (es. `enrichmentJson.risk_level`);
-- salva/pubblica.
+**visualizzazione** è configurazione di pagina lato SVI. **Attenzione: griglia e
+scheda di dettaglio NON sono equivalenti.**
 
-La motivazione completa è comunque già leggibile nel campo core `alertTriggerText`.
-Scorciatoia: se un campo enrichment è già mostrato per un altro dominio (es. un
-`categoria_*`), replica quella configurazione di pagina per i tuoi campi.
+- **Alert Grid (lista)** → `enrichmentJson.*` è **bindabile** come *Field Name* a
+  path libero (es. `enrichmentJson.risk_level`, `enrichmentJson.fonti`). Il nome deve
+  combaciare **byte-per-byte** (case incluso). Salva **e deploya la strategia**.
+- **Scheda di dettaglio** (`Pages` → Page Template) → i componenti si legano **solo ai
+  field del modello alert** (Alert ID, Score, Disposition, **Alert-trigger text**…):
+  `enrichmentJson.*` **NON compare** in quella lista. E le entità `alert`/`alerting_event`
+  sono **di sistema** (in *Data Objects → Fields* i field sono Read-only e **`+` Add è
+  disabilitato**) → **non** puoi aggiungere un field custom sorgente `enrichmentJson.*`
+  (l'enrichment è schemaless *by design*).
+
+**Per portare un valore sul DETTAGLIO** l'unico campo che controlli ed è già mostrato lì
+è il core **`alertTriggerText`**: **accodagli** il contenuto lato adapter/publisher (nel
+publisher adverse-media: `SVI_TRIGGER_APPEND_SOURCES=true` accoda le fonti). Così compare
+sulla scheda senza modifiche allo schema/UI. La motivazione completa è comunque **già**
+leggibile nel core `alertTriggerText`.
+
+Scorciatoia griglia: se un campo enrichment è già mostrato per un altro dominio (es. un
+`categoria_*`), replica quella configurazione di colonna per i tuoi campi.
 
 ## 7. Produzione (hardening)
 - Auth: da `password`/`sas.ec` a un **client registrato** con `client_credentials`.

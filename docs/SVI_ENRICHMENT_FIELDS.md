@@ -50,8 +50,8 @@ Grid e/o campo nella scheda alert), non creati. Sono tutti stringhe.
 | `risk_level` | `ALTO` / `MEDIO` / `BASSO` | griglia + dettaglio |
 | `fatf_categories` | categorie unite: `"A; B; C"` | griglia + dettaglio |
 | `rationale_sintesi` | **sintesi** motivazione (primo driver, breve) | **griglia** |
-| `rationale` | motivazione completa (driver dell'AMI, fino a ~1000 char) | **scheda dettaglio** (widget testo lungo) |
-| `fonti` | **link fonti/evidenze**: `"testata: url"` una per riga | scheda dettaglio |
+| `rationale` | motivazione completa (driver dell'AMI, fino a ~1000 char) | griglia (opz.); *sul dettaglio è già il core `Alert-trigger text`* |
+| `fonti` | **link fonti/evidenze**: `"testata: url"` una per riga | griglia; **dettaglio** via `SVI_TRIGGER_APPEND_SOURCES` (§B) |
 | `disposition` | es. `ESCALATION_I_LIVELLO`, `AUTO_CHIUSO` | griglia |
 | `ami_score` | `"25"` (ridondante: c'è già il core `score`) | opzionale |
 | `source` | `adverse-media-screening` (provenienza) | opzionale |
@@ -94,11 +94,22 @@ dove il *Field Name* è un path libero). Quindi:
 - **Motivazione completa**: è **già sulla scheda** nel campo core **`Alert-trigger text`**
   (contiene tutta la motivazione che inviamo). Basta renderlo visibile/allargarlo (colonna
   *Scorecard*), eventualmente Title = "Motivazione". Nessun campo enrichment da aggiungere.
-- **`fonti` / `rationale_sintesi` come campi separati sul dettaglio**: due strade —
-  1. *(consigliata)* tienili nell'**Alert Grid** (lì `enrichmentJson.*` è bindabile);
-  2. **esponili come field del modello** in **Data Objects** (nuovo field dell'oggetto alert
-     con sorgente `enrichmentJson.fonti` / `enrichmentJson.rationale_sintesi`) → poi
-     compaiono nella lista **Fields** e li leghi a un **Text Input** sul Page Template.
+- **`fonti` sul dettaglio → accodale al trigger text (via consigliata).** Le entità
+  **`alert` / `alerting_event`** sono di **sistema**: in *Data Objects → …→ Fields* tutti i
+  field sono **Read-only=True** e il pulsante **`+` (Add) è disabilitato** → **non** si può
+  aggiungere un field custom sorgente `enrichmentJson.fonti` (l'enrichment è schemaless *by
+  design*). L'unico campo che **controlliamo** ed è **già mostrato sul dettaglio** è il core
+  **`alertTriggerText`**: il publisher può **accodarvi il blocco fonti** con
+  ```dotenv
+  SVI_TRIGGER_APPEND_SOURCES=true
+  SVI_TRIGGER_SOURCES_LABEL=Fonti
+  SVI_TRIGGER_SOURCES_LIMIT=5
+  ```
+  poi `up -d --force-recreate svi-publisher` + una **nuova** screening. Le fonti compaiono
+  in coda alla motivazione sulla scheda, **senza modifiche allo schema/UI SVI**. (In griglia
+  restano come colonna separata `enrichmentJson.fonti`.)
+- **`rationale_sintesi`**: pensato per la **griglia** (breve). Sul dettaglio la motivazione
+  completa c'è già nel core `Alert-trigger text`, quindi la sintesi non serve lì.
 - **Evidenze strutturate / network**: tab **Data → Child Objects** (`alerting_event`,
   `alert_action`) con un componente **Grid/Child-Object Viewer**; il **Network Diagram** è già
   in pagina e si popola con entità+relazioni nel Data Hub (fase 2).

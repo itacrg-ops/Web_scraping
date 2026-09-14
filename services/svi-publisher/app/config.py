@@ -70,6 +70,16 @@ class Settings(BaseSettings):
     svi_enrich_key_rationale_summary: str = "rationale_sintesi"
     svi_enrich_key_sources: str = "fonti"
     svi_rationale_summary_len: int = 300
+    # Scheda DETTAGLIO: i sotto-campi enrichmentJson.* NON sono bindabili sul Page
+    # Template (solo i field del modello alert lo sono) e le entità alert/alerting_event
+    # sono di sistema (field read-only → niente campi custom). L'unico campo che
+    # controlliamo ED è già mostrato sul dettaglio è il core `alertTriggerText`: con
+    # questo flag vi accodiamo le fonti (e opz. la sintesi), così compaiono sul dettaglio
+    # senza modifiche allo schema/UI SVI. Off = comportamento invariato.
+    svi_trigger_append_sources: bool = False
+    svi_trigger_sources_label: str = "Fonti"
+    svi_trigger_sources_limit: int = 5
+    svi_trigger_max_len: int = 3000
     # Media type versionato SAS (triage alert), usato solo in lettura.
     svi_alert_media_type: str = "application/vnd.sas.investigation.triage.alert+json"
     # Caricare l'entità nel Data Hub prima dell'alert (di norma non serve per il test).

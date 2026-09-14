@@ -93,21 +93,34 @@ def event_id(alert: dict[str, Any]) -> str:
     return str(uuid.uuid5(_EVENT_NS, business_key(alert)))
 
 
-def trigger_text(alert: dict[str, Any]) -> str:
+def trigger_text(alert: dict[str, Any], cfg=None) -> str:
     """Testo di innesco dell'alert (`alertTriggerText`): la motivazione leggibile,
-    o in mancanza un riepilogo sintetico rischio/AMI/categorie."""
+    o in mancanza un riepilogo sintetico rischio/AMI/categorie.
+
+    È l'UNICO campo che controlliamo ed è **già mostrato sulla scheda di dettaglio**
+    (Page Template, field core "Alert-trigger text"). Con `SVI_TRIGGER_APPEND_SOURCES`
+    vi accodiamo il blocco fonti, così i link compaiono sul dettaglio senza dover
+    definire campi enrichment sul modello alert (schema di sistema, read-only)."""
     rat = rationale(alert)
     if rat:
-        return rat[:2000]
-    parts: list[str] = []
-    if alert.get("risk_level"):
-        parts.append(f"Rischio {alert['risk_level']}")
-    if alert.get("ami_score") is not None:
-        parts.append(f"AMI {alert['ami_score']}")
-    cats = alert.get("fatf_categories") or []
-    if cats:
-        parts.append("categorie FATF: " + ", ".join(str(c) for c in cats))
-    return " · ".join(parts) or "Adverse media screening"
+        body = rat
+    else:
+        parts: list[str] = []
+        if alert.get("risk_level"):
+            parts.append(f"Rischio {alert['risk_level']}")
+        if alert.get("ami_score") is not None:
+            parts.append(f"AMI {alert['ami_score']}")
+        cats = alert.get("fatf_categories") or []
+        if cats:
+            parts.append("categorie FATF: " + ", ".join(str(c) for c in cats))
+        body = " · ".join(parts) or "Adverse media screening"
+    if cfg is not None and getattr(cfg, "svi_trigger_append_sources", False):
+        fonti = sources_text(alert.get("evidence"), limit=getattr(cfg, "svi_trigger_sources_limit", 5))
+        if fonti:
+            label = getattr(cfg, "svi_trigger_sources_label", "Fonti")
+            body = f"{body}\n\n{label}:\n{fonti}"
+        return body[:getattr(cfg, "svi_trigger_max_len", 3000)]
+    return body[:2000]
 
 
 def build_alerting_event(alert: dict[str, Any], cfg) -> dict[str, Any]:
@@ -129,7 +142,7 @@ def build_alerting_event(alert: dict[str, Any], cfg) -> dict[str, Any]:
         "score": score,
         "alertTypeCode": cfg.svi_alert_type_code or "strategy_default",
         "recommendedQueueId": cfg.svi_queue,
-        "alertTriggerText": trigger_text(alert),
+        "alertTriggerText": trigger_text(alert, cfg),
     }
     if cfg.svi_alert_origin:
         event["alertOriginCode"] = cfg.svi_alert_origin

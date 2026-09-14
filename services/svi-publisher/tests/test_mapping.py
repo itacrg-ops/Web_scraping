@@ -99,6 +99,27 @@ def test_build_alerting_event_schema():
     assert e3["actionableEntityLabel"] == e3["actionableEntityId"]
 
 
+def test_trigger_text_appends_sources_when_enabled():
+    """Le fonti compaiono sulla SCHEDA DI DETTAGLIO solo tramite il campo core
+    `alertTriggerText` (i sotto-campi enrichmentJson.* non sono bindabili lì e le
+    entità alert sono di sistema/read-only). Il flag le accoda al trigger text."""
+    # default (flag off): trigger text = sola motivazione, nessun blocco fonti
+    settings.svi_trigger_append_sources = False
+    t0 = mapping.trigger_text(ALERT, settings)
+    assert t0.startswith("Categorie FATF") and "Fonti:" not in t0
+    # senza cfg il comportamento storico è invariato
+    assert mapping.trigger_text(ALERT) == t0
+    # flag on: motivazione + blocco "Fonti" con i link (testata: url)
+    settings.svi_trigger_append_sources = True
+    t1 = mapping.trigger_text(ALERT, settings)
+    assert t1.startswith("Categorie FATF")
+    assert "\n\nFonti:\n" in t1
+    assert "news.example: https://news.example/a" in t1
+    # l'evento usa lo stesso trigger text arricchito
+    assert mapping.build_alerting_event(ALERT, settings)["alertTriggerText"] == t1
+    settings.svi_trigger_append_sources = False
+
+
 def test_build_alerting_payload_envelope():
     settings.svi_entity_type = "Soggetto"
     settings.svi_queue = "queue_test"
