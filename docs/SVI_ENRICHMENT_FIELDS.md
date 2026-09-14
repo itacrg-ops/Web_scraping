@@ -68,27 +68,34 @@ Note:
 
 ## Passi (UI di visualizzazione SVI)
 
-> Le etichette esatte variano tra versioni (SVI 10.x vs Viya 2025.xx). Usa i **nomi delle
-> funzioni**; il riferimento è l'*Administrator's Guide* della tua versione.
+> Le etichette esatte variano tra versioni. L'obiettivo non è definire attributi (i dati ci
+> sono in `enrichmentJson`), ma **mostrarli**. Due posti: l'**Alert Grid** (colonne della
+> lista) e la **scheda di dettaglio** dell'alert (menu *Pages*).
 
-L'obiettivo non è definire attributi (i dati ci sono in `enrichmentJson`), ma **mostrarli**:
+### A) Alert Grid — colonne della lista (procedura confermata)
+Nella **Strategy** del dominio (`Alerts → Domains/Strategies →` la tua strategia):
+1. tab **Alert Grid** → **Select fields for the alert grid…**;
+2. aggiungi un campo per ciascuna chiave, con **Field Name = il percorso esatto** (minuscolo!):
+   - `enrichmentJson.risk_level` · `enrichmentJson.fatf_categories` ·
+     `enrichmentJson.disposition` · `enrichmentJson.rationale_sintesi` · `enrichmentJson.fonti`;
+   - **Display Type** = `Text`; **Header Label** = etichetta a piacere; **Cell Renderer** = `Default`;
+3. ordina con le frecce su/giù;
+4. **Salva** e **deploya la strategia**; poi **ricarica** la lista alert (hard refresh).
 
-1. **Accedi** all'app **Manage Investigate and Search** con profilo amministratore e apri
-   il **Page Builder / Manage Pages** (progettazione delle schermate) per il dominio
-   Adverse Media (`domainId = d_42843825`).
-2. Apri la **scheda di dettaglio dell'alert** (alert workspace/page) usata dalla coda
-   `queue_3264317`.
-3. **Aggiungi i campi** che leggono da `enrichmentJson`: un componente "campo/attributo"
-   legato a `enrichmentJson.risk_level`, `enrichmentJson.fatf_categories`,
-   `enrichmentJson.rationale`, `enrichmentJson.disposition` (il percorso esatto dipende
-   dalla versione — **è lo stesso modo con cui è mostrato `categoria_tender`**: vedi
-   scorciatoia).
-4. *(Opz.)* Aggiungi le stesse voci come **colonne dell'Alert Grid** per vederle nella lista.
-5. **Salva/pubblica** la pagina.
+Il **Field Name deve combaciare byte-per-byte** con la chiave in `enrichmentJson` (case
+incluso — la `F` maiuscola di `Fatf_categories` è stata il classico intoppo).
 
-> Se la tua versione **non** consente di legare direttamente `enrichmentJson.*`: la
-> motivazione completa è comunque già leggibile nel campo **`alertTriggerText`** (mostrato
-> di default). L'enrichment strutturato serve soprattutto per **colonne/filtri**.
+### B) Scheda di dettaglio — `Pages` (per testi lunghi ed evidenze)
+Per il `rationale` completo (testo lungo), i `fonti`, e i `contributingObjects`:
+1. menu **Pages** → apri la **pagina di dettaglio alert** usata dal dominio/coda;
+2. aggiungi un componente **campo/testo** legato a `enrichmentJson.rationale` (testo lungo)
+   e `enrichmentJson.fonti`; per le evidenze strutturate un componente **related/oggetti
+   contribuenti** legato ai `contributingObjects`;
+3. **salva/pubblica** la pagina.
+
+> Se `enrichmentJson.*` non è direttamente legabile nella tua versione, la motivazione
+> completa è comunque già leggibile nel campo core **`alertTriggerText`** (mostrato di
+> default). L'enrichment strutturato serve soprattutto per **colonne/filtri**.
 
 ## Verifica
 
