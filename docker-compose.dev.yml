@@ -2,8 +2,9 @@
 # Avvio:   cp .env.example .env  &&  docker compose -f docker-compose.dev.yml up --build
 # Con SAS: docker compose -f docker-compose.dev.yml --profile sas up --build
 #
-# Nota: SVI/Viya non gira in locale. svi-publisher usa SVI_MODE=mock; l'LLM è
-# comunque su Azure AI Foundry (configura AZURE_* nel .env per la classificazione).
+# Nota: svi-publisher legge SVI_MODE (e tutte le SVI_*/SAS_*/VIYA_*) dal .env: default
+# mock (nessuna Viya in locale), SVI_MODE=live per pubblicare davvero. L'LLM è comunque
+# su Azure AI Foundry (configura AZURE_* nel .env per la classificazione).
 
 name: adverse-media
 
@@ -137,9 +138,11 @@ services:
   # ---- Publisher verso SAS Visual Investigator (mock in locale) ----
   svi-publisher:
     build: ./services/svi-publisher
+    # SVI_MODE e le credenziali SVI_*/SAS_*/VIYA_* arrivano da .env, esattamente come
+    # per lo smoke-test. Default mock (config.py) se non impostate; per pubblicare in
+    # SVI mettere SVI_MODE=live nel .env. (Prima un override qui forzava SVI_MODE a
+    # mock ignorando il .env: il servizio restava mock anche con .env=live.)
     env_file: .env
-    environment:
-      SVI_MODE: "${SVI_MODE:-mock}"
     ports: ["8090:8090"]
 
   # ---- SAS MCP server: solo con un ambiente Viya di test (profilo "sas") ----
