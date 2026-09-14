@@ -107,39 +107,41 @@ SVI_ENRICH_KEY_DISPOSITION=disposizione
 docker compose -f docker-compose.dev.yml up -d --force-recreate svi-publisher
 ```
 
-## In alternativa alla UI: script via AdminMetadataApi
+## In alternativa alla UI: script via API dei metadati
 
-`services/svi-publisher/scripts/svi_metadata.py` crea gli attributi via API (utile per
-evitare i click o replicarli identici in altri ambienti). È **discovery-first** e
-**dry-run** finché non passi `--apply`; per non indovinare lo schema **clona la forma di
-un attributo esistente** (es. `categoria_tender`). Eseguilo dalla macchina che raggiunge Viya:
+`services/svi-publisher/scripts/svi_metadata.py` crea gli attributi via API. **Nota:** i
+metadati **non** stanno in un servizio "admin-metadata" a sé — vivono nei servizi già in
+uso: **alert type** sotto `/svi-alert`, **object type** (entità) sotto `/svi-datahub`. Lo
+script è **discovery-first** (parte dai **link HATEOAS** dei due servizi, che espongono gli
+endpoint reali) e **dry-run** finché non passi `--apply`; per non indovinare lo schema
+**clona la forma di un attributo esistente** (es. `categoria_tender`). I tipi si indicano
+con il **percorso completo** (es. `/svi-alert/alertTypes/<id>`). Eseguilo dove l'app raggiunge Viya:
 
 ```powershell
-# abbrevia il comando (facoltativo)
 $svi = "docker compose -f docker-compose.dev.yml run --build --rm svi-publisher python"
 
-# 1) discovery: base path AdminMetadataApi + collezioni (annota gli id dei tipi)
+# 1) discovery: LINK reali di /svi-datahub e /svi-alert + collezioni di tipi (annota i percorsi)
 & $svi scripts/svi_metadata.py
-# 2) localizza un attributo che GIÀ funziona: dice in QUALE tipo/kind vive l'enrichment
-#    e ne stampa la forma. Annota il typeId che lo contiene (es. il tipo "tender").
+# 2) localizza un attributo che GIÀ funziona: dice tipo+percorso e forma (stampa la riga --template)
 & $svi scripts/svi_metadata.py --find categoria_tender
-# 3) dry-run: clona la forma di categoria_tender (dal suo tipo) sul tipo Adverse Media
-&  $svi scripts/svi_metadata.py --type <typeIdAdverseMedia> --kind <kind> `
-        --template categoria_tender --template-type <typeIdCheContieneCategoriaTender> --template-kind <kind>
+# 3) dry-run: clona la forma di categoria_tender sul tipo Adverse Media (percorsi completi)
+& $svi scripts/svi_metadata.py --type /svi-alert/alertTypes/<idAdverseMedia> `
+       --template categoria_tender --template-type /svi-alert/alertTypes/<idCheContieneCategoriaTender>
 # 4) scrittura reale (PUT con ETag/If-Match)
-&  $svi scripts/svi_metadata.py --type <typeIdAdverseMedia> --kind <kind> `
-        --template categoria_tender --template-type <typeIdCheContieneCategoriaTender> --template-kind <kind> --apply
+& $svi scripts/svi_metadata.py --type /svi-alert/alertTypes/<idAdverseMedia> `
+       --template categoria_tender --template-type /svi-alert/alertTypes/<idCheContieneCategoriaTender> --apply
 ```
 
-- `--find` (passo 2) ti dice **il `kind`** (objectTypes vs alertTypes) e **il tipo** dove
-  vivono gli attributi enrichment: usa lo **stesso kind** per il tuo tipo Adverse Media.
-- `--template ... --template-type ...` clona la **forma esatta** di `categoria_tender`
-  (attributo già funzionante) sui nostri 4 campi. In alternativa, ometti `--template*`:
-  lo script clona il primo attributo del tipo target.
+- Il punto 1 stampa i **link** dei servizi: da lì ricavi i percorsi reali delle collezioni
+  di tipi (alert type / object type). Se una collezione non è tra i candidati, passala con
+  `--extra <path>`.
+- `--find` (punto 2) ti dice **tipo e percorso** dove vive l'attributo enrichment e stampa
+  già la riga `--template ... --template-type ...` pronta.
+- Ometti `--template*` per clonare il primo attributo del tipo target.
 
-Incolla l'output dei passi 1–2 (base path, `--find`, id dei tipi): se PUT dà `405` o la
-chiave dell'array attributi è diversa, adatto lo script sui dati reali. Dopo la creazione,
-**rendi comunque visibili** i campi in Alert Grid / scheda alert (la UI, §Passi 4).
+Incolla l'output dei punti 1–2 (link dei servizi, `--find`): se la PUT dà `405` o la chiave
+dell'array attributi è diversa, adatto lo script sui dati reali. Dopo la creazione, **rendi
+comunque visibili** i campi in Alert Grid / scheda alert (la UI, §Passi 4).
 
 ## Cosa stiamo inviando (per confronto 1:1)
 
