@@ -123,6 +123,9 @@ def build_alerting_event(alert: dict[str, Any], cfg) -> dict[str, Any]:
         "alertingEventId": event_id(alert),
         "actionableEntityType": cfg.svi_entity_type,
         "actionableEntityId": entity_id,
+        # Etichetta leggibile in coda = denominazione del soggetto (fallback all'id se
+        # manca: es. soggetti senza CF/P.IVA). Senza questo campo SVI mostrerebbe l'id.
+        "actionableEntityLabel": alert.get("subject") or entity_id,
         "score": score,
         "alertTypeCode": cfg.svi_alert_type_code or "strategy_default",
         "recommendedQueueId": cfg.svi_queue,

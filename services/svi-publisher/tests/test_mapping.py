@@ -76,9 +76,9 @@ def test_build_alerting_event_schema():
     settings.svi_alert_origin = ""
     settings.svi_alert_type_code = "strategy_default"
     e = mapping.build_alerting_event(ALERT, settings)
-    # Struttura confermata dall'SVI Admin: NIENTE domainId / actionableEntityLabel.
+    # NIENTE domainId (implicito nella coda/strategia); label = denominazione (leggibilità).
     assert "domainId" not in e
-    assert "actionableEntityLabel" not in e
+    assert e["actionableEntityLabel"] == "ACME Costruzioni S.r.l."
     assert e["actionableEntityType"] == "Soggetto"
     assert e["actionableEntityId"] == "00743110157"          # CF/P.IVA del soggetto
     assert e["score"] == 82                                   # AMI
@@ -93,6 +93,10 @@ def test_build_alerting_event_schema():
     settings.svi_alert_origin = "AdverseMedia"
     assert mapping.build_alerting_event(ALERT, settings)["alertOriginCode"] == "AdverseMedia"
     settings.svi_alert_origin = ""
+    # label: fallback all'id quando manca la denominazione (es. soggetto senza subject)
+    no_subj = {**ALERT}; no_subj.pop("subject")
+    e3 = mapping.build_alerting_event(no_subj, settings)
+    assert e3["actionableEntityLabel"] == e3["actionableEntityId"]
 
 
 def test_build_alerting_payload_envelope():

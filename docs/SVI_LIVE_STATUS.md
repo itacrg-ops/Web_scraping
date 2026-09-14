@@ -28,6 +28,7 @@ modello dominio: [`SVI_DOMAIN_ADVERSE_MEDIA.md`](SVI_DOMAIN_ADVERSE_MEDIA.md).
    "alertingEvents": [
      {"alertingEventId": "<uuid5(businessKey)>",
       "actionableEntityType": "Soggetto", "actionableEntityId": "<CF/P.IVA>",
+      "actionableEntityLabel": "<denominazione soggetto>",
       "score": 82, "alertTypeCode": "strategy_default",
       "recommendedQueueId": "queue_3264317", "alertTriggerText": "<motivazione>",
       "alertOriginCode": "<opz.>"}],
@@ -35,9 +36,10 @@ modello dominio: [`SVI_DOMAIN_ADVERSE_MEDIA.md`](SVI_DOMAIN_ADVERSE_MEDIA.md).
    "scenarioFiredEvents": [ {"alertingEventId": "…", "scenarioName": "…", …} ],// opz.
    "contributingObjects": [ {"alertingEventId": "…", "url": "…", …} ]}         // opz.
   ```
-  L'oggetto evento **NON** ha `domainId` né `actionableEntityLabel` (il dominio è
-  implicito nella coda/strategia). Le tre sezioni opzionali sono gated da config
-  (off al primo test). Codice: `mapping.build_alerting_payload()`.
+  L'oggetto evento **NON** ha `domainId` (implicito nella coda/strategia); ha invece
+  `actionableEntityLabel` = **denominazione** del soggetto (fallback all'id se manca),
+  così in coda si legge il nome e non l'id. Le tre sezioni opzionali sono gated da
+  config (off al primo test). Codice: `mapping.build_alerting_payload()`.
 - **ALERT CREATO — HTTP 201** ✅✅ — l'envelope produce l'alert (verificato con
   `svi_smoketest.py --diagnose`, variante `baseline` → `201 Created`). **L'integrazione
   live funziona end-to-end.**
