@@ -342,6 +342,8 @@ python services/svi-publisher/tests/test_idempotency.py   # 5/5
 | `415 unsupported media type` | manca `+json;version=1` | media type versionato (già default) |
 | `405` su `POST /svi-alert/alerts` | gli alert non si creano lì | usare `/svi-alert/alertingEvents` (già a posto) |
 | `svi_alert_id` = `svi-mock-…` | servizio in **mock** | `SVI_MODE=live` nel `.env` + ricreare il container |
+| smoke-test **crea** l'alert ma lo **screening reale no** | il servizio `up -d` tiene l'env di quando è partito; lo smoke (`run`) legge il `.env` fresco | ricreare il servizio: `docker compose up -d --force-recreate --build svi-publisher` (+ worker); conferma nel log `SVI publish live: … queue=…` |
+| **un solo** campo enrichment non si vede (es. FATF), gli altri sì | chiave inviata ≠ binding griglia `enrichmentJson.<chiave>` byte-per-byte (spesso una **maiuscola**) | allineare stessa grafia su **entrambe** (`SVI_ENRICH_KEY_*` e Field Name griglia), poi salva/deploya la strategia; `enrichmentJson` scritto alla creazione → può servire un alert nuovo |
 | `CERTIFICATE_VERIFY_FAILED` | cert self-signed | `SVI_VERIFY_TLS=false` (demo) o `SVI_CA_BUNDLE` |
 | `SSL: UNEXPECTED_EOF_WHILE_READING` | connessione chiusa **durante l'handshake TLS** (non è il cert) — tipico dopo un cambio ambiente | `SVI_VERIFY_TLS=false` NON aiuta. Verifica `VIYA_ENDPOINT` (https, host/porta, no path/spazi), raggiungibilità/VPN, `env\|grep -i proxy`, eventuale mTLS/versione TLS. Diagnosi: `curl -vk https://<host>/SASLogon/oauth/token`, `openssl s_client -connect <host>:443 -servername <host>` |
 | enrichment non visibile (AMI sì) | è memorizzato in `enrichmentJson` | **visualizzazione**: Page Builder ([`SVI_ENRICHMENT_FIELDS.md`](SVI_ENRICHMENT_FIELDS.md)) |
