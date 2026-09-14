@@ -1,7 +1,11 @@
-# SVI — stato attivazione live (as-built) e blocchi aperti
+# SVI — attivazione live (as-built): **FUNZIONANTE end-to-end** ✅
+
+> **STATO: LIVE OK.** Lo screening reale (pipeline Temporal → `svi-publisher` in
+> `SVI_MODE=live`) crea l'alert in SAS Visual Investigator, con `SVI_SEND_ENRICHMENT=true`
+> (AMI/FATF/motivazione nell'evento). Percorso completo verificato dall'utente.
 
 Handoff dell'integrazione live verso SAS Visual Investigator: cosa è **validato**,
-cosa manca e come ripartire. Ambiente di test: **SAS Viya RACE demo**
+cosa resta opzionale e come è configurato. Ambiente di test: **SAS Viya RACE demo**
 `https://azureuse030088.race.sas.com`. Runbook operativo: [`SVI_GOLIVE.md`](SVI_GOLIVE.md);
 modello dominio: [`SVI_DOMAIN_ADVERSE_MEDIA.md`](SVI_DOMAIN_ADVERSE_MEDIA.md).
 
@@ -47,6 +51,15 @@ modello dominio: [`SVI_DOMAIN_ADVERSE_MEDIA.md`](SVI_DOMAIN_ADVERSE_MEDIA.md).
   valorizzato, un 1008 significa **alertingEventId già esistente** (stesso screening →
   id deterministico → SVI rifiuta i duplicati). Il publisher ora lo tratta come
   **idempotenza** (successo, `deduplicated=true`), mai come errore, e non lo ritenta.
+- **Pipeline reale live** ✅ — `worker → svi-publisher (/publish/alert) → SVI`: lo screening
+  end-to-end crea l'alert. Prerequisiti risolti: `SVI_MODE=live` onorato dal `.env`
+  (rimosso l'override compose che forzava mock); `SVI_LOAD_ENTITY=false` (il documento
+  Data Hub, opzionale e non ancora mappato, non blocca più l'alert).
+- **Enrichment attivo** ✅ — `SVI_SEND_ENRICHMENT=true`: l'evento porta AMI, risk level,
+  categorie FATF, disposition e motivazione (sezione `enrichment[]` collegata all'evento).
+- **Osservabilità** — i log applicativi (`svi_publisher`) sono visibili sotto uvicorn e
+  distinguono **CREATO vs DUPLICATO** (con score/coda/tipo/sezioni); il worker logga
+  `id/mode/dedup`.
 
 ## Configurazione trovata nell'ambiente
 
