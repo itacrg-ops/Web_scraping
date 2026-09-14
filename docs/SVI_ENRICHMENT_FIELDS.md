@@ -115,18 +115,30 @@ evitare i click o replicarli identici in altri ambienti). È **discovery-first**
 un attributo esistente** (es. `categoria_tender`). Eseguilo dalla macchina che raggiunge Viya:
 
 ```powershell
-# 1) discovery: base path AdminMetadataApi + collezioni
-docker compose -f docker-compose.dev.yml run --build --rm svi-publisher python scripts/svi_metadata.py
-# 2) guarda come è definito un attributo che GIÀ funziona (per clonarne la forma)
-docker compose -f docker-compose.dev.yml run --build --rm svi-publisher python scripts/svi_metadata.py --find categoria_tender
-# 3) dry-run: costruisce i 4 attributi clonando il template (NON scrive)
-docker compose -f docker-compose.dev.yml run --build --rm svi-publisher python scripts/svi_metadata.py --type <typeId> --kind objectTypes --template categoria_tender
+# abbrevia il comando (facoltativo)
+$svi = "docker compose -f docker-compose.dev.yml run --build --rm svi-publisher python"
+
+# 1) discovery: base path AdminMetadataApi + collezioni (annota gli id dei tipi)
+& $svi scripts/svi_metadata.py
+# 2) localizza un attributo che GIÀ funziona: dice in QUALE tipo/kind vive l'enrichment
+#    e ne stampa la forma. Annota il typeId che lo contiene (es. il tipo "tender").
+& $svi scripts/svi_metadata.py --find categoria_tender
+# 3) dry-run: clona la forma di categoria_tender (dal suo tipo) sul tipo Adverse Media
+&  $svi scripts/svi_metadata.py --type <typeIdAdverseMedia> --kind <kind> `
+        --template categoria_tender --template-type <typeIdCheContieneCategoriaTender> --template-kind <kind>
 # 4) scrittura reale (PUT con ETag/If-Match)
-docker compose -f docker-compose.dev.yml run --build --rm svi-publisher python scripts/svi_metadata.py --type <typeId> --kind objectTypes --template categoria_tender --apply
+&  $svi scripts/svi_metadata.py --type <typeIdAdverseMedia> --kind <kind> `
+        --template categoria_tender --template-type <typeIdCheContieneCategoriaTender> --template-kind <kind> --apply
 ```
 
-Incolla l'output dei passi 1–2 (base path, `--find`): se PUT dà `405` o la chiave
-dell'array attributi è diversa, adatto lo script sui dati reali. Dopo la creazione,
+- `--find` (passo 2) ti dice **il `kind`** (objectTypes vs alertTypes) e **il tipo** dove
+  vivono gli attributi enrichment: usa lo **stesso kind** per il tuo tipo Adverse Media.
+- `--template ... --template-type ...` clona la **forma esatta** di `categoria_tender`
+  (attributo già funzionante) sui nostri 4 campi. In alternativa, ometti `--template*`:
+  lo script clona il primo attributo del tipo target.
+
+Incolla l'output dei passi 1–2 (base path, `--find`, id dei tipi): se PUT dà `405` o la
+chiave dell'array attributi è diversa, adatto lo script sui dati reali. Dopo la creazione,
 **rendi comunque visibili** i campi in Alert Grid / scheda alert (la UI, §Passi 4).
 
 ## Cosa stiamo inviando (per confronto 1:1)

@@ -238,7 +238,26 @@ def build_new_attributes(template: dict) -> list[dict]:
     return out
 
 
-def create_attrs(c: httpx.Client, url: str, h: dict, template_name: str | None, apply: bool) -> None:
+def fetch_template_attr(c: httpx.Client, url: str, name: str, h: dict) -> dict | None:
+    """Recupera la forma di un attributo (per nome) da un ALTRO tipo (es. il tipo che
+    contiene `categoria_tender`), da clonare sul tipo target."""
+    rd = _get(c, url, h)
+    if rd is None or rd.status_code >= 400:
+        print(f"  ✗ template-type non leggibile ({url})"); return None
+    try:
+        defn = rd.json()
+    except Exception:  # noqa: BLE001
+        return None
+    attrs, _ = _find_attr_container(defn)
+    a = next((x for x in (attrs or []) if _attr_name(x) == name), None)
+    if a is None:
+        print(f"  ✗ attributo '{name}' non presente nel template-type "
+              f"(attributi: {', '.join(str(_attr_name(x)) for x in (attrs or []))})")
+    return a
+
+
+def create_attrs(c: httpx.Client, url: str, h: dict, template_name: str | None,
+                 apply: bool, template_attr: dict | None = None) -> None:
     print("\n4) CREATE ATTRIBUTI  (dry-run: senza --apply NON scrive)")
     defn, etag, ctype = dump_type(c, url, h)
     if not defn:
@@ -248,9 +267,12 @@ def create_attrs(c: httpx.Client, url: str, h: dict, template_name: str | None, 
         print(f"  ✗ nessun array attributi riconosciuto (chiavi provate: {ATTR_KEYS}).")
         print("    Guarda --dump e dimmi la chiave giusta: la aggiungo."); return
     existing = {_attr_name(a) for a in attrs}
-    # Template: l'attributo indicato, o il primo esistente (di cui copiare la forma).
-    tmpl = None
-    if template_name:
+    # Template della forma: 1) attributo passato da un altro tipo (--template-type),
+    # 2) attributo per nome nel tipo target, 3) primo attributo del tipo target.
+    tmpl = template_attr
+    if tmpl is not None:
+        print(f"  (forma clonata dal template-type: attributo '{_attr_name(tmpl)}')")
+    elif template_name:
         tmpl = next((a for a in attrs if _attr_name(a) == template_name), None)
         if tmpl is None:
             print(f"  ✗ template '{template_name}' non presente in questo tipo. "
@@ -306,6 +328,10 @@ def main() -> None:
     ap.add_argument("--type", metavar="TYPEID", help="tipo su cui aggiungere gli attributi")
     ap.add_argument("--kind", default="objectTypes", help="collezione del tipo (objectTypes|alertTypes|entityTypes)")
     ap.add_argument("--template", metavar="ATTR", help="attributo esistente di cui clonare la forma")
+    ap.add_argument("--template-type", metavar="TYPEID",
+                    help="tipo (altro) da cui prendere --template, es. il tipo che contiene categoria_tender")
+    ap.add_argument("--template-kind", default="objectTypes",
+                    help="collezione del --template-type (default: objectTypes)")
     ap.add_argument("--apply", action="store_true", help="esegue davvero la PUT (default: dry-run)")
     args = ap.parse_args()
 
@@ -334,7 +360,14 @@ def main() -> None:
             print(f"\n3b) DUMP tipo '{args.dump}' ({args.kind})")
             dump_type(c, type_url(base_url, base, args.kind, args.dump), h)
         if args.type:
-            create_attrs(c, type_url(base_url, base, args.kind, args.type), h, args.template, args.apply)
+            tmpl_attr = None
+            if args.template and args.template_type:
+                tmpl_url = type_url(base_url, base, args.template_kind, args.template_type)
+                tmpl_attr = fetch_template_attr(c, tmpl_url, args.template, h)
+                if tmpl_attr is None:
+                    print("  ✗ template dall'altro tipo non recuperato: annullo il create."); return
+            create_attrs(c, type_url(base_url, base, args.kind, args.type), h,
+                         args.template, args.apply, template_attr=tmpl_attr)
 
     if not (args.find or args.dump or args.type):
         print("\n→ Prossimo passo: `--find categoria_tender` per vedere la forma di un attributo")
