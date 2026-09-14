@@ -107,6 +107,28 @@ SVI_ENRICH_KEY_DISPOSITION=disposizione
 docker compose -f docker-compose.dev.yml up -d --force-recreate svi-publisher
 ```
 
+## In alternativa alla UI: script via AdminMetadataApi
+
+`services/svi-publisher/scripts/svi_metadata.py` crea gli attributi via API (utile per
+evitare i click o replicarli identici in altri ambienti). È **discovery-first** e
+**dry-run** finché non passi `--apply`; per non indovinare lo schema **clona la forma di
+un attributo esistente** (es. `categoria_tender`). Eseguilo dalla macchina che raggiunge Viya:
+
+```powershell
+# 1) discovery: base path AdminMetadataApi + collezioni
+docker compose -f docker-compose.dev.yml run --build --rm svi-publisher python scripts/svi_metadata.py
+# 2) guarda come è definito un attributo che GIÀ funziona (per clonarne la forma)
+docker compose -f docker-compose.dev.yml run --build --rm svi-publisher python scripts/svi_metadata.py --find categoria_tender
+# 3) dry-run: costruisce i 4 attributi clonando il template (NON scrive)
+docker compose -f docker-compose.dev.yml run --build --rm svi-publisher python scripts/svi_metadata.py --type <typeId> --kind objectTypes --template categoria_tender
+# 4) scrittura reale (PUT con ETag/If-Match)
+docker compose -f docker-compose.dev.yml run --build --rm svi-publisher python scripts/svi_metadata.py --type <typeId> --kind objectTypes --template categoria_tender --apply
+```
+
+Incolla l'output dei passi 1–2 (base path, `--find`): se PUT dà `405` o la chiave
+dell'array attributi è diversa, adatto lo script sui dati reali. Dopo la creazione,
+**rendi comunque visibili** i campi in Alert Grid / scheda alert (la UI, §Passi 4).
+
 ## Cosa stiamo inviando (per confronto 1:1)
 
 Con `SVI_SEND_ENRICHMENT=true` nel `.env`, il dry-run stampa l'envelope completo con le
