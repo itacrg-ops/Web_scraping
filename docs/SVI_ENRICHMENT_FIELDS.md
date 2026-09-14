@@ -85,13 +85,24 @@ Nella **Strategy** del dominio (`Alerts → Domains/Strategies →` la tua strat
 Il **Field Name deve combaciare byte-per-byte** con la chiave in `enrichmentJson` (case
 incluso — la `F` maiuscola di `Fatf_categories` è stata il classico intoppo).
 
-### B) Scheda di dettaglio — `Pages` (per testi lunghi ed evidenze)
-Per il `rationale` completo (testo lungo), i `fonti`, e i `contributingObjects`:
-1. menu **Pages** → apri la **pagina di dettaglio alert** usata dal dominio/coda;
-2. aggiungi un componente **campo/testo** legato a `enrichmentJson.rationale` (testo lungo)
-   e `enrichmentJson.fonti`; per le evidenze strutturate un componente **related/oggetti
-   contribuenti** legato ai `contributingObjects`;
-3. **salva/pubblica** la pagina.
+### B) Scheda di dettaglio — `Pages` → Page Template `alert-detail`
+Per il `rationale` completo (testo lungo) e i `fonti`. La pagina ha già un **Text Input**
+"Alert-trigger text" (`Data source = Fields.Alert-trigger text`, Multi-line, *Show full text
+in view mode*): è il pattern da riusare.
+1. menu **Pages** → apri la Page Template della scheda alert (es. `alert-detail`), tab **Alert Details**;
+2. **scorciatoia**: seleziona il componente "Alert-trigger text" → **duplicalo** (icona nella
+   sua toolbar) due volte;
+3. su ogni copia, nel pannello a destra, cambia **Data source** sul campo enrichment
+   (`rationale` per la prima, `fonti` per la seconda — stessi Field Name dell'Alert Grid) e
+   il **Title text** ("Motivazione", "Fonti"); tieni Multi-line ✓ e *Show full text* ✓;
+4. in alternativa trascina un **Text Input** dal pannello **Controls** e imposta Data source/Title;
+5. **Salva** la pagina (icona salva) e **Preview**.
+
+Se il campo non appare nel menu **Data source**, cercalo nel tab **Data** (a sinistra); se
+`fonti`/`rationale_sintesi` mancano è perché sono **nuovi** → servono rebuild + un alert nuovo.
+Per le evidenze **strutturate** (cliccabili) usa un **Grid**/**Child-Object Viewer** legato ai
+`contributingObjects`. La pagina ha già un **Network Diagram** (colonna *Network*): si popola
+con entità+relazioni nel Data Hub (fase 2).
 
 > Se `enrichmentJson.*` non è direttamente legabile nella tua versione, la motivazione
 > completa è comunque già leggibile nel campo core **`alertTriggerText`** (mostrato di
