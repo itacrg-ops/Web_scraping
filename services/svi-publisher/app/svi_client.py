@@ -130,7 +130,12 @@ async def publish_alert(alert: dict[str, Any]) -> dict[str, Any]:
 
         payload = mapping.build_alerting_payload(alert, settings)
         mt = settings.svi_alertingevent_media_type
-        entity_id = payload["alertingEvents"][0].get("actionableEntityId")
+        ev = payload["alertingEvents"][0]
+        entity_id = ev.get("actionableEntityId")
+        logger.info("SVI publish live: key=%s eventId=%s entity=%s score=%s type=%s queue=%s sezioni=%s",
+                    key, ev.get("alertingEventId"), entity_id, ev.get("score"),
+                    ev.get("alertTypeCode"), ev.get("recommendedQueueId"),
+                    [k for k in payload if k != "jsonLayout"])
         try:
             ev_resp = await _retry(
                 "alert/alertingEvents",
@@ -157,7 +162,9 @@ async def publish_alert(alert: dict[str, Any]) -> dict[str, Any]:
             first = (items[0] if items else rj) or {}
             alert_id = first.get("alertId") or first.get("alertingEventId") or mapping.event_id(alert)
 
-    logger.info("Alerting event SVI creato: alert=%s entity=%s dup=%s", alert_id, entity_id, duplicate)
+    esito = "DUPLICATO (già presente, niente di nuovo in coda)" if duplicate else "CREATO"
+    logger.info("Alerting event SVI %s: alert=%s entity=%s http=%s dedup=%s",
+                esito, alert_id, entity_id, ev_resp.status_code, duplicate)
     _idem_put(key, alert_id, document_id)
     return {"svi_alert_id": alert_id, "document_id": document_id, "deduplicated": duplicate}
 

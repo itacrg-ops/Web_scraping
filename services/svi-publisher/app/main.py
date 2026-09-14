@@ -7,11 +7,23 @@ idempotenza in-process e retry verso l'ambiente Viya/SVI.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 
 from app import svi_client
 from app.config import settings
+
+# I log applicativi ("svi_publisher") devono essere visibili anche sotto uvicorn
+# (che di default lascia il root a WARNING): diamo al logger un handler proprio a INFO.
+_applog = logging.getLogger("svi_publisher")
+if not _applog.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+    _applog.addHandler(_h)
+    _applog.setLevel(logging.INFO)
+    _applog.propagate = False
 
 app = FastAPI(title="SVI Publisher", version="0.2.0")
 

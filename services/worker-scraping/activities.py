@@ -387,7 +387,14 @@ async def publish_svi(alert_payload: dict) -> str:
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(f"{SVI_PUBLISHER_URL}/publish/alert", json=alert_payload)
         resp.raise_for_status()
-        return resp.json()["svi_alert_id"]
+        body = resp.json()
+        # mode/dedup rendono subito diagnosticabile il risultato: un id svi-mock-* =
+        # servizio in mock; deduplicated=true = screening già pubblicato (niente di nuovo).
+        activity.logger.info(
+            "SVI publish: id=%s mode=%s dedup=%s screening=%s",
+            body.get("svi_alert_id"), body.get("mode"),
+            body.get("deduplicated"), alert_payload.get("screening_id"))
+        return body["svi_alert_id"]
 
 
 @activity.defn
