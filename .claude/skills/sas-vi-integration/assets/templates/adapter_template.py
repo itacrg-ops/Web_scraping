@@ -28,10 +28,18 @@ def build_svi_alert(obj: dict[str, Any]) -> SviAlert:
     strutturati (poi visibili configurando la pagina alert in SVI — vedi onboarding)."""
     business_key = str(obj["case_id"])                       # ← id stabile del tuo caso
     entity_id = obj.get("tax_id") or business_key            # ← actionableEntityId
+    # Fonti/evidenze come testo ("titolo: url" per riga) → campo enrichment mostrabile.
+    fonti = "\n".join(f"{e.get('source','fonte')}: {e['url']}"
+                      for e in (obj.get("evidence") or []) if e.get("url"))
     enrichment = {
         "risk_level": obj.get("risk_level", ""),
         "category": obj.get("category", ""),
-        # aggiungi qui i campi custom (valori stringa) da mostrare sull'alert
+        # sintesi breve (per la griglia) + link fonti (per il dettaglio):
+        "rationale_sintesi": (obj.get("explanation", "") or "")[:300],
+        "fonti": fonti,
+        # aggiungi qui altri campi custom (valori stringa) da mostrare sull'alert.
+        # NB: il Name del campo nella griglia SVI deve combaciare byte-per-byte (case!).
+        # Per evidenze STRUTTURATE (oggetti con url) usa invece SviAlert.contributing_objects.
     }
     return SviAlert(
         business_key=business_key,

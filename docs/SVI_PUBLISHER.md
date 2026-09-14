@@ -260,6 +260,9 @@ arriva dal `.env`, default `mock`).
 | `SVI_ENRICH_KEY_DISPOSITION` | `disposition` | " |
 | `SVI_ENRICH_KEY_RATIONALE` | `rationale` | " |
 | `SVI_ENRICH_KEY_SOURCE` | `source` | " |
+| `SVI_ENRICH_KEY_RATIONALE_SUMMARY` | `rationale_sintesi` | sintesi motivazione (breve, per la griglia) |
+| `SVI_ENRICH_KEY_SOURCES` | `fonti` | link fonti/evidenze (`testata: url` per riga) |
+| `SVI_RATIONALE_SUMMARY_LEN` | `300` | lunghezza max della sintesi |
 | `SVI_LOAD_ENTITY` | `false` | carica il documento Data Hub prima dell'alert (non bloccante) |
 | `SVI_DEDUP_ON_1008` | `false` | tratta `errorCode 1008` come duplicato idempotente invece di sollevarlo — solo su ambienti a riferimenti validi |
 

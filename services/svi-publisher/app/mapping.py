@@ -136,6 +136,19 @@ def build_alerting_event(alert: dict[str, Any], cfg) -> dict[str, Any]:
     return event
 
 
+def sources_text(evidence: list[dict[str, Any]] | None, limit: int = 10) -> str:
+    """Elenco leggibile delle fonti/evidenze (`testata: url`, una per riga) per il
+    campo enrichment `fonti`. Solo evidenze con URL; troncato a `limit`."""
+    out: list[str] = []
+    for e in (evidence or [])[:limit]:
+        url = e.get("url")
+        if not url:
+            continue
+        testata = e.get("testata") or e.get("title") or "fonte"
+        out.append(f"{testata}: {url}")
+    return "\n".join(out)
+
+
 def build_enrichment(alert: dict[str, Any], cfg) -> dict[str, Any]:
     """Riga di `enrichment` (custom fields del dominio) collegata all'evento tramite
     `alertingEventId`. Valori stringa: SVI può validarne le chiavi sul modello dominio."""
@@ -155,6 +168,16 @@ def build_enrichment(alert: dict[str, Any], cfg) -> dict[str, Any]:
     rat = rationale(alert)
     if rat:
         enr[cfg.svi_enrich_key_rationale] = rat[:1000]
+    # Sintesi della motivazione (primo driver, o inizio del rationale): campo breve da
+    # mostrare in griglia, tenendo il full su una scheda di dettaglio.
+    drivers = alert.get("drivers") or []
+    summary = str(drivers[0]) if drivers else rat
+    if summary:
+        enr[cfg.svi_enrich_key_rationale_summary] = summary[:cfg.svi_rationale_summary_len]
+    # Fonti/evidenze (link) come testo: "testata: url" per riga.
+    fonti = sources_text(alert.get("evidence"))
+    if fonti:
+        enr[cfg.svi_enrich_key_sources] = fonti
     return enr
 
 

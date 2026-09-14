@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     svi_enrich_key_disposition: str = "disposition"
     svi_enrich_key_rationale: str = "rationale"
     svi_enrich_key_source: str = "source"
+    # Campi enrichment aggiuntivi (fase 1): sintesi motivazione + link fonti/evidenze.
+    svi_enrich_key_rationale_summary: str = "rationale_sintesi"
+    svi_enrich_key_sources: str = "fonti"
+    svi_rationale_summary_len: int = 300
     # Media type versionato SAS (triage alert), usato solo in lettura.
     svi_alert_media_type: str = "application/vnd.sas.investigation.triage.alert+json"
     # Caricare l'entità nel Data Hub prima dell'alert (di norma non serve per il test).

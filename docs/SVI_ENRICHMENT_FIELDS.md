@@ -45,17 +45,26 @@ Questi campi **esistono già** dentro `enrichmentJson` di ogni alert (Name case-
 default del publisher, `SVI_ENRICH_KEY_*`). Vanno solo **portati a video** (colonna Alert
 Grid e/o campo nella scheda alert), non creati. Sono tutti stringhe.
 
-| Chiave in `enrichmentJson` | Contenuto | Priorità |
+| Chiave in `enrichmentJson` | Contenuto | Dove mostrarlo |
 |---|---|---|
-| `risk_level` | `ALTO` / `MEDIO` / `BASSO` | alta |
-| `fatf_categories` | categorie unite: `"A; B; C"` | alta |
-| `rationale` | motivazione (driver dell'AMI), fino a ~1000 char | alta |
-| `disposition` | es. `ESCALATION_I_LIVELLO`, `AUTO_CHIUSO` | media |
-| `ami_score` | `"25"` (ridondante: c'è già il core `score`) | bassa/opz. |
+| `risk_level` | `ALTO` / `MEDIO` / `BASSO` | griglia + dettaglio |
+| `fatf_categories` | categorie unite: `"A; B; C"` | griglia + dettaglio |
+| `rationale_sintesi` | **sintesi** motivazione (primo driver, breve) | **griglia** |
+| `rationale` | motivazione completa (driver dell'AMI, fino a ~1000 char) | **scheda dettaglio** (widget testo lungo) |
+| `fonti` | **link fonti/evidenze**: `"testata: url"` una per riga | scheda dettaglio |
+| `disposition` | es. `ESCALATION_I_LIVELLO`, `AUTO_CHIUSO` | griglia |
+| `ami_score` | `"25"` (ridondante: c'è già il core `score`) | opzionale |
 | `source` | `adverse-media-screening` (provenienza) | opzionale |
 
-Nota: `fatf_categories` è **una stringa** con separatore `"; "`. Se la UI/griglia sa
-gestire un multi-valore e lo preferisci, dimmelo: cambio il publisher per inviare una lista.
+Note:
+- `fatf_categories` è **una stringa** con separatore `"; "`. Se la UI gestisce un
+  multi-valore e lo preferisci, si può cambiare il publisher per inviare una lista.
+- **`rationale_sintesi`** è pensato per la **griglia** (breve); il **`rationale`** completo
+  per la **scheda di dettaglio** (widget testo lungo legato a `enrichmentJson.rationale`).
+- **`fonti`** mostra i link come testo (cliccabilità dipende dal *cell renderer*). Per le
+  evidenze **strutturate** (oggetti con url) usa i `contributingObjects`: abilita
+  `SVI_SEND_CONTRIBUTING_OBJECTS=true` e configura la sezione "related/oggetti contribuenti"
+  della pagina alert.
 
 ## Passi (UI di visualizzazione SVI)
 

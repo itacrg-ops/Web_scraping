@@ -119,6 +119,9 @@ def test_build_alerting_payload_envelope():
     assert enr["ami_score"] == "82"
     assert enr["risk_level"] == "ALTO"
     assert "Corruption & Bribery" in enr["fatf_categories"]
+    # fase 1: sintesi motivazione (primo driver) + link fonti (testata: url)
+    assert enr["rationale_sintesi"] == ALERT["drivers"][0]
+    assert enr["fonti"] == "news.example: https://news.example/a"
     # scenario + contributing abilitati → una riga per categoria FATF / evidenza
     settings.svi_send_scenario_events = True
     settings.svi_send_contributing_objects = True
