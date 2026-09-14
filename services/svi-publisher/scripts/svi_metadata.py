@@ -52,17 +52,25 @@ NEW_ATTRS: list[tuple[str, str]] = [
     ("disposition", "Disposizione proposta"),
 ]
 
-# I metadati vivono nei servizi noti. La discovery parte dai loro link HATEOAS (fonte
-# autorevole) e poi sonda alcune collezioni candidate (i nomi variano per versione).
+# I metadati vivono nei servizi noti. La discovery parte dai loro link HATEOAS e naviga
+# gli endpoint NOTI (che rispondono) dumpandone gli item con i loro link — così si trova
+# il modello alert reale senza indovinare i nomi. Include il dump di un alert esistente
+# per verificare se l'enrichment è memorizzato (→ problema di dato vs visualizzazione).
 KNOWN_ROOTS = ["/svi-datahub", "/svi-alert", "/svi-search"]
-COLLECTION_CANDIDATES = [
-    "/svi-alert/alertTypes",        # tipi alert (probabile sede degli attributi enrichment)
-    "/svi-datahub/objectTypes",     # entità (Soggetto) e loro attributi
-    "/svi-datahub/dataObjectTypes",
-    "/svi-datahub/entityTypes",
-    "/svi-datahub/dataModel",
-    "/svi-datahub/objecttypes",
+# Endpoint noti (confermati dal lavoro precedente): dumpiamo item + link per navigare.
+PROBE = [
+    "/svi-alert/domains?limit=20",
+    "/svi-alert/strategies?limit=20",
+    "/svi-alert/queues?limit=20",
+    "/svi-alert/dispositions?limit=20",
+    "/svi-alert/alertTypes?limit=20",
+    "/svi-alert/alerts?limit=5",
+    "/svi-datahub/documents?limit=3",
 ]
+# Collezioni candidate per --find (i nomi variano per versione).
+COLLECTION_CANDIDATES = ["/svi-alert/alertTypes", "/svi-datahub/objectTypes"]
+# Chiavi enrichment che cerchiamo dentro un alert esistente (per capire se è memorizzato).
+ENRICH_KEYS = ["risk_level", "fatf_categories", "rationale", "disposition", "ami_score"]
 # Chiavi candidate che contengono l'array degli attributi in una definizione di tipo.
 ATTR_KEYS = ["attributes", "fields", "properties", "columns", "attributeList", "dataItems"]
 NAME_KEYS = ["name", "Name", "id", "columnName", "attributeName"]
@@ -119,50 +127,77 @@ def _abs(base_url: str, href: str) -> str:
     return base_url + href if href.startswith("/") else base_url + "/" + href
 
 
+def _print_links(obj, indent: str = "          ") -> None:
+    for lk in (obj.get("links") or []) if isinstance(obj, dict) else []:
+        rel, method, href = lk.get("rel", ""), lk.get("method", "GET"), lk.get("href", "")
+        # link "self" li mostriamo sintetici; gli altri (navigazione) per intero
+        print(f"{indent}{str(rel):24} {str(method):5} {href}")
+
+
 def discovery(c: httpx.Client, base_url: str, h: dict, extra: list[str]) -> list[str]:
-    """Stampa i link reali dei servizi noti + sonda le collezioni di tipi. Ritorna le
-    collezioni che rispondono 200 (usate poi da --find)."""
-    print("\n1) ROOT dei servizi (link HATEOAS → endpoint reali dei metadati)")
+    """Naviga il grafo reale dell'API: root link + endpoint noti (item con i loro link)
+    + dump di un alert esistente per capire se l'enrichment è memorizzato."""
+    print("\n1) ROOT dei servizi (link)")
     for root in KNOWN_ROOTS:
         r = _get(c, base_url + root + "/", h)
         if r is None:
             continue
         print(f"  [{r.status_code}] {root}/")
         try:
-            j = r.json()
+            _print_links(r.json(), "       ")
         except Exception:  # noqa: BLE001
-            j = None
-        if isinstance(j, dict) and isinstance(j.get("links"), list):
-            for lk in j["links"][:60]:
-                print(f"       {str(lk.get('method','GET')):6} {str(lk.get('rel','')):30} {lk.get('href','')}")
+            pass
 
-    print("\n2) COLLEZIONI di tipi candidate (id · name · label · dove stanno gli attributi)")
-    responding: list[str] = []
-    for path in (extra + COLLECTION_CANDIDATES):
-        r = _get(c, base_url + path + "?limit=100", h)
+    print("\n2) ENDPOINT NOTI — item + link (per navigare al modello alert)")
+    alert_detail_url = None
+    for path in (extra + PROBE):
+        r = _get(c, base_url + path, h)
         if r is None:
             continue
         print(f"  [{r.status_code}] {path}")
         if r.status_code >= 400:
+            body = (r.text or "").strip().replace("\n", " ")
+            if body:
+                print("        ", body[:200])
             continue
-        responding.append(path)
         try:
             j = r.json()
         except Exception:  # noqa: BLE001
             continue
         items = _items(j)
-        for it in items[:40]:
-            iid = (_self_href(it) or "").rsplit("/", 1)[-1] or it.get("id")
-            print(f"        {iid}  ·  name={it.get('name')}  ·  label={it.get('label')}")
-        if items:
-            attrs, key = _find_attr_container(items[0])
-            if key:
-                print(f"        (attributi inline sotto '{key}': "
-                      f"{', '.join(str(_attr_name(a)) for a in (attrs or [])[:12])})")
-    if not responding:
-        print("  (nessuna collezione candidata ha risposto: usa i LINK del punto 1 e")
-        print("   passali con --extra <path>, oppure incollali qui e adatto lo script.)")
-    return responding
+        for it in items[:8]:
+            iid = (_self_href(it) or "").rsplit("/", 1)[-1] or (it.get("id") if isinstance(it, dict) else None)
+            nm = it.get("name") if isinstance(it, dict) else None
+            lb = it.get("label") if isinstance(it, dict) else None
+            print(f"        - {iid}   name={nm}   label={lb}")
+            _print_links(it)
+        if "/alerts" in path and items and alert_detail_url is None:
+            alert_detail_url = _abs(base_url, _self_href(items[0]) or "")
+
+    if alert_detail_url:
+        print("\n3) ALERT DI ESEMPIO — l'enrichment è memorizzato sull'alert?")
+        rd = _get(c, alert_detail_url, h)
+        if rd is not None and rd.status_code < 400:
+            print("  URL:", alert_detail_url)
+            txt = rd.text or ""
+            try:
+                print(json.dumps(rd.json(), indent=2, ensure_ascii=False)[:3000])
+            except Exception:  # noqa: BLE001
+                print(txt[:3000])
+            found = [k for k in ENRICH_KEYS if k in txt]
+            print("\n  → chiavi enrichment presenti nell'alert:", found or "NESSUNA")
+            if found:
+                print("     Sono MEMORIZZATE → il problema è di VISUALIZZAZIONE (pagina/Alert Grid),")
+                print("     non di dato: vanno aggiunte alla scheda alert (Page Builder), non definiti attributi.")
+            else:
+                print("     ASSENTI → l'enrichment non risulta agganciato all'alert: o va definito")
+                print("     un attributo sul tipo, o il payload va agganciato diversamente. Incolla il dump.")
+        else:
+            print("  (impossibile leggere il dettaglio dell'alert:",
+                  rd.status_code if rd is not None else "errore", ")")
+    else:
+        print("\n3) Nessun alert esistente da ispezionare (crea prima un alert, poi rilancia).")
+    return []
 
 
 def find_attribute(c: httpx.Client, base_url: str, h: dict, name: str, collections: list[str]) -> None:
