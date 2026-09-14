@@ -32,6 +32,15 @@ _published: dict[str, tuple[float, str, str | None]] = {}
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
+def _errcode(resp: httpx.Response) -> str:
+    """errorCode SAS dal corpo (stringa), se presente. Serve a distinguere un 500
+    transitorio da un errore di DATO (1008), che non va mai ritentato."""
+    try:
+        return str((resp.json() or {}).get("errorCode") or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _is_mock() -> bool:
     return settings.svi_mode.lower() != "live"
 
@@ -56,18 +65,23 @@ async def _retry(desc: str, call: Callable[[], Any]) -> httpx.Response:
     for attempt in range(settings.svi_max_retries + 1):
         try:
             resp = await call()
-            if resp.status_code in _RETRYABLE_STATUS:
-                raise httpx.HTTPStatusError(f"{resp.status_code}", request=resp.request, response=resp)
-            resp.raise_for_status()
-            return resp
-        except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+        except httpx.TransportError as exc:            # timeout/connessione → transitorio
             last = exc
-            if attempt >= settings.svi_max_retries:
-                break
-            wait = settings.svi_retry_backoff * (2 ** attempt)
-            logger.warning("SVI %s: tentativo %d fallito (%s), retry tra %.1fs",
-                           desc, attempt + 1, exc, wait)
-            await asyncio.sleep(wait)
+        else:
+            # 5xx/429 transitori → retry, TRANNE il data error 1008 (mai transitorio).
+            # Ogni altro esito (2xx, oppure 4xx e 5xx non-retryable incl. 1008) è
+            # TERMINALE: raise_for_status lo solleva subito e lo propaga al chiamante.
+            if resp.status_code in _RETRYABLE_STATUS and _errcode(resp) != "1008":
+                last = httpx.HTTPStatusError(f"{resp.status_code}", request=resp.request, response=resp)
+            else:
+                resp.raise_for_status()
+                return resp
+        if attempt >= settings.svi_max_retries:
+            break
+        wait = settings.svi_retry_backoff * (2 ** attempt)
+        logger.warning("SVI %s: tentativo %d fallito (%s), retry tra %.1fs",
+                       desc, attempt + 1, last, wait)
+        await asyncio.sleep(wait)
     raise last if last else RuntimeError(f"SVI {desc}: fallito")
 
 
@@ -108,20 +122,36 @@ async def publish_alert(alert: dict[str, Any]) -> dict[str, Any]:
 
         payload = mapping.build_alerting_payload(alert, settings)
         mt = settings.svi_alertingevent_media_type
-        ev_resp = await _retry(
-            "alert/alertingEvents",
-            lambda: client.post(f"{settings.alerts_base()}/alertingEvents", json=payload,
-                                headers={**auth_h, "Content-Type": mt, "Accept": "application/json"}),
-        )
-        rj = ev_resp.json() if ev_resp.content else {}
-        items = rj.get("items") if isinstance(rj, dict) else None
-        first = (items[0] if items else rj) or {}
-        alert_id = first.get("alertId") or first.get("alertingEventId") or ""
         entity_id = payload["alertingEvents"][0].get("actionableEntityId")
+        try:
+            ev_resp = await _retry(
+                "alert/alertingEvents",
+                lambda: client.post(f"{settings.alerts_base()}/alertingEvents", json=payload,
+                                    headers={**auth_h, "Content-Type": mt, "Accept": "application/json"}),
+            )
+            duplicate = False
+        except httpx.HTTPStatusError as exc:
+            # L'alertingEventId è deterministico (business key): se SVI risponde 1008
+            # "data error" con alertTypeCode valorizzato, l'evento ESISTE GIÀ → stesso
+            # screening già pubblicato → idempotenza, non un errore. (alertTypeCode è
+            # sempre impostato da config, quindi il 1008 qui = duplicato.)
+            resp = exc.response
+            if resp is not None and resp.status_code == 500 and _errcode(resp) == "1008":
+                logger.info("SVI alertingEvent già presente (1008 duplicato) key=%s → idempotente", key)
+                ev_resp, duplicate = resp, True
+            else:
+                raise
+        if duplicate:
+            alert_id = mapping.event_id(alert)
+        else:
+            rj = ev_resp.json() if ev_resp.content else {}
+            items = rj.get("items") if isinstance(rj, dict) else None
+            first = (items[0] if items else rj) or {}
+            alert_id = first.get("alertId") or first.get("alertingEventId") or mapping.event_id(alert)
 
-    logger.info("Alerting event SVI creato: alert=%s entity=%s", alert_id, entity_id)
+    logger.info("Alerting event SVI creato: alert=%s entity=%s dup=%s", alert_id, entity_id, duplicate)
     _idem_put(key, alert_id, document_id)
-    return {"svi_alert_id": alert_id, "document_id": document_id, "deduplicated": False}
+    return {"svi_alert_id": alert_id, "document_id": document_id, "deduplicated": duplicate}
 
 
 async def publish_entities(entities: list[dict], relationships: list[dict]) -> None:

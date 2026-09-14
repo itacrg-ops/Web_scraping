@@ -213,11 +213,10 @@ def _hint_500(resp: httpx.Response) -> None:
     if "tdc.bad.request" in (resp.text or ""):
         print("     ↳ tdc.bad.request = struttura/media type rifiutati (envelope o Content-Type errato).")
     elif code == "1008" or "data error" in (resp.text or "").lower():
-        print("     ↳ errorCode 1008 = STRUTTURA OK, errore di DATO/riferimento. Cause tipiche:")
-        print("        • l'entità actionableEntity (Soggetto/CF) NON esiste nel Data Hub → crearla prima;")
-        print("        • alertTypeCode non valido per il dominio → usa un code dalla discovery (alertType:);")
-        print("        • strategia INACTIVE/non deployata → attivarla;")
-        print("        • recommendedQueueId inesistente. Usa --diagnose per isolare type/queue.")
+        print("     ↳ errorCode 1008 = struttura OK, errore di DATO. Con alertTypeCode valido la")
+        print("        causa tipica è un alertingEventId GIÀ ESISTENTE (duplicato dello stesso")
+        print("        screening): di fatto è idempotenza. Rilancia con --unique per crearne uno")
+        print("        nuovo. (Se invece manca alertTypeCode è obbligatorio: vedi --diagnose.)")
 
 
 def payload(token: str, create: bool, unique: bool = False) -> None:
