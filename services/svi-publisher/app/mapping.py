@@ -136,19 +136,22 @@ def build_alerting_event(alert: dict[str, Any], cfg) -> dict[str, Any]:
 def build_enrichment(alert: dict[str, Any], cfg) -> dict[str, Any]:
     """Riga di `enrichment` (custom fields del dominio) collegata all'evento tramite
     `alertingEventId`. Valori stringa: SVI può validarne le chiavi sul modello dominio."""
-    enr: dict[str, Any] = {"alertingEventId": event_id(alert), "source": cfg.svi_source_system}
+    # I nomi delle chiavi vengono da config: devono combaciare con gli attributi del
+    # dominio SVI, altrimenti l'enrichment è accettato ma non mostrato.
+    enr: dict[str, Any] = {"alertingEventId": event_id(alert),
+                           cfg.svi_enrich_key_source: cfg.svi_source_system}
     if alert.get("ami_score") is not None:
-        enr["ami_score"] = str(alert.get("ami_score"))
+        enr[cfg.svi_enrich_key_ami] = str(alert.get("ami_score"))
     if alert.get("risk_level"):
-        enr["risk_level"] = str(alert.get("risk_level"))
+        enr[cfg.svi_enrich_key_risk] = str(alert.get("risk_level"))
     cats = alert.get("fatf_categories") or []
     if cats:
-        enr["fatf_categories"] = "; ".join(str(c) for c in cats)
+        enr[cfg.svi_enrich_key_fatf] = "; ".join(str(c) for c in cats)
     if alert.get("disposition"):
-        enr["disposition"] = str(alert.get("disposition"))
+        enr[cfg.svi_enrich_key_disposition] = str(alert.get("disposition"))
     rat = rationale(alert)
     if rat:
-        enr["rationale"] = rat[:1000]
+        enr[cfg.svi_enrich_key_rationale] = rat[:1000]
     return enr
 
 

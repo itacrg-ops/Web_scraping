@@ -55,6 +55,17 @@ class Settings(BaseSettings):
     svi_send_enrichment: bool = False            # enrichment[] (AMI/FATF/motivazione)
     svi_send_scenario_events: bool = False       # scenarioFiredEvents[] (findings per categoria FATF)
     svi_send_contributing_objects: bool = False  # contributingObjects[] (evidenze)
+
+    # Nomi dei campi enrichment. SVI mostra l'enrichment SOLO se le chiavi combaciano
+    # con gli ATTRIBUTI definiti nel dominio (altrimenti accetta l'evento ma non li
+    # visualizza). Default = nomi canonici; rimappare qui ai nomi reali del dominio
+    # (es. SVI_ENRICH_KEY_FATF=categorieFatf, SVI_ENRICH_KEY_RATIONALE=motivazione).
+    svi_enrich_key_ami: str = "ami_score"
+    svi_enrich_key_risk: str = "risk_level"
+    svi_enrich_key_fatf: str = "fatf_categories"
+    svi_enrich_key_disposition: str = "disposition"
+    svi_enrich_key_rationale: str = "rationale"
+    svi_enrich_key_source: str = "source"
     # Media type versionato SAS (triage alert), usato solo in lettura.
     svi_alert_media_type: str = "application/vnd.sas.investigation.triage.alert+json"
     # Caricare l'entità nel Data Hub prima dell'alert (di norma non serve per il test).

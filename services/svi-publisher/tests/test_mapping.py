@@ -130,6 +130,23 @@ def test_build_alerting_payload_envelope():
     settings.svi_send_contributing_objects = False
 
 
+def test_enrichment_keys_are_configurable():
+    """Le chiavi enrichment vengono da config → rimappabili ai nomi attributi del dominio
+    SVI (SVI mostra l'enrichment solo se le chiavi combaciano con attributi definiti)."""
+    settings.svi_send_enrichment = True
+    saved = (settings.svi_enrich_key_fatf, settings.svi_enrich_key_rationale)
+    settings.svi_enrich_key_fatf = "categorieFatf"
+    settings.svi_enrich_key_rationale = "motivazione"
+    try:
+        enr = mapping.build_alerting_payload(ALERT, settings)["enrichment"][0]
+        assert "categorieFatf" in enr and "fatf_categories" not in enr
+        assert "motivazione" in enr and "rationale" not in enr
+        assert "Corruption & Bribery" in enr["categorieFatf"]      # valore mappato
+    finally:
+        settings.svi_enrich_key_fatf, settings.svi_enrich_key_rationale = saved
+        settings.svi_send_enrichment = False
+
+
 def test_oauth_request_builder_is_pure_and_correct():
     settings.sas_client_id = "cid"
     settings.sas_client_secret = "secret"
