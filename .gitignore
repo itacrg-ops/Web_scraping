@@ -86,7 +86,7 @@ models/local/
 .env.*
 !.env.example
 # Template SVI versionato nella skill (è un esempio senza segreti, non un .env reale)
-!skills/sas-vi-integration/assets/templates/.env.svi.example
+!.claude/skills/sas-vi-integration/assets/templates/.env.svi.example
 *.pem
 *.key
 secrets/
