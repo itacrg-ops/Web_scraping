@@ -1,8 +1,10 @@
 """Registro dei soggetti noti (anti-omonimia, §8) — persistito su PostgreSQL.
 
 CRUD dalla console (tab "Soggetti"), protetto da `require_user`. L'endpoint
-`GET /registry` è **interno** (senza auth utente): lo consuma l'entity-resolution
-per caricare il registro dei soggetti su cui fare il matching.
+`GET /registry` è **interno** e protetto dal token di servizio (`require_internal`,
+header `X-Internal-Token`): lo consuma solo l'entity-resolution per caricare il
+registro su cui fare il matching. Contiene dati personali (CF, data e luogo di
+nascita delle persone fisiche): non deve mai essere raggiungibile senza token.
 """
 from __future__ import annotations
 
@@ -13,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import require_user
+from app.auth import require_internal, require_user
 from app.db import get_session
 from app.models import Subject as SubjectModel
 from app.schemas import (
@@ -29,7 +31,7 @@ router = APIRouter(prefix="/api/subjects", tags=["subjects"])
 _MAX_IMPORT_ROWS = 5000
 
 
-@router.get("/registry")
+@router.get("/registry", dependencies=[Depends(require_internal)])
 async def registry(session: AsyncSession = Depends(get_session)) -> dict:
     """Registro (soli soggetti attivi) nella forma attesa dall'entity-resolution."""
     stmt = select(SubjectModel).where(SubjectModel.attivo.is_(True))

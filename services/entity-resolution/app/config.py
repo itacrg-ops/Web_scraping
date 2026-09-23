@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     # piccolo seed di fallback (resilienza all'avvio).
     api_url: str = "http://api:8000"
     registry_ttl: float = 30.0
+    # Token di servizio verso l'API: `GET /api/subjects/registry` è interno e lo
+    # richiede (header X-Internal-Token). Deve essere UGUALE a quello dell'API.
+    internal_api_token: str = ""
 
     # Soglie di matching sul nome (quando manca un identificatore forte).
     name_high: float = 0.92      # sopra: match sul nome "forte"

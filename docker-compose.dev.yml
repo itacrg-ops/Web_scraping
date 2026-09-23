@@ -102,6 +102,8 @@ services:
     env_file: .env
     environment:
       API_URL: "http://api:8000"   # legge il registro soggetti dall'API (cache TTL)
+      # /api/subjects/registry è interno: stesso token dell'api (vuoto = solo in dev).
+      INTERNAL_API_TOKEN: "${INTERNAL_API_TOKEN:-}"
     ports: ["8070:8070"]
     depends_on: [api]
 

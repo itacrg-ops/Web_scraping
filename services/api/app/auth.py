@@ -9,6 +9,7 @@ autentica, autorizza (RBAC via ruoli), e scrive l'audit.
 """
 from __future__ import annotations
 
+import hmac
 import logging
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -72,9 +73,20 @@ async def require_user(request: Request) -> User:
 
 
 async def require_internal(x_internal_token: str | None = Header(default=None)) -> None:
-    """Protegge gli endpoint interni (worker -> API). Aperto se il token non è
-    configurato (dev); altrimenti richiede l'header X-Internal-Token."""
-    if not settings.internal_api_token:
-        return
-    if x_internal_token != settings.internal_api_token:
+    """Protegge gli endpoint interni service-to-service (worker/entity-resolution → API).
+
+    - `INTERNAL_API_TOKEN` configurato → serve l'header `X-Internal-Token` identico
+      (confronto a tempo costante).
+    - Token NON configurato → aperto SOLO con `APP_ENV=development`; in ogni altro
+      ambiente l'endpoint resta chiuso (fail-closed): un deploy dimenticato senza
+      token non espone il registro soggetti né la scrittura degli alert.
+    """
+    expected = settings.internal_api_token
+    if not expected:
+        if settings.app_env == "development":
+            return
+        logger.error("INTERNAL_API_TOKEN non configurato con APP_ENV=%s: endpoint interno chiuso",
+                     settings.app_env)
+        raise HTTPException(status_code=503, detail="endpoint interno non configurato")
+    if not x_internal_token or not hmac.compare_digest(x_internal_token.encode(), expected.encode()):
         raise HTTPException(status_code=401, detail="token interno non valido")
