@@ -37,6 +37,8 @@ class Settings(BaseSettings):
 
     # Export del dataset di valutazione (dati personali in blocco): solo questi ruoli.
     dataset_export_roles: list[str] = ["amministratore"]
+    # Cancellazione di alert duplicati o errati (con motivo, registrata nell'audit).
+    alert_delete_roles: list[str] = ["amministratore"]
 
 
 settings = Settings()

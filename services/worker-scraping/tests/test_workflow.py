@@ -76,6 +76,9 @@ def _fakes(cfg: dict) -> tuple[list, list, dict]:
 
     @activity.defn(name="verify_subject_mention")
     async def verify_subject_mention(subject: dict, text: str) -> dict:
+        if cfg.get("mention") == "variant":   # nome esatto assente, uno simile sì
+            return {"mentioned": False, "matched": [], "context": [], "variants": ["ACME Costruzzioni"],
+                    "anagraphics": {"status": "n/a"}, "ner": None}
         return {"mentioned": True, "matched": ["denominazione"], "context": [],
                 "anagraphics": {"status": "n/a"}, "ner": None}
 
@@ -189,6 +192,15 @@ async def test_unhandled_failure_marks_screening_failed(env) -> None:
     failed = [e for e in log if isinstance(e, tuple) and e[0] == "failed"]
     assert failed and "API non raggiungibile" in failed[0][1], log
     assert "publish" not in log                             # niente SVI senza record locale
+
+
+async def test_similar_name_in_articles_is_flagged(env) -> None:
+    res, log, st = await _screen(env, {"mention": "variant"})
+    a = _alert(st)
+    assert a["name_variants"] == ["ACME Costruzzioni"], a.get("name_variants")
+    assert a["drivers"][0].startswith("⚠ Negli articoli compare un nome simile: «ACME Costruzzioni»")
+    ok, _, st2 = await _screen(env, {})
+    assert _alert(st2)["name_variants"] == []                   # nome esatto trovato: nessun avviso
 
 
 async def test_unresolved_entity_is_skipped_not_published(env) -> None:

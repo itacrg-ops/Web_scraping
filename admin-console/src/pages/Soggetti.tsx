@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
-  Alert as MuiAlert, Box, Button, Chip, IconButton, Paper, Stack, Switch, Table, TableBody,
+  Alert as MuiAlert, Box, Button, Chip, IconButton, Link, Paper, Stack, Switch, Table, TableBody,
   TableCell, TableContainer, TableHead, TableRow, TextField, ToggleButton,
   ToggleButtonGroup, Typography,
 } from "@mui/material";
@@ -11,10 +11,53 @@ import CloseOutlinedIcon from "@mui/icons-material/CloseOutlined";
 import FileUploadOutlinedIcon from "@mui/icons-material/FileUploadOutlined";
 import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
 import {
-  createSubject, deleteSubject, importSubjects, listSubjects, updateSubject,
-  type Subject, type SubjectImportResult, type TipoSoggetto,
+  createSubject, decideName, deleteSubject, importSubjects, listSubjectArticles, listSubjects,
+  removeSubjectArticle, similarSubjects, updateSubject,
+  type SimilarOut, type Subject, type SubjectArticle, type SubjectImportResult, type TipoSoggetto,
 } from "../api";
 import { checkCf } from "../codiceFiscale";
+import SimilarNamesDialog, { type NameChoice } from "../components/SimilarNamesDialog";
+import { splitPerson } from "../personName";
+
+const P_TEXT: Record<string, string> = { si: "riguarda il soggetto", omonimo: "omonimo", non_citato: "non citato" };
+
+// Notizie confermate dai revisori per il soggetto (storico verificato).
+function ConfirmedArticles({ subject, onChanged }: { subject: Subject; onChanged: () => void }) {
+  const [items, setItems] = useState<SubjectArticle[] | null>(null);
+  const load = () => listSubjectArticles(subject.id).then(setItems).catch(() => setItems([]));
+  useEffect(() => { load(); }, [subject.id]);   // eslint-disable-line react-hooks/exhaustive-deps
+  if (items === null) return <Typography variant="caption">Caricamento…</Typography>;
+  if (!items.length) return <Typography variant="caption" color="text.secondary">Nessuna notizia confermata.</Typography>;
+  return (
+    <Box>
+      {items.map((x) => (
+        <Box key={x.id} sx={{ display: "flex", alignItems: "flex-start", gap: 1, py: 0.5, borderBottom: 1, borderColor: "divider" }}>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography variant="body2" sx={{ wordBreak: "break-word" }}>
+              {[x.testata, x.data].filter(Boolean).join(" · ")}{" — "}
+              <Link href={x.url} target="_blank" rel="noreferrer">{x.title || x.url}</Link>
+            </Typography>
+            <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", mt: 0.5, alignItems: "center" }}>
+              <Chip size="small" label={P_TEXT[x.pertinenza] ?? x.pertinenza}
+                color={x.pertinenza === "si" ? "primary" : "default"} variant="outlined" />
+              <Chip size="small" label={x.avversa === "si" ? "avversa" : "non avversa"}
+                color={x.avversa === "si" ? "error" : "success"} variant="outlined" />
+              {x.categorie.map((c) => <Chip key={c} size="small" label={c} variant="outlined" />)}
+              <Typography variant="caption" color="text.secondary">
+                confermato{x.confirmed_by_name ? ` da ${x.confirmed_by_name}` : ""}
+                {x.confirmed_at ? ` il ${new Date(x.confirmed_at).toLocaleDateString("it-IT")}` : ""}
+              </Typography>
+            </Box>
+          </Box>
+          <IconButton size="small" aria-label="rimuovi la conferma" title="Rimuovi dallo storico del soggetto"
+            onClick={async () => { await removeSubjectArticle(subject.id, x.id); await load(); onChanged(); }}>
+            <DeleteOutlineIcon fontSize="small" />
+          </IconButton>
+        </Box>
+      ))}
+    </Box>
+  );
+}
 
 const CSV_TEMPLATE =
   "tipo_soggetto,denominazione,nome,cognome,cf_piva,data_nascita,luogo_nascita,cup,ruolo\n" +
@@ -49,6 +92,12 @@ export default function Soggetti() {
   // import
   const [importResult, setImportResult] = useState<SubjectImportResult | null>(null);
 
+  // notizie confermate (riga espansa) e controllo dei nomi simili prima di aggiungere
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [similar, setSimilar] = useState<SimilarOut | null>(null);
+  const answer = useRef<((c: NameChoice) => void) | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+
   const isPerson = tipo === "persona_fisica";
   const canAdd = isPerson ? Boolean(cognome && nome) : Boolean(denominazione);
   const cfCheck = isPerson ? checkCf(cfPiva, nome, cognome, dataNascita) : null;
@@ -58,9 +107,51 @@ export default function Soggetti() {
   }
   useEffect(() => { reload(); }, []);
 
-  async function add() {
-    setBusy(true); setError(null);
+  const typedName = isPerson ? `${cognome} ${nome}`.trim() : denominazione.trim();
+
+  // Prima di aggiungere: lo stesso soggetto (o uno con nome simile) è già noto?
+  // Restituisce true se si può procedere con l'aggiunta.
+  async function checkName(): Promise<boolean> {
+    let data: SimilarOut;
     try {
+      data = await similarSubjects({ tipo_soggetto: tipo, denominazione: isPerson ? undefined : denominazione,
+                                     cognome: isPerson ? cognome : undefined, nome: isPerson ? nome : undefined });
+    } catch {
+      return true;
+    }
+    if (!data.simili.length && !data.registro_esatto) return true;
+    setSimilar(data);
+    const choice = await new Promise<NameChoice>((resolve) => { answer.current = resolve; });
+    setSimilar(null);
+    if (choice.action === "annulla") return false;
+    if (choice.action === "prosegui") return true;
+    if (choice.action === "usa") {             // nome di uno screening passato: correggi il modulo
+      if (isPerson) {
+        const { cognome: c, nome: n } = splitPerson(choice.c.denominazione);
+        setCognome(c); setNome(n);
+      } else {
+        setDenominazione(choice.c.denominazione);
+      }
+      setInfo(`Nome corretto in «${choice.c.denominazione}»: controlla e aggiungi.`);
+      return false;
+    }
+    if (choice.action === "variante") {
+      await decideName(choice.c.subject_id!, typedName, "stesso");
+      setInfo(`«${typedName}» registrato come variante di «${choice.c.denominazione}» (nessun nuovo soggetto).`);
+      setDenominazione(""); setCognome(""); setNome("");
+      await reload();
+      return false;
+    }
+    if (choice.action === "diverso" && choice.c.subject_id) {
+      await decideName(choice.c.subject_id, typedName, "diverso");
+    }
+    return true;
+  }
+
+  async function add() {
+    setBusy(true); setError(null); setInfo(null);
+    try {
+      if (!(await checkName())) return;
       await createSubject({
         tipo_soggetto: tipo,
         denominazione: isPerson ? undefined : denominazione,
@@ -199,6 +290,8 @@ export default function Soggetti() {
         </Stack>
       </Paper>
 
+      <SimilarNamesDialog typed={typedName} data={similar} mode="registro" onChoice={(c) => answer.current?.(c)} />
+      {info && <MuiAlert severity="info" sx={{ my: 2 }} onClose={() => setInfo(null)}>{info}</MuiAlert>}
       {error && <MuiAlert severity="error" sx={{ my: 2 }}>{error}</MuiAlert>}
       {importResult && (
         <MuiAlert severity={importResult.errors.length ? "warning" : "success"} sx={{ my: 2 }}
@@ -226,6 +319,7 @@ export default function Soggetti() {
               <TableCell>Data nascita</TableCell>
               <TableCell>CUP</TableCell>
               <TableCell>Ruolo</TableCell>
+              <TableCell>Notizie</TableCell>
               <TableCell>Attivo</TableCell>
               <TableCell align="right">Azioni</TableCell>
             </TableRow>
@@ -234,7 +328,8 @@ export default function Soggetti() {
             {rows.map((s) => {
               const editing = editingId === s.id && edit;
               return (
-                <TableRow key={s.id}>
+                <Fragment key={s.id}>
+                <TableRow>
                   <TableCell>
                     <Chip size="small" variant="outlined"
                       label={s.tipo_soggetto === "persona_fisica" ? "PF" : "PG"}
@@ -263,6 +358,7 @@ export default function Soggetti() {
                         <TextField size="small" variant="standard" value={edit!.ruolo}
                           onChange={(e) => setE({ ruolo: e.target.value })} />
                       </TableCell>
+                      <TableCell>{s.articoli_confermati || "—"}</TableCell>
                       <TableCell>
                         <Switch size="small" checked={edit!.attivo}
                           onChange={(e) => setE({ attivo: e.target.checked })} />
@@ -279,11 +375,33 @@ export default function Soggetti() {
                     </>
                   ) : (
                     <>
-                      <TableCell>{s.denominazione}</TableCell>
+                      <TableCell>
+                        {s.denominazione}
+                        {!!s.alias?.length && (
+                          <Typography variant="caption" color="text.secondary" component="div"
+                            title="Varianti confermate dai revisori: l'Entity Resolution le riconosce come questo soggetto">
+                            varianti: {s.alias.join(", ")}
+                          </Typography>
+                        )}
+                        {!!s.distinti?.length && (
+                          <Typography variant="caption" color="text.secondary" component="div"
+                            title="Nomi simili confermati come altri soggetti: non vengono confusi con questo">
+                            diverso da: {s.distinti.join(", ")}
+                          </Typography>
+                        )}
+                      </TableCell>
                       <TableCell>{s.cf_piva ?? "—"}</TableCell>
                       <TableCell>{s.data_nascita ?? "—"}</TableCell>
                       <TableCell>{s.cup.join(", ") || "—"}</TableCell>
                       <TableCell>{s.ruolo ?? "—"}</TableCell>
+                      <TableCell>
+                        {s.articoli_confermati ? (
+                          <Button size="small" sx={{ whiteSpace: "nowrap" }}
+                            onClick={() => setExpanded(expanded === s.id ? null : s.id)}>
+                            {s.articoli_confermati} confermat{s.articoli_confermati === 1 ? "a" : "e"}
+                          </Button>
+                        ) : "—"}
+                      </TableCell>
                       <TableCell>
                         <Chip size="small" label={s.attivo ? "sì" : "no"}
                           color={s.attivo ? "success" : "default"} variant="outlined" />
@@ -299,10 +417,19 @@ export default function Soggetti() {
                     </>
                   )}
                 </TableRow>
+                {expanded === s.id && (
+                  <TableRow>
+                    <TableCell colSpan={9} sx={{ bgcolor: "action.hover" }}>
+                      <Typography variant="subtitle2" gutterBottom>Notizie confermate dai revisori</Typography>
+                      <ConfirmedArticles subject={s} onChanged={reload} />
+                    </TableCell>
+                  </TableRow>
+                )}
+                </Fragment>
               );
             })}
             {rows.length === 0 && (
-              <TableRow><TableCell colSpan={8}>
+              <TableRow><TableCell colSpan={9}>
                 <Typography variant="body2" color="text.secondary" sx={{ p: 1 }}>Registro vuoto.</Typography>
               </TableCell></TableRow>
             )}

@@ -6,7 +6,11 @@
 // scripts/evaluate_labels.py).
 // Un caso "affidabile" richiede un giudizio completo e certo: la scheda lo verifica
 // prima di salvare, evidenzia cosa manca (per numero di articolo) e porta al primo punto.
+// Mostra anche gli altri casi dello stesso soggetto (già nel dataset?), i giudizi che il
+// revisore ha già dato sugli stessi articoli, un possibile refuso nel nome e la conferma
+// degli articoli nel registro del soggetto.
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Accordion, AccordionDetails, AccordionSummary, Alert as MuiAlert, Autocomplete, Box, Button,
   Checkbox, Chip, FormControl, FormControlLabel, FormHelperText, InputLabel, Link, MenuItem, Paper,
@@ -14,10 +18,13 @@ import {
 } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import {
-  FATF_CATEGORIES, getLabel, saveLabel,
-  type Alert, type Avversa, type CaseLabelIn, type CaseLabelSummary, type DispositionAttesa,
-  type EvidenceItem, type EvidenceLabel, type Pertinenza, type Ruolo,
+  FATF_CATEGORIES, getLabel, getRelated, saveLabel,
+  type Alert, type Avversa, type CaseLabelIn, type CaseLabelSummary, type ConfirmOut, type DispositionAttesa,
+  type EvidenceItem, type EvidenceLabel, type Pertinenza, type PriorJudgment, type RegistryArticle,
+  type RelatedOut, type Ruolo,
 } from "../api";
+import { asSubjectName, splitPerson } from "../personName";
+import ConfirmRegistryDialog from "./ConfirmRegistryDialog";
 
 type Ev = EvidenceItem & { id: string };
 type Question = "pertinenza" | "avversa";
@@ -44,6 +51,13 @@ const RUOLI: [Ruolo, string][] = [
 const ESITI: [DispositionAttesa, string][] = [
   ["ESCALATION_I_LIVELLO", "Escalation (I livello)"], ["AUTO_CHIUSO", "Chiusura"],
 ];
+
+const P_TEXT: Record<string, string> = { si: "riguarda il soggetto", omonimo: "omonimo", non_citato: "non citato",
+                                         incerto: "incerto" };
+const A_TEXT: Record<string, string> = { si: "avversa", no: "non avversa", incerto: "incerto" };
+const judgment = (p?: string | null, v?: string | null) =>
+  [p && P_TEXT[p], v && A_TEXT[v]].filter(Boolean).join(" · ");
+const day = (iso: string) => new Date(iso).toLocaleDateString("it-IT");
 
 const EMPTY: CaseLabelIn = {
   evidence_labels: {}, categorie_corrette: [], ruolo: null, disposition_attesa: null,
@@ -187,13 +201,19 @@ type ArticleProps = {
   e: Ev;
   value?: EvidenceLabel;
   gaps?: Gap[];     // cosa manca per un caso affidabile (dopo un salvataggio bloccato)
+  prior?: PriorJudgment;        // mio giudizio sullo stesso articolo in un altro caso
+  registry?: RegistryArticle;   // già confermato nel registro del soggetto
   onPertinenza: (v: Pertinenza) => void;
   onAvversa: (v: Avversa) => void;
+  onReuse: () => void;
   boxRef: (el: HTMLDivElement | null) => void;
 };
 
 // Un articolo: contenuto (per giudicare senza aprire la pagina) + le due domande.
-function Article({ n, e, value, gaps, onPertinenza, onAvversa, boxRef }: ArticleProps) {
+function Article({ n, e, value, gaps, prior, registry, onPertinenza, onAvversa, onReuse, boxRef }: ArticleProps) {
+  const same = (x?: { pertinenza?: string | null; avversa?: string | null }) =>
+    !!x && x.pertinenza === value?.pertinenza && x.avversa === value?.avversa;
+  const answered = !!value?.pertinenza && !!value?.avversa;
   const missing = (q: Question) => !!gaps?.some((g) => g.q === q);
   return (
     <Paper ref={boxRef} variant="outlined" role="group" aria-label={`Articolo ${n}`}
@@ -225,6 +245,23 @@ function Article({ n, e, value, gaps, onPertinenza, onAvversa, boxRef }: Article
           {gapCaption(gaps)}
         </Typography>
       )}
+      {prior && (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5, flexWrap: "wrap" }}>
+          <Typography variant="caption" color="text.secondary">
+            Già giudicato da te il {day(prior.created_at)}: {judgment(prior.pertinenza, prior.avversa)}
+          </Typography>
+          {!same(prior) && <Button size="small" sx={{ py: 0 }} onClick={onReuse}>Usa lo stesso giudizio</Button>}
+        </Box>
+      )}
+      {registry && answered && (
+        // dopo aver risposto (etichettatura cieca): confronto con lo storico del soggetto
+        <Typography variant="caption" component="div" sx={{ mt: 0.5 }}
+          color={same(registry) ? "success.main" : "warning.main"}>
+          Nel registro del soggetto: {judgment(registry.pertinenza, registry.avversa)}
+          {registry.confirmed_by_name && ` (confermato da ${registry.confirmed_by_name})`}
+          {!same(registry) && " — diverso dal tuo giudizio"}
+        </Typography>
+      )}
       <Typography variant="caption" color="text.secondary" component="div"
         sx={{ mt: 1, wordBreak: "break-all" }} title={e.content_hash ?? undefined}>
         hash {(e.content_hash ?? "—").slice(0, 12)}… · fetch {e.fetch_ts || "—"}
@@ -234,15 +271,53 @@ function Article({ n, e, value, gaps, onPertinenza, onAvversa, boxRef }: Article
   );
 }
 
+// Altri casi dello stesso soggetto e loro presenza nel dataset: casi dello stesso
+// soggetto non sono indipendenti (conviene tenerne uno) e i duplicati si possono eliminare.
+function RelatedCases({ rel, onOpen, isListed }: {
+  rel: RelatedOut; onOpen?: (id: string) => void; isListed?: (id: string) => boolean;
+}) {
+  const cases = rel.stesso_soggetto;
+  if (!cases.length) return null;
+  const inDataset = cases.filter((c) => c.affidabili > 0).length;
+  return (
+    <MuiAlert severity="info" sx={{ mb: 2 }}>
+      <Typography variant="body2">
+        <strong>Stesso soggetto in {cases.length === 1 ? "un altro caso" : `altri ${cases.length} casi`}</strong>
+        {inDataset > 0 && <> · {inDataset === 1 ? "uno è già" : `${inDataset} sono già`} nel dataset</>}.
+        Casi dello stesso soggetto non sono indipendenti: tienine uno nel dataset, gli altri eliminali
+        come duplicati.
+      </Typography>
+      {cases.slice(0, 5).map((c) => (
+        <Box key={c.id} sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5, flexWrap: "wrap" }}>
+          <Typography variant="caption">
+            {day(c.created_at)} · {c.subject} · esito {c.disposition}
+            {" · "}{c.affidabili > 0 ? "nel dataset (affidabile)" : c.etichette > 0 ? "etichettato (bozza)" : "non etichettato"}
+            {c.mia && ` · tua etichetta: ${c.mia}`}
+          </Typography>
+          {onOpen && isListed?.(c.id) && (
+            <Button size="small" sx={{ py: 0 }} onClick={() => onOpen(c.id)}>apri</Button>
+          )}
+        </Box>
+      ))}
+    </MuiAlert>
+  );
+}
+
 type Props = {
   a: Alert;
   onSaved: (s: CaseLabelSummary) => void;
   onDirtyChange: (dirty: boolean) => void;
   onNext?: () => void;   // assente sull'ultimo caso
   onClose: () => void;
+  onOpenCase?: (id: string) => void;       // apre un altro caso della lista
+  isListed?: (id: string) => boolean;
 };
 
-export default function CaseLabelPanel({ a, onSaved, onDirtyChange, onNext, onClose }: Props) {
+export default function CaseLabelPanel({ a, onSaved, onDirtyChange, onNext, onClose, onOpenCase, isListed }: Props) {
+  const navigate = useNavigate();
+  const [related, setRelated] = useState<RelatedOut | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmed, setConfirmed] = useState<ConfirmOut | null>(null);
   const [label, setLabel] = useState<CaseLabelIn>(EMPTY);
   const [saved, setSaved] = useState(JSON.stringify(EMPTY));   // ultimo stato salvato/caricato
   const [saving, setSaving] = useState(false);
@@ -273,6 +348,10 @@ export default function CaseLabelPanel({ a, onSaved, onDirtyChange, onNext, onCl
   const hints = consistencyHints(label, evidence);
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
+
+  useEffect(() => {
+    getRelated(a.id).then(setRelated).catch(() => setRelated(null));
+  }, [a.id]);
 
   useEffect(() => {
     getLabel(a.id)
@@ -312,6 +391,34 @@ export default function CaseLabelPanel({ a, onSaved, onDirtyChange, onNext, onCl
     autoNo.current.delete(id);
     setEvidence(id, { avversa: v });
   };
+
+  // Mio giudizio già dato sullo stesso articolo in un altro caso: lo riusa.
+  const reuse = (id: string, p: PriorJudgment) => {
+    autoNo.current.delete(id);
+    setEvidence(id, { pertinenza: p.pertinenza ?? null, avversa: p.avversa ?? null });
+  };
+
+  // Possibile refuso nel nome: ripeti lo screening con il nome trovato negli articoli.
+  const variant = (a.name_variants ?? [])[0];
+  const isPerson = a.tipo_soggetto === "persona_fisica";
+  const rescreen = () => {
+    const fixed = asSubjectName(variant!, a.subject, isPerson);
+    const q = new URLSearchParams({ tipo: isPerson ? "persona_fisica" : "persona_giuridica" });
+    if (isPerson) {
+      const { cognome, nome } = splitPerson(fixed);
+      q.set("cognome", cognome);
+      q.set("nome", nome);
+    } else {
+      q.set("denominazione", fixed);
+    }
+    if (a.cup.length) q.set("cup", a.cup.join(","));
+    navigate(`/screening?${q}`);
+  };
+  const otherReliable = !!related?.stesso_soggetto.some((c) => c.affidabili > 0);
+  const confirmable = evidence.some((e) => {
+    const v = label.evidence_labels[e.id];
+    return v?.pertinenza && v.pertinenza !== "incerto" && v?.avversa && v.avversa !== "incerto";
+  });
 
   const save = async (andThen?: () => void) => {
     setMsg(null);
@@ -355,6 +462,22 @@ export default function CaseLabelPanel({ a, onSaved, onDirtyChange, onNext, onCl
   return (
     <>
       <Box sx={{ flex: 1, overflowY: "auto", px: 2, py: 2 }}>
+        {variant && (
+          <MuiAlert severity="warning" sx={{ mb: 2 }} action={
+            <Button size="small" color="inherit" onClick={rescreen}>Ripeti lo screening</Button>}>
+            Il nome «{a.subject}» non compare negli articoli, che citano invece
+            {" "}{(a.name_variants ?? []).map((v) => `«${v}»`).join(", ")}: se è un refuso, ripeti lo
+            screening con il nome corretto (ed elimina questo caso come errato).
+          </MuiAlert>
+        )}
+        {related && <RelatedCases rel={related} onOpen={onOpenCase} isListed={isListed} />}
+        {related?.registro && (
+          <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: 1 }}>
+            Nel registro: <strong>{related.registro.denominazione}</strong>
+            {Object.keys(related.registro.articoli).length > 0 &&
+              ` · ${Object.keys(related.registro.articoli).length} di questi articoli già confermati`}
+          </Typography>
+        )}
         <SystemOutcome a={a} />
 
         <Typography variant="subtitle2" gutterBottom>Articoli ({evidence.length})</Typography>
@@ -370,7 +493,9 @@ export default function CaseLabelPanel({ a, onSaved, onDirtyChange, onNext, onCl
             {evidence.map((e, i) => (
               <Article key={e.id} n={i + 1} e={e} value={label.evidence_labels[e.id]}
                 gaps={showGaps ? articleGaps(label.evidence_labels[e.id]) : undefined}
+                prior={related?.giudizi_precedenti[e.id]?.[0]} registry={related?.registro?.articoli[e.id]}
                 onPertinenza={(v) => setPertinenza(e.id, v)} onAvversa={(v) => setAvversa(e.id, v)}
+                onReuse={() => reuse(e.id, related!.giudizi_precedenti[e.id][0])}
                 boxRef={(el) => { articleEls.current[e.id] = el; }} />
             ))}
           </>
@@ -409,6 +534,19 @@ export default function CaseLabelPanel({ a, onSaved, onDirtyChange, onNext, onCl
 
       <Box sx={{ borderTop: 1, borderColor: "divider", px: 2, py: 1.5, bgcolor: "background.paper" }}>
         {msg && <MuiAlert severity={msg.ok ? "success" : "error"} sx={{ mb: 1 }}>{msg.text}</MuiAlert>}
+        {confirmed && (
+          <MuiAlert severity="success" sx={{ mb: 1 }} onClose={() => setConfirmed(null)}>
+            Nel registro di «{confirmed.subject.denominazione}»: {confirmed.confermati === 1 ? "1 articolo confermato"
+              : `${confirmed.confermati} articoli confermati`}
+            {confirmed.alias_aggiunto && `; «${confirmed.alias_aggiunto}» registrato come sua variante`}.
+          </MuiAlert>
+        )}
+        {label.affidabile && otherReliable && (
+          <Typography variant="caption" color="warning.main" component="div">
+            Il dataset ha già un caso affidabile di questo soggetto: due casi dello stesso soggetto
+            non sono indipendenti.
+          </Typography>
+        )}
         {showGaps && (
           <MuiAlert severity="error" sx={{ mb: 1 }}>
             Per includere il caso nel dataset completa: {todo.join("; ")} (in rosso nella scheda). Oppure
@@ -428,6 +566,10 @@ export default function CaseLabelPanel({ a, onSaved, onDirtyChange, onNext, onCl
               onChange={(ev) => setLabel((l) => ({ ...l, affidabile: ev.target.checked }))} />
           } />
           <Box sx={{ display: "flex", gap: 1, ml: "auto" }}>
+            <Button size="small" onClick={() => setConfirmOpen(true)} disabled={saving || dirty || !confirmable}
+              title={dirty ? "Salva prima l'etichetta" : !confirmable ? "Serve almeno un articolo con giudizio certo" : undefined}>
+              Conferma nel registro…
+            </Button>
             <Button variant="outlined" size="small" onClick={() => save()} disabled={saving}>Salva</Button>
             <Button variant="contained" size="small" disabled={saving}
               onClick={() => save(onNext ?? onClose)}>
@@ -436,6 +578,15 @@ export default function CaseLabelPanel({ a, onSaved, onDirtyChange, onNext, onCl
           </Box>
         </Box>
       </Box>
+      {confirmOpen && (
+        <ConfirmRegistryDialog open a={a} label={label} registry={related?.registro ?? null}
+          onClose={() => setConfirmOpen(false)}
+          onDone={(res) => {
+            setConfirmOpen(false);
+            setConfirmed(res);
+            getRelated(a.id).then(setRelated).catch(() => undefined);
+          }} />
+      )}
     </>
   );
 }

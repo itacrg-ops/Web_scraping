@@ -85,13 +85,17 @@ export interface Alert {
   svi_error?: string | null;
   entity_resolution?: EntityResolution | null;
   classification?: { method?: string | null; [k: string]: unknown } | null;
+  // Nomi simili citati negli articoli al posto del nome esatto (possibile refuso).
+  name_variants?: string[];
+  // Stesso soggetto scritto in modi diversi (duplicati): calcolata dall'API.
+  subject_key: string;
   evidence?: EvidenceItem[];
   created_at: string;
 }
 
 async function getJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { headers: await authHeaders() });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) throw await errorOf(res);
   return (await res.json()) as T;
 }
 
@@ -175,6 +179,9 @@ export interface Subject {
   ruolo?: string | null;
   attivo: boolean;
   created_at: string;
+  alias?: string[];               // varianti confermate dello stesso soggetto
+  distinti?: string[];            // nomi simili confermati come ALTRI soggetti
+  articoli_confermati?: number;   // notizie verificate dai revisori
 }
 
 export interface SubjectCreate {
@@ -212,7 +219,7 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
     headers: await authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) throw await errorOf(res);
   return (await res.json()) as T;
 }
 
@@ -222,13 +229,13 @@ async function patchJSON<T>(path: string, body: unknown): Promise<T> {
     headers: await authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) throw await errorOf(res);
   return (await res.json()) as T;
 }
 
 async function deleteReq(path: string): Promise<void> {
   const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", headers: await authHeaders() });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) throw await errorOf(res);
 }
 
 // Errore leggibile: usa il `detail` dell'API (es. cosa manca per un caso "affidabile").
@@ -339,3 +346,116 @@ export const deleteSubject = (id: string) => deleteReq(`/api/subjects/${id}`);
 export const importSubjects = (csvText: string) =>
   postJSON<SubjectImportResult>("/api/subjects/import", { csv: csvText });
 export { API_BASE };
+
+// --- Cancellazione di alert duplicati o errati -------------------------------------
+export type MotivoCancellazione = "duplicato" | "errato";
+
+export interface AlertDeleteResult {
+  eliminati: number;
+  etichette_eliminate: number;
+  in_svi: { id: string; svi_alert_id: string }[];   // restano aperti in SAS VI
+}
+
+export const deleteAlerts = (ids: string[], motivo: MotivoCancellazione, nota?: string) =>
+  postJSON<AlertDeleteResult>("/api/alerts/delete", { ids, motivo, nota: nota || null });
+
+// --- Casi collegati (etichettatura) -------------------------------------------------
+export interface RelatedCase {
+  id: string;
+  subject: string;
+  created_at: string;
+  disposition: string;
+  etichette: number;
+  affidabili: number;
+  mia: "affidabile" | "bozza" | null;
+}
+
+export interface PriorJudgment {
+  alert_id: string;
+  created_at: string;
+  pertinenza?: Pertinenza | null;
+  avversa?: Avversa | null;
+}
+
+export interface RegistryArticle {
+  pertinenza: Pertinenza;
+  avversa: Avversa;
+  confirmed_by_name?: string | null;
+  confirmed_at?: string | null;
+}
+
+export interface RelatedOut {
+  stesso_soggetto: RelatedCase[];
+  giudizi_precedenti: Record<string, PriorJudgment[]>;   // evidence_id → miei giudizi altrove
+  registro: {
+    subject_id: string;
+    denominazione: string;
+    come: "entity_resolution" | "cf_piva" | "nome" | "alias";
+    articoli: Record<string, RegistryArticle>;           // evidence_id → già confermato
+  } | null;
+}
+
+export const getRelated = (alertId: string) => getJSON<RelatedOut>(`/api/alerts/${alertId}/related`);
+
+// --- Nomi simili (prima di uno screening o di aggiungere un soggetto) --------------
+export interface SimilarCandidate {
+  fonte: "registro" | "screening";
+  subject_id?: string | null;
+  denominazione: string;
+  tipo_soggetto: TipoSoggetto;
+  cf_piva?: string | null;
+  data_nascita?: string | null;
+  luogo_nascita?: string | null;
+  score: number;
+  alert: number;
+}
+
+export interface SimilarOut {
+  nome: string;
+  registro_esatto: SimilarCandidate | null;
+  alert_esistenti: number;
+  simili: SimilarCandidate[];
+}
+
+export function similarSubjects(q: { tipo_soggetto: TipoSoggetto; denominazione?: string;
+                                     nome?: string; cognome?: string }) {
+  const params = new URLSearchParams();
+  Object.entries(q).forEach(([k, v]) => { if (v) params.set(k, v); });
+  return getJSON<SimilarOut>(`/api/subjects/similar?${params}`);
+}
+
+export const decideName = (subjectId: string, name: string, decision: "stesso" | "diverso") =>
+  postJSON<Subject>(`/api/subjects/${subjectId}/names`, { name, decision });
+
+// --- Conferma degli articoli nel registro (a valle dell'etichettatura) -------------
+export interface SubjectArticle {
+  id: string;
+  alert_id?: string | null;
+  url: string;
+  testata?: string | null;
+  title?: string | null;
+  data?: string | null;
+  pertinenza: Pertinenza;
+  avversa: Avversa;
+  categorie: string[];
+  ruolo?: Ruolo | null;
+  esito?: DispositionAttesa | null;
+  confirmed_by_name?: string | null;
+  confirmed_at?: string | null;
+}
+
+export interface ConfirmOut {
+  subject: Subject;
+  confermati: number;
+  saltati: number;
+  alias_aggiunto?: string | null;
+}
+
+export const confirmInRegistry = (alertId: string,
+                                  target: { subject_id: string } | { nuovo: SubjectCreate }) =>
+  postJSON<ConfirmOut>(`/api/alerts/${alertId}/confirm`, target);
+export const listSubjectArticles = (subjectId: string) =>
+  getJSON<SubjectArticle[]>(`/api/subjects/${subjectId}/articles`);
+export const removeSubjectArticle = (subjectId: string, articleId: string) =>
+  deleteReq(`/api/subjects/${subjectId}/articles/${articleId}`);
+

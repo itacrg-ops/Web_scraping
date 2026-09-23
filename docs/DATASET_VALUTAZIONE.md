@@ -15,6 +15,17 @@ per chiudere; se ci sono modifiche non salvate viene chiesta conferma).
 L'**esito del sistema** (AMI, categorie, motivazione) è in una sezione chiusa: aprila dopo
 aver giudicato, per non farti influenzare.
 
+In cima alla scheda, quando serve:
+- **possibile refuso nel nome**: gli articoli citano un nome molto simile (es. «Andrea
+  Stroppa» per «Stropp Andrea») → «Ripeti lo screening» con il nome corretto;
+- **stesso soggetto in altri casi**, con quali sono già nel dataset (vedi *Duplicati*);
+- sotto un articolo già giudicato **da te** in un altro caso dello stesso soggetto: «Già
+  giudicato da te il …» e **«Usa lo stesso giudizio»** (i giudizi degli altri revisori non
+  vengono mostrati: l'etichettatura resta indipendente).
+
+Dopo il salvataggio, **«Conferma nel registro…»** porta gli articoli giudicati nello storico
+del soggetto (vedi [`REGISTRO_SOGGETTI.md`](REGISTRO_SOGGETTI.md)).
+
 | Livello | Domanda | Valori |
 |---|---|---|
 | per articolo | Riguarda il soggetto? | Sì · Omonimo · Non citato · Incerto |
@@ -66,6 +77,24 @@ Vittima o Solo menzionato con esito Escalation; Escalation senza alcun articolo 
 Chiusura con un articolo pertinente e avverso. Se la scelta è voluta (es. rischio di
 infiltrazione, notizie note ma non trovate dal sistema), spiegala nelle **note**.
 
+## Duplicati: un caso per soggetto
+
+Più alert dello stesso soggetto (screening ripetuti) **non sono casi indipendenti**: nel
+dataset ne basta uno, altrimenti gli stessi errori contano più volte e gli intervalli di
+confidenza risultano ottimisti. Stesso soggetto = stesso CF/P.IVA, oppure (se manca) stesso
+tipo e stesso nome scritto in modo diverso («ACME S.r.l.» = «Acme srl»); omonimi con CF
+diversi restano distinti.
+
+- Pagina **Alert**: il chip **×N** accanto al soggetto; **«Solo soggetti con più alert»**
+  li raggruppa; **«Seleziona i duplicati»** tiene per ogni soggetto il caso già nel
+  dataset (altrimenti il più recente) e seleziona gli altri.
+- **«Elimina…»** (o il cestino nella scheda): motivo obbligatorio (*duplicato* / *errato*)
+  e nota facoltativa; articoli ed etichette del caso vengono eliminati. Serve un ruolo di
+  `ALERT_DELETE_ROLES` (default `["amministratore"]`); ogni cancellazione resta nell'audit.
+  Gli alert già pubblicati **restano in SAS VI**: la console elenca gli ID da chiudere là.
+- Nella scheda, marcando *affidabile* un secondo caso dello stesso soggetto compare un avviso.
+- Il report indica i **soggetti distinti** e avvisa se sono meno dei casi.
+
 ## Tre accortezze perché i numeri siano credibili
 
 1. **Non solo escalation.** Se si etichettano solo i casi che il sistema ha segnalato, si
@@ -95,15 +124,40 @@ python scripts/evaluate_labels.py dataset-casi-AAAAMMGG.ndjson --tutti  # anche 
 ```
 
 Il report dà, con **intervallo di confidenza al 95%** (con pochi casi le percentuali
-oscillano molto):
+oscillano molto) e con il numero di **soggetti distinti**:
 
 - **riconoscimento del soggetto** (per articolo): precisione e richiamo, anche per tipo di
   corrispondenza (`nome_cognome`, `denominazione`, `denominazione_breve`, `cf_piva`), con
   l'elenco degli errori;
-- **categorie FATF** (per caso): precisione e richiamo, per categoria;
+- **categorie FATF** (per caso): precisione e richiamo, per categoria, e quante categorie
+  per caso mettono sistema e revisore (molte categorie = richiamo alto, precisione bassa);
 - **esito**: accordo, **falsi negativi** (da escalation ma chiusi — l'errore più grave),
-  falsi positivi, casi non decisi dal sistema;
+  falsi positivi, casi non decisi dal sistema, con l'**elenco dei casi sbagliati** (ruolo
+  indicato dal revisore e categorie del sistema);
 - tutto **per metodo di classificazione** (LLM / parole chiave) e l'accordo tra revisori.
+
+## Rivalutazione con la versione attuale
+
+Il report misura la predizione **salvata a suo tempo**. Per sapere come si comporta la
+versione di oggi sugli stessi casi — e misurare ogni correzione prima di metterla in uso —
+si ripassano gli articoli già salvati (snapshot, nessuna nuova ricerca) nella pipeline
+attuale: riconoscimento del soggetto, classificazione LLM, AMI, esito.
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build worker-scraping   # dopo un aggiornamento
+docker compose -f docker-compose.dev.yml exec -T worker-scraping \
+    python replay.py > rivalutazione.ndjson                  # --tutti: anche le bozze
+python scripts/evaluate_labels.py rivalutazione.ndjson
+```
+
+Il report mette a confronto **prima** e **dopo** (riconoscimento, categorie, categorie per
+caso, esito, categorie cambiate) e poi il dettaglio della versione attuale. Anche gli alert
+creati prima del salvataggio delle predizioni ottengono così il riconoscimento per articolo.
+
+- Serve l'LLM: se non risponde la rivalutazione si ferma (a parole chiave non misurerebbe
+  il sistema reale). A temperatura 0 le risposte possono comunque variare di poco.
+- I casi senza articoli salvati restano invariati; uno snapshot mancante viene saltato.
+- Il file contiene dati personali come l'export (senza CF/P.IVA): stesse cautele.
 
 ## Limiti
 
@@ -122,3 +176,6 @@ oscillano molto):
 | GET | `/api/labels` | casi etichettati dal revisore corrente |
 | GET | `/api/labels/stats` | avanzamento (tutti i revisori), anche per esito del sistema |
 | GET | `/api/labels/export` | NDJSON; ruoli `DATASET_EXPORT_ROLES` |
+| GET | `/api/alerts/{id}/related` | stesso soggetto in altri casi, miei giudizi sugli stessi articoli, registro |
+| POST | `/api/alerts/delete` | elimina alert duplicati/errati; ruoli `ALERT_DELETE_ROLES` |
+| GET | `/api/labels/replay` | interno (token di servizio): input della rivalutazione |

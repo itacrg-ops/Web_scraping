@@ -132,7 +132,19 @@ def resolve(subject: dict) -> dict:
     #    soggetto (una persona non va confrontata con una società).
     target_tipo = PERSONA_FISICA if is_person else PERSONA_GIURIDICA
     pool = [r for r in reg if r.get("tipo", PERSONA_GIURIDICA) == target_tipo]
-    scored = [{"record": r, "score": round(similarity(name, r["denominazione"]), 3)} for r in pool]
+    # Decisioni dei revisori sui nomi simili (registro, console): un nome dichiarato
+    # «altro soggetto» per un record non lo propone più come candidato; le varianti
+    # confermate (refusi, ordine, nomi precedenti) contano come il nome del record.
+    excluded = [r for r in pool if any(similarity(name, d) >= 0.999 for d in r.get("distinti") or [])]
+    if excluded:
+        pool = [r for r in pool if r not in excluded]
+        warnings.append("Esclusi i soggetti che un revisore ha indicato come diversi da questo nome: "
+                        + ", ".join(r["denominazione"] for r in excluded))
+    scored = []
+    for r in pool:
+        by_alias = max((similarity(name, a) for a in r.get("alias") or []), default=0.0)
+        direct = similarity(name, r["denominazione"])
+        scored.append({"record": r, "score": round(max(direct, by_alias), 3), "alias": by_alias > direct})
 
     # Embedding (B7): fonde una componente semantica nella similarità del nome
     # (varianti/abbreviazioni che la stringa sottostima). Opt-in e NON fatale:
@@ -207,6 +219,9 @@ def resolve(subject: dict) -> dict:
                 )
 
     candidates = [{**_match_record(c["record"]), "score": c["score"]} for c in candidates_scored]
+    for c in candidates_scored:
+        if c.get("alias") and c["score"] >= settings.name_candidate:
+            warnings.append(f"Nome riconosciuto come variante confermata di «{c['record']['denominazione']}»")
 
     strong_unique = (
         best is not None

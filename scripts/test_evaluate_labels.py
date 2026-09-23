@@ -88,6 +88,65 @@ def test_per_method_and_agreement() -> None:
     assert ev.reviewer_agreement(twice)["rate"] == 0.0
 
 
+def test_errors_subjects_and_categories_per_case() -> None:
+    rep = ev.evaluate(_load(RECORDS))
+    assert rep["soggetti"] == 3
+    assert rep["categorie"]["per_caso"] == {"sistema": 0.67, "revisore": 0.67}
+    errs = {e["subject"]: e for e in rep["esito"]["errori"]}
+    assert errs["Soggetto A"]["sistema"] == ev.ESCALATION and errs["Soggetto A"]["categorie"] == ["Money Laundering"]
+    assert errs["Soggetto B"]["sistema"] == ev.CHIUSURA and "Soggetto C" not in errs   # C: non deciso
+
+
+def _with_replay(records):
+    """A rivalutato (ora chiude, articolo omonimo non più citato); B in errore; C senza articoli."""
+    out = []
+    for r in records:
+        r = json.loads(json.dumps(r))
+        for i, e in enumerate(r["evidence"]):
+            e["id"] = f"{r['alert']['id']}-{i}"
+        if r["alert"]["id"] == "A":
+            r["replay"] = {"status": "ok",
+                           "alert": {"disposition": "AUTO_CHIUSO", "fatf_categories": [],
+                                     "classification": {"method": "llm_dual"}},
+                           "evidence": {"A-0": {"mentioned": True, "mention_match": ["denominazione"]},
+                                        "A-1": {"mentioned": False, "mention_match": []}}}
+        elif r["alert"]["id"] == "B":
+            r["replay"] = {"status": "errore", "motivo": "x"}
+        else:
+            r["replay"] = {"status": "non_rivalutabile", "motivo": "nessun articolo salvato"}
+        out.append(r)
+    return out
+
+
+def test_replay_after_view() -> None:
+    records = _load(_with_replay(RECORDS))
+    after = ev.evaluate(ev.rivalutati(records))
+    before = ev.evaluate(records)
+    assert before["esito"]["falsi_positivi"]["k"] == 1 and after["esito"]["falsi_positivi"]["k"] == 0
+    assert after["menzione"]["fp"] == 0 and before["menzione"]["fp"] == 1        # l'omonimo non è più "citato"
+    assert after["categorie"]["per_caso"]["sistema"] < before["categorie"]["per_caso"]["sistema"]
+    assert set(after["per_metodo"]) == {"llm_dual"}                               # A ora classificato via LLM
+    assert ev.replay_status(records) == {"ok": 1, "errore": 1, "non_rivalutabile": 1}
+
+
+def test_main_prints_comparison() -> None:
+    import contextlib
+    import io
+    with tempfile.NamedTemporaryFile("w", suffix=".ndjson", delete=False, encoding="utf-8") as fh:
+        fh.write("".join(json.dumps(r) + "\n" for r in _with_replay(RECORDS)))
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            assert ev.main([fh.name]) == 0
+    finally:
+        os.unlink(fh.name)
+    out = buf.getvalue()
+    assert "Rivalutazione con la versione attuale: 1 in errore (invariati), 1 senza articoli (invariati), 1 rivalutati" in out, out
+    assert "falsi positivi  100% (1/1)        0% (0/1)" in out, out
+    assert "per caso        0,7               0,3" in out, out
+    assert "Dettaglio con la versione attuale" in out
+
+
 def test_wilson_interval() -> None:
     assert ev.wilson(0, 0)["rate"] is None
     w = ev.wilson(5, 10)

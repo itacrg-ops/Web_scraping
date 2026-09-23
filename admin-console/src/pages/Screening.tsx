@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Alert as MuiAlert, Box, Button, Checkbox, Chip, CircularProgress, Divider,
   FormControlLabel, Link, List, ListItem, ListItemButton, ListItemIcon, ListItemText,
@@ -6,10 +7,19 @@ import {
 } from "@mui/material";
 import SearchIcon from "@mui/icons-material/Search";
 import {
-  getScreening, searchPreview, startScreening,
-  type Credibilita, type Screening, type SearchResult, type TipoSoggetto,
+  decideName, getScreening, searchPreview, similarSubjects, startScreening, updateSubject,
+  type Credibilita, type Screening, type SearchResult, type SimilarCandidate, type SimilarOut, type TipoSoggetto,
 } from "../api";
 import { checkCf } from "../codiceFiscale";
+import SimilarNamesDialog, { type NameChoice } from "../components/SimilarNamesDialog";
+import { splitPerson } from "../personName";
+
+// Campi del soggetto che la conferma di un nome simile può sostituire.
+type NameFields = { denominazione?: string; cognome?: string; nome?: string; cf_piva?: string;
+                    data_nascita?: string; luogo_nascita?: string };
+// Solo i campi valorizzati: gli altri restano quelli del modulo.
+const definedName = (f: NameFields): NameFields =>
+  Object.fromEntries(Object.entries(f).filter(([, v]) => v)) as NameFields;
 
 // Colore del chip credibilità testata.
 const credColor = (c?: Credibilita | null): "success" | "warning" | "default" =>
@@ -47,8 +57,28 @@ export default function ScreeningPage() {
   const [result, setResult] = useState<Screening | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Nomi simili a soggetti noti: dialogo di conferma (promessa risolta dalla scelta).
+  const [similar, setSimilar] = useState<SimilarOut | null>(null);
+  const answer = useRef<((c: NameChoice) => void) | null>(null);
+  const [checkedName, setCheckedName] = useState<string | null>(null);   // nome già verificato
+  const [nameNote, setNameNote] = useState<string | null>(null);
+
+  // Precompilazione da un link (es. «Ripeti lo screening» con il nome corretto).
+  const [params] = useSearchParams();
+  useEffect(() => {
+    const t = params.get("tipo");
+    if (t !== "persona_fisica" && t !== "persona_giuridica") return;
+    setTipo(t);
+    setDenominazione(params.get("denominazione") ?? "");
+    setCognome(params.get("cognome") ?? "");
+    setNome(params.get("nome") ?? "");
+    setCfPiva(params.get("cf_piva") ?? "");
+    setCup(params.get("cup") ?? "");
+  }, [params]);
+
   const isPerson = tipo === "persona_fisica";
   const hasSubject = isPerson ? Boolean(cognome && nome) : Boolean(denominazione);
+  const typedName = isPerson ? `${cognome} ${nome}`.trim() : denominazione.trim();
   // Controllo live CF ↔ dati anagrafici (persona fisica): feedback immediato.
   const cfCheck = isPerson ? checkCf(cfPiva, nome, cognome, dataNascita) : null;
 
@@ -73,7 +103,69 @@ export default function ScreeningPage() {
     localita: isPerson && localita ? localita : undefined,
   });
 
+  function fieldsOf(c: SimilarCandidate): NameFields {
+    const extra = { cf_piva: c.cf_piva ?? undefined, data_nascita: c.data_nascita ?? undefined,
+                    luogo_nascita: c.luogo_nascita ?? undefined };
+    return isPerson ? { ...splitPerson(c.denominazione), ...extra } : { denominazione: c.denominazione, ...extra };
+  }
+
+  function applyFields(f: NameFields) {
+    if (f.denominazione !== undefined) setDenominazione(f.denominazione);
+    if (f.cognome !== undefined) setCognome(f.cognome);
+    if (f.nome !== undefined) setNome(f.nome);
+    if (f.cf_piva !== undefined) setCfPiva(f.cf_piva);
+    if (f.data_nascita !== undefined) setDataNascita(f.data_nascita);
+    if (f.luogo_nascita !== undefined) setLuogoNascita(f.luogo_nascita);
+  }
+
+  // Prima di cercare o avviare: il nome è simile a un soggetto noto (registro o screening
+  // passati) o è già stato screenato? Chiede conferma una volta per nome. Restituisce i
+  // campi da sostituire ({} = nessuno) o null se l'utente annulla.
+  async function checkName(): Promise<NameFields | null> {
+    if (checkedName === typedName) return {};
+    let data: SimilarOut;
+    try {
+      data = await similarSubjects({ tipo_soggetto: tipo, denominazione: isPerson ? undefined : denominazione,
+                                     cognome: isPerson ? cognome : undefined, nome: isPerson ? nome : undefined });
+    } catch {
+      return {};   // controllo non disponibile: non blocca lo screening
+    }
+    if (!data.simili.length && !data.alert_esistenti) {
+      setCheckedName(typedName);
+      return {};
+    }
+    setSimilar(data);
+    const choice = await new Promise<NameChoice>((resolve) => { answer.current = resolve; });
+    setSimilar(null);
+    if (choice.action === "annulla") return null;
+    try {
+      if (choice.action === "usa") {
+        const f = fieldsOf(choice.c);
+        applyFields(f);
+        if (choice.c.subject_id) await decideName(choice.c.subject_id, typedName, "stesso");
+        setNameNote(`Usato «${choice.c.denominazione}»` + (choice.c.subject_id
+          ? `: «${typedName}» è registrato come sua variante.` : "."));
+        setCheckedName(isPerson ? `${f.cognome} ${f.nome}`.trim() : f.denominazione ?? typedName);
+        return f;
+      }
+      if (choice.action === "correggi") {
+        await updateSubject(choice.c.subject_id!, { denominazione: typedName });
+        setNameNote(`Registro corretto: «${choice.c.denominazione}» ora è «${typedName}» (il vecchio nome resta come variante).`);
+      } else if (choice.action === "diverso" && choice.c.subject_id) {
+        await decideName(choice.c.subject_id, typedName, "diverso");
+        setNameNote(`Registrato: «${typedName}» non è «${choice.c.denominazione}».`);
+      }
+    } catch (e) {
+      setError(String(e));
+      return null;
+    }
+    setCheckedName(typedName);
+    return {};
+  }
+
   async function search() {
+    const over = await checkName();
+    if (over === null) return;
     setSearching(true);
     setError(null);
     setResults(null);
@@ -81,7 +173,7 @@ export default function ScreeningPage() {
     setSelected(new Set());
     try {
       const r = await searchPreview({
-        ...subjectFields(), mode: "targeted",
+        ...subjectFields(), ...definedName(over), mode: "targeted",
         // "Escludi bassa credibilità" = scarta solo le testate note come poco
         // affidabili (blog/UGC); mantiene le sconosciute (non ancora a registro).
         min_credibility: onlyReliable ? "sconosciuta" : undefined,
@@ -107,6 +199,8 @@ export default function ScreeningPage() {
   }
 
   async function submit() {
+    const over = await checkName();
+    if (over === null) return;
     setBusy(true);
     setError(null);
     setResult(null);
@@ -116,6 +210,7 @@ export default function ScreeningPage() {
         ...subjectFields(),
         data_nascita: isPerson && dataNascita ? dataNascita : undefined,
         luogo_nascita: isPerson && luogoNascita ? luogoNascita : undefined,
+        ...definedName(over),
         ruolo: isPerson && ruolo ? ruolo : undefined,   // solo screening (corroborazione)
         cup: cup ? cup.split(",").map((c) => c.trim()) : [],
         // Precedenza: selezionati (web search) → URL singolo → ricerca automatica.
@@ -323,6 +418,9 @@ export default function ScreeningPage() {
         </Stack>
       </Paper>
 
+      <SimilarNamesDialog typed={typedName} data={similar} mode="screening"
+        onChoice={(c) => answer.current?.(c)} />
+      {nameNote && <MuiAlert severity="info" sx={{ mt: 2 }} onClose={() => setNameNote(null)}>{nameNote}</MuiAlert>}
       {error && <MuiAlert severity="error" sx={{ mt: 2 }}>{error}</MuiAlert>}
       {result && (
         <MuiAlert severity={result.status === "completed" ? "success" : "info"} sx={{ mt: 2 }}>

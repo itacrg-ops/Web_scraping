@@ -13,7 +13,8 @@ Lo strumento è un **ausilio istruttorio** (decision-support) *explainable* e au
 | [`docs/NOTE_DI_REVISIONE.md`](docs/NOTE_DI_REVISIONE.md) | Memo di revisione esperta: rilievi ordinati per criticità, razionale e punti aperti |
 | [`docs/DEPLOYMENT_E_INTEGRAZIONE_SAS.md`](docs/DEPLOYMENT_E_INTEGRAZIONE_SAS.md) | Architettura di deployment a container su **due ambienti** (locale su Docker Desktop → produzione Azure/AKS); due console (SAS Visual Investigator per l'investigazione, React per admin/config/observability); integrazione SAS Viya via SAS MCP server (scoring/decisioning) e `svi-publisher` (Data Hub/Alerts); LLM via Azure AI Foundry (anche in locale) |
 | [`docs/SVILUPPO_LOCALE.md`](docs/SVILUPPO_LOCALE.md) | Guida allo sviluppo locale su Docker Desktop: prerequisiti, avvio, LLM su Foundry in locale, mock SAS/SVI, struttura del repo |
-| [`docs/DATASET_VALUTAZIONE.md`](docs/DATASET_VALUTAZIONE.md) | Etichettatura dei casi dalla console (dataset di valutazione), export ed esecuzione dello script che misura gli errori del sistema |
+| [`docs/DATASET_VALUTAZIONE.md`](docs/DATASET_VALUTAZIONE.md) | Etichettatura dei casi dalla console (dataset di valutazione), duplicati, export, misura degli errori e rivalutazione con la versione attuale |
+| [`docs/REGISTRO_SOGGETTI.md`](docs/REGISTRO_SOGGETTI.md) | Registro dei soggetti che impara dai revisori: nomi simili (varianti/soggetti diversi), refusi nel nome, notizie confermate, audit |
 | [`docs/FOUNDRY_SETUP.md`](docs/FOUNDRY_SETUP.md) | Configurazione Azure AI Foundry: risorsa/deployment, service principal dev (keyless), `.env`, verifica e troubleshooting |
 
 ## Pilastri di progetto

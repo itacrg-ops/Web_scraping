@@ -17,6 +17,7 @@ Complemento dell'anti-omonimia: qui è usata in modo **non bloccante** (warning)
 """
 from __future__ import annotations
 
+import difflib
 import re
 import unicodedata
 
@@ -148,6 +149,55 @@ def _context_matches(subject: dict, ttoks: list[str]) -> list[str]:
             if (v := tokens(subject.get(key, ""))) and contains(ttoks, v)]
 
 
+# Una parola "vicina" a una del nome del soggetto (refuso: Stropp / Stroppa / Stropa).
+# 0.85 esclude le coppie di nomi corti e comuni (Rossi/Rosso, Mario/Maria), quasi
+# sempre persone diverse.
+_NEAR = 0.85
+
+
+def _near(a: str, b: str) -> bool:
+    return a != b and min(len(a), len(b)) >= 4 and difflib.SequenceMatcher(None, a, b).ratio() >= _NEAR
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"\w+", text or "")
+
+
+def name_variants(subject: dict, text: str) -> list[str]:
+    """Varianti VICINE al nome del soggetto citate nel testo, quando il nome esatto non
+    c'è: di solito un refuso nel nome inserito («Stropp Andrea» → gli articoli dicono
+    «Andrea Stroppa»). Persona: il nome di battesimo esatto accanto a una parola simile
+    al cognome (o viceversa), con le iniziali maiuscole. Impresa: il nome distintivo con
+    una parola simile. Restituisce le varianti come scritte nel testo."""
+    words = _words(text)
+    norm = [_norm(w) for w in words]
+    found: list[str] = []
+
+    def add(i: int, j: int) -> None:
+        v = " ".join(words[i:j + 1])
+        if v not in found and all(w[:1].isupper() for w in words[i:j + 1]):
+            found.append(v)
+
+    if (subject.get("tipo_soggetto") or "persona_giuridica") == "persona_fisica":
+        nome, cognome = _person_names(subject)
+        if len(nome) != 1 or len(cognome) != 1:
+            return []
+        first, last = nome[0], cognome[0]
+        for i in range(len(norm) - 1):
+            a, b = norm[i], norm[i + 1]
+            if (a == first and _near(b, last)) or (b == first and _near(a, last)) \
+                    or (a == last and _near(b, first)) or (b == last and _near(a, first)):
+                add(i, i + 1)
+    else:
+        core = [t for t in strip_legal_form(tokens(subject.get("denominazione", ""))) if t not in GENERIC]
+        n = len(core)
+        for i in range(len(norm) - n + 1):
+            window = norm[i:i + n]
+            if window != core and all(w == c or _near(w, c) for w, c in zip(window, core)):
+                add(i, i + n - 1)
+    return found[:5]
+
+
 def check(subject: dict, text: str) -> dict:
     ttoks = tokens(text)
     matched: list[str] = []
@@ -166,4 +216,6 @@ def check(subject: dict, text: str) -> dict:
         "matched": sorted(set(matched)),
         "distinctive": distinctive,
         "context": _context_matches(subject, ttoks),
+        # solo se il nome esatto manca: altrimenti una variante è rumore
+        "variants": [] if matched else name_variants(subject, text),
     }

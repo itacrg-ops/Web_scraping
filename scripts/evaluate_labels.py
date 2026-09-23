@@ -8,6 +8,12 @@ Uso (dalla root del repo, solo libreria standard):
   python scripts/evaluate_labels.py dataset.ndjson --tutti    # include le bozze
   python scripts/evaluate_labels.py dataset.ndjson --json     # output per altri strumenti
 
+Con il file della **rivalutazione** (worker `replay.py`: gli stessi casi ripassati nella
+versione attuale del sistema) il report mette a confronto «prima» (predizione salvata a
+suo tempo) e «dopo» (versione attuale):
+
+  python scripts/evaluate_labels.py rivalutazione.ndjson
+
 Confronta la predizione del sistema con il giudizio umano (i giudizi "incerto" sono
 esclusi), anche separatamente per metodo di classificazione (LLM / parole chiave):
 
@@ -86,16 +92,26 @@ def category_metrics(records: list[dict]) -> dict:
     tot = Counter()
     for c in per_cat.values():
         tot.update(c)
+    n = len(records) or 1
     return {"micro": _prf(tot["tp"], tot["fp"], tot["fn"]),
+            # quante categorie per caso: un sistema che ne mette molte ha richiamo alto e precisione bassa
+            "per_caso": {"sistema": round(sum(len(r["alert"].get("fatf_categories") or []) for r in records) / n, 2),
+                         "revisore": round(sum(len(r["label"].get("categorie_corrette") or []) for r in records) / n, 2)},
             "per_categoria": {c: _prf(v["tp"], v["fp"], v["fn"]) for c, v in sorted(per_cat.items())}}
 
 
 def disposition_metrics(records: list[dict]) -> dict:
     matrix: dict[str, Counter] = {ESCALATION: Counter(), CHIUSURA: Counter()}
+    errors = []
     for r in records:
         attesa = {"ESCALATION_I_LIVELLO": ESCALATION, "AUTO_CHIUSO": CHIUSURA}.get(r["label"].get("disposition_attesa"))
         if attesa:
-            matrix[attesa][_PRED.get(r["alert"].get("disposition"), ALTRO)] += 1
+            pred = _PRED.get(r["alert"].get("disposition"), ALTRO)
+            matrix[attesa][pred] += 1
+            if pred not in (attesa, ALTRO):
+                errors.append({"subject": r["alert"]["subject"], "sistema": pred, "revisore": attesa,
+                               "ruolo": r["label"].get("ruolo"),
+                               "categorie": r["alert"].get("fatf_categories") or []})
     esc, chi = matrix[ESCALATION], matrix[CHIUSURA]
     decisi = esc[ESCALATION] + esc[CHIUSURA] + chi[ESCALATION] + chi[CHIUSURA]
     return {
@@ -105,6 +121,7 @@ def disposition_metrics(records: list[dict]) -> dict:
         "falsi_negativi": wilson(esc[CHIUSURA], esc[ESCALATION] + esc[CHIUSURA]),
         "falsi_positivi": wilson(chi[ESCALATION], chi[ESCALATION] + chi[CHIUSURA]),
         "non_decisi_dal_sistema": esc[ALTRO] + chi[ALTRO],   # ESITO_INCOMPLETO, HITL…
+        "errori": errors,
     }
 
 
@@ -122,7 +139,10 @@ def evaluate(records: list[dict]) -> dict:
     groups: dict[str, list[dict]] = defaultdict(list)
     for r in records:
         groups[((r["alert"].get("classification") or {}).get("method")) or "sconosciuto"].append(r)
-    report = {"casi": len(records), "menzione": mention_metrics(records),
+    report = {"casi": len(records),
+              # casi dello stesso soggetto non sono indipendenti: gli intervalli li trattano come tali
+              "soggetti": len({" ".join(r["alert"]["subject"].upper().split()) for r in records}),
+              "menzione": mention_metrics(records),
               "categorie": category_metrics(records), "esito": disposition_metrics(records),
               "accordo_revisori": reviewer_agreement(records), "per_metodo": {}}
     for method, recs in sorted(groups.items()):
@@ -130,6 +150,10 @@ def evaluate(records: list[dict]) -> dict:
                                         "categorie": category_metrics(recs)["micro"],
                                         "esito": disposition_metrics(recs)["accordo"]}
     return report
+
+
+def _dec(x: float) -> str:
+    return f"{x:.1f}".replace(".", ",")
 
 
 def _fmt(w: dict) -> str:
@@ -140,9 +164,11 @@ def _fmt(w: dict) -> str:
 
 
 def print_report(rep: dict) -> None:
-    print(f"Casi valutati: {rep['casi']}")
+    print(f"Casi valutati: {rep['casi']} (soggetti distinti: {rep['soggetti']})")
     if rep["casi"] < 30:
         print("  ⚠ campione piccolo: le percentuali sono solo indicative (vedi intervalli).")
+    if rep["soggetti"] < rep["casi"]:
+        print("  ⚠ più casi dello stesso soggetto: non sono indipendenti, gli intervalli sono ottimisti.")
     m = rep["menzione"]
     print("\nRiconoscimento del soggetto (per articolo)")
     print(f"  precisione {_fmt(m['precisione'])} · richiamo {_fmt(m['richiamo'])}")
@@ -154,6 +180,7 @@ def print_report(rep: dict) -> None:
     c = rep["categorie"]
     print("\nCategorie FATF (per caso)")
     print(f"  micro: precisione {_fmt(c['micro']['precisione'])} · richiamo {_fmt(c['micro']['richiamo'])}")
+    print(f"  per caso: sistema {_dec(c['per_caso']['sistema'])} · revisore {_dec(c['per_caso']['revisore'])}")
     for cat, v in c["per_categoria"].items():
         print(f"  {cat}: tp {v['tp']} · fp {v['fp']} · fn {v['fn']}")
     e = rep["esito"]
@@ -162,6 +189,10 @@ def print_report(rep: dict) -> None:
     print(f"  falsi negativi (da escalation ma chiusi) {_fmt(e['falsi_negativi'])}")
     print(f"  falsi positivi (da chiudere ma escalati) {_fmt(e['falsi_positivi'])}")
     print(f"  non decisi dal sistema (incompleti/HITL): {e['non_decisi_dal_sistema']}")
+    for err in e["errori"][:15]:
+        kind = "falso negativo" if err["sistema"] == CHIUSURA else "falso positivo"
+        print(f"  ✗ {err['subject']}: {kind} (ruolo per il revisore: {err['ruolo'] or '—'}; "
+              f"categorie del sistema: {', '.join(err['categorie']) or '—'})")
     if rep["accordo_revisori"]["n"]:
         print(f"\nAccordo tra revisori sull'esito: {_fmt(rep['accordo_revisori'])}")
     print("\nPer metodo di classificazione")
@@ -171,18 +202,86 @@ def print_report(rep: dict) -> None:
               f"categorie {_fmt(g['categorie']['precisione'])} · esito {_fmt(g['esito'])}")
 
 
+# --- Rivalutazione (replay.py): «prima» contro «dopo» -------------------------------
+def rivalutati(records: list[dict]) -> list[dict]:
+    """Vista «dopo»: la predizione rivalutata al posto di quella salvata. I casi non
+    rivalutabili (senza articoli) o in errore restano come erano."""
+    out = []
+    for r in records:
+        rep = r.get("replay") or {}
+        if rep.get("status") != "ok":
+            out.append(r)
+            continue
+        new_ev = rep.get("evidence") or {}
+        out.append({**r, "alert": {**r["alert"], **rep["alert"]},
+                    "evidence": [{**e, "mentioned": (new_ev.get(e.get("id")) or {}).get("mentioned"),
+                                  "mention_match": (new_ev.get(e.get("id")) or {}).get("mention_match")}
+                                 for e in r.get("evidence", [])]})
+    return out
+
+
+def replay_status(records: list[dict]) -> Counter:
+    """Esito della rivalutazione per caso (ok / non_rivalutabile / errore)."""
+    return Counter(({r["alert"]["id"]: (r.get("replay") or {}).get("status", "assente") for r in records}).values())
+
+
+def _short(w: dict) -> str:
+    return "n/d" if w["rate"] is None else f"{w['rate']:.0%} ({w['k']}/{w['n']})"
+
+
+def print_comparison(before: dict, after: dict, status: Counter) -> None:
+    labels = {"ok": "rivalutati", "non_rivalutabile": "senza articoli (invariati)", "errore": "in errore (invariati)"}
+    print("Rivalutazione con la versione attuale: "
+          + ", ".join(f"{n} {labels.get(s, s)}" for s, n in sorted(status.items())))
+    rows = [
+        ("Riconoscimento", "precisione", _short(before["menzione"]["precisione"]), _short(after["menzione"]["precisione"])),
+        ("", "richiamo", _short(before["menzione"]["richiamo"]), _short(after["menzione"]["richiamo"])),
+        ("Categorie", "precisione", _short(before["categorie"]["micro"]["precisione"]),
+         _short(after["categorie"]["micro"]["precisione"])),
+        ("", "richiamo", _short(before["categorie"]["micro"]["richiamo"]), _short(after["categorie"]["micro"]["richiamo"])),
+        ("", "per caso", _dec(before["categorie"]["per_caso"]["sistema"]),
+         _dec(after["categorie"]["per_caso"]["sistema"])),
+        ("Esito", "accordo", _short(before["esito"]["accordo"]), _short(after["esito"]["accordo"])),
+        ("", "falsi negativi", _short(before["esito"]["falsi_negativi"]), _short(after["esito"]["falsi_negativi"])),
+        ("", "falsi positivi", _short(before["esito"]["falsi_positivi"]), _short(after["esito"]["falsi_positivi"])),
+        ("", "non decisi", str(before["esito"]["non_decisi_dal_sistema"]), str(after["esito"]["non_decisi_dal_sistema"])),
+    ]
+    print(f"\n  {'':<15}{'':<16}{'prima':<18}dopo")
+    for group, metric, b, a in rows:
+        print(f"  {group:<15}{metric:<16}{b:<18}{a}")
+    cats = sorted(set(before["categorie"]["per_categoria"]) | set(after["categorie"]["per_categoria"]))
+    changed = [(c, before["categorie"]["per_categoria"].get(c), after["categorie"]["per_categoria"].get(c)) for c in cats]
+    lines = [f"  {c}: fp {b['fp'] if b else 0} → {a['fp'] if a else 0} · fn {b['fn'] if b else 0} → {a['fn'] if a else 0}"
+             for c, b, a in changed if (b or {}).get("fp") != (a or {}).get("fp") or (b or {}).get("fn") != (a or {}).get("fn")]
+    if lines:
+        print("\n  Categorie cambiate (prima → dopo):")
+        print("\n".join(lines))
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("dataset", help="export NDJSON della console")
+    ap.add_argument("dataset", help="export NDJSON della console, o il file della rivalutazione")
     ap.add_argument("--tutti", action="store_true", help="includi anche i casi non marcati affidabili")
     ap.add_argument("--json", action="store_true", help="stampa il report in JSON")
     args = ap.parse_args(argv)
-    rep = evaluate(load(args.dataset, tutti=args.tutti))
+    records = load(args.dataset, tutti=args.tutti)
+    if not any("replay" in r for r in records):
+        rep = evaluate(records)
+        if args.json:
+            json.dump(rep, sys.stdout, ensure_ascii=False, indent=2, default=str)
+            print()
+        else:
+            print_report(rep)
+        return 0
+    before, after, status = evaluate(records), evaluate(rivalutati(records)), replay_status(records)
     if args.json:
-        json.dump(rep, sys.stdout, ensure_ascii=False, indent=2)
+        json.dump({"rivalutazione": dict(status), "prima": before, "dopo": after},
+                  sys.stdout, ensure_ascii=False, indent=2, default=str)
         print()
     else:
-        print_report(rep)
+        print_comparison(before, after, status)
+        print("\n=== Dettaglio con la versione attuale (dopo) ===\n")
+        print_report(after)
     return 0
 
 

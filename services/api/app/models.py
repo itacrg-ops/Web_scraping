@@ -49,6 +49,71 @@ class Subject(Base):
     attivo: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
+    # Nomi simili già decisi da un revisore (alias / soggetti diversi): Entity Resolution.
+    names: Mapped[list["SubjectName"]] = relationship(
+        cascade="all, delete-orphan", lazy="selectin", order_by="SubjectName.decided_at"
+    )
+
+
+class SubjectName(Base):
+    """Decisione di un revisore su un nome simile a quello di un soggetto del registro:
+    «stesso» = variante dello stesso soggetto (refuso, ordine, nome precedente) → alias
+    per l'Entity Resolution; «diverso» = altro soggetto, da non confondere né riproporre."""
+
+    __tablename__ = "subject_names"
+    __table_args__ = (UniqueConstraint("subject_id", "name_key", name="uq_subject_names_subject_key"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    subject_id: Mapped[str] = mapped_column(ForeignKey("subjects.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String)
+    name_key: Mapped[str] = mapped_column(String)      # app.names.subject_key
+    decision: Mapped[str] = mapped_column(String)      # stesso | diverso
+    decided_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    decided_by_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class SubjectArticle(Base):
+    """Articolo confermato da un revisore per un soggetto del registro, a valle
+    dell'etichettatura: se lo riguarda e se è avverso, con il giudizio sul caso.
+    È lo storico verificato del soggetto (sopravvive alla cancellazione dell'alert)."""
+
+    __tablename__ = "subject_articles"
+    __table_args__ = (UniqueConstraint("subject_id", "url", name="uq_subject_articles_subject_url"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    subject_id: Mapped[str] = mapped_column(ForeignKey("subjects.id", ondelete="CASCADE"), index=True)
+    alert_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    url: Mapped[str] = mapped_column(String)
+    testata: Mapped[str | None] = mapped_column(String, nullable=True)
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
+    data: Mapped[str | None] = mapped_column(String, nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    pertinenza: Mapped[str] = mapped_column(String)
+    avversa: Mapped[str] = mapped_column(String)
+    categorie: Mapped[list] = mapped_column(JSON, default=list)
+    ruolo: Mapped[str | None] = mapped_column(String, nullable=True)
+    esito: Mapped[str | None] = mapped_column(String, nullable=True)
+    confirmed_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    confirmed_by_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AuditLog(Base):
+    """Operazioni sensibili (cancellazioni, correzioni del registro, conferme): chi,
+    quando, cosa. I dettagli non ripetono dati personali oltre agli identificativi."""
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    actor: Mapped[str | None] = mapped_column(String, nullable=True)
+    actor_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    action: Mapped[str] = mapped_column(String)
+    object_type: Mapped[str] = mapped_column(String)
+    object_id: Mapped[str] = mapped_column(String)
+    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
 
 class Screening(Base):
     __tablename__ = "screenings"
@@ -92,6 +157,9 @@ class Alert(Base):
     # Predizione del classificatore (metodo llm/keyword, severità, ruolo, …): serve a
     # confrontare il sistema con le etichette dei revisori (dataset di valutazione).
     classification: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Varianti vicine al nome citate negli articoli che NON citano il nome esatto
+    # («Andrea Stroppa» per «Stropp Andrea»): possibile refuso nel nome del soggetto.
+    name_variants: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     # Ordine stabile (di inserimento, id a parità): la numerazione in console

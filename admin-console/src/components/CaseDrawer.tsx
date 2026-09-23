@@ -5,6 +5,7 @@ import { Box, Chip, Drawer, IconButton, Typography } from "@mui/material";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import CloseIcon from "@mui/icons-material/Close";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import type { Alert, CaseLabelSummary } from "../api";
 import CaseLabelPanel from "./CaseLabelPanel";
 
@@ -13,9 +14,10 @@ type Props = {
   index: number | null;                 // caso aperto (null = chiuso)
   onNavigate: (index: number | null) => void;
   onSaved: (s: CaseLabelSummary) => void;
+  onDelete?: (a: Alert) => void;        // caso duplicato o errato
 };
 
-export default function CaseDrawer({ alerts, index, onNavigate, onSaved }: Props) {
+export default function CaseDrawer({ alerts, index, onNavigate, onSaved, onDelete }: Props) {
   const a = index !== null ? alerts[index] : undefined;
   const dirty = useRef(false);
   const onDirtyChange = useCallback((d: boolean) => { dirty.current = d; }, []);
@@ -50,6 +52,12 @@ export default function CaseDrawer({ alerts, index, onNavigate, onSaved }: Props
                 <ChevronRightIcon />
               </IconButton>
               <Box sx={{ flex: 1 }} />
+              {onDelete && (
+                <IconButton size="small" aria-label="elimina il caso" title="Elimina il caso (duplicato o errato)"
+                  onClick={() => onDelete(a)}>
+                  <DeleteOutlineIcon />
+                </IconButton>
+              )}
               <IconButton size="small" aria-label="chiudi la scheda" onClick={() => go(null)}>
                 <CloseIcon />
               </IconButton>
@@ -65,7 +73,9 @@ export default function CaseDrawer({ alerts, index, onNavigate, onSaved }: Props
             </Typography>
           </Box>
           <CaseLabelPanel key={a.id} a={a} onSaved={onSaved} onDirtyChange={onDirtyChange}
-            onNext={last ? undefined : () => onNavigate(index + 1)} onClose={() => onNavigate(null)} />
+            onNext={last ? undefined : () => onNavigate(index + 1)} onClose={() => onNavigate(null)}
+            onOpenCase={(id) => { const i = alerts.findIndex((x) => x.id === id); if (i >= 0) go(i); }}
+            isListed={(id) => alerts.some((x) => x.id === id)} />
         </Box>
       )}
     </Drawer>

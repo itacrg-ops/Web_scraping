@@ -147,6 +147,23 @@ async def test_export_ndjson(client) -> None:
     assert all(x["label"]["affidabile"] for x in rows)          # default: solo affidabili
 
 
+async def test_replay_input_is_internal(client) -> None:
+    """La rivalutazione (worker) riceve anche CF/P.IVA e snapshot; l'export no."""
+    from app.config import settings
+    a = await _alert_with_evidence(client)
+    await client.put(f"/api/alerts/{a['id']}/label", json=_complete(a))
+    settings.internal_api_token = TOKEN
+    assert (await client.get("/api/labels/replay")).status_code == 401
+    r = await client.get("/api/labels/replay", headers={"X-Internal-Token": TOKEN})
+    assert r.status_code == 200, r.text
+    rec = next(x for x in r.json()["records"] if x["alert"]["id"] == a["id"])
+    assert rec["alert"]["cf_piva"] == "00743110157" and "entity_resolution" in rec["alert"]
+    assert all("raw_key" in e and "bucket" in e for e in rec["evidence"])
+    exported = [json.loads(line) for line in (await client.get("/api/labels/export")).text.splitlines()]
+    mine = next(x for x in exported if x["alert"]["id"] == a["id"])
+    assert "cf_piva" not in mine["alert"] and all("raw_key" not in e for e in mine["evidence"])
+
+
 async def _cleanup() -> None:
     from sqlalchemy import delete, select
 

@@ -151,9 +151,11 @@ l'unico confine verso la console.
 
 ### admin-console — React · Vite · `:5173`
 **Front-end di amministrazione.** Console operativa dell'istruttore/amministratore:
-avvio screening, gestione del *registro soggetti* (anti-omonimia, con controllo
-live CF ↔ anagrafica), catalogo fonti e stato dei motori di ricerca, consultazione
-degli alert con evidenze, observability.
+avvio screening (con conferma dei **nomi simili** a soggetti noti), gestione del
+*registro soggetti* (anti-omonimia, con controllo live CF ↔ anagrafica, varianti del nome
+e notizie confermate), catalogo fonti e stato dei motori di ricerca, consultazione degli
+alert con evidenze, **etichettatura** per il dataset di valutazione, cancellazione di
+alert **duplicati o errati**, observability.
 *Tecnologia:* React + TypeScript + Vite, Material UI; auth MSAL/Entra
 (disattivabile in dev). Parla *solo* con l'API.
 *Pagine:* `Screening` · `Soggetti` · `Sources` · `Alerts` · `Observability`.
@@ -164,9 +166,13 @@ degli alert con evidenze, observability.
 Temporal, espone registro soggetti, fonti, screening, alert e anteprima di
 ricerca. È il **sistema di record** (Postgres) per alert ed evidenze.
 *Tecnologia:* FastAPI, SQLAlchemy async + Alembic, Postgres (pgvector).
-*Endpoint:* `POST /api/screening` · `GET /api/subjects` ·
-`POST /api/subjects/import` · `GET /api/alerts` · `POST /api/search/preview` ·
-`GET /api/search/providers` · `GET /api/sources`.
+*Endpoint:* `POST /api/screening` · `GET /api/subjects` · `GET /api/subjects/similar` ·
+`POST /api/subjects/{id}/names` · `GET /api/subjects/{id}/articles` ·
+`POST /api/subjects/import` · `GET /api/alerts` · `POST /api/alerts/delete` ·
+`GET /api/alerts/{id}/related` · `POST /api/alerts/{id}/confirm` · `/api/labels…` ·
+`POST /api/search/preview` · `GET /api/search/providers` · `GET /api/sources`.
+Le operazioni sensibili (cancellazioni, correzioni del registro, conferme) vanno nella
+tabella `audit_log`.
 
 ### worker-scraping — Temporal
 **Pipeline di screening.** Esegue la pipeline come *activities* idempotenti
@@ -174,7 +180,10 @@ orchestrate dal workflow durevole. Contiene la logica di dominio (fetcher
 conforme, snapshot WARC, corroborazione, AMI).
 *Tecnologia:* Python, temporalio; httpx, trafilatura, Playwright/Chromium,
 boto3/warcio (MinIO). Moduli: `fetcher` `render` `extract` `mention`
-`anagraphics` `classifier` `snapshot`.
+`anagraphics` `classifier` `snapshot` `analysis` (logica pura condivisa dal workflow e
+dalla rivalutazione). `replay.py` ripassa gli articoli dei casi etichettati nella versione
+attuale (vedi `docs/DATASET_VALUTAZIONE.md`). `mention` segnala anche le **varianti vicine**
+del nome quando il nome esatto manca (probabile refuso: `alerts.name_variants`).
 *Activities:* `resolve_entity` · `assess_risk_feed` · `search_articles` ·
 `fetch_source` · `render_source` · `verify_subject_mention` · `classify_fatf` ·
 `compute_ami` · `publish_svi` · `persist_alert`.
@@ -192,7 +201,9 @@ registro dall'API (nessun egress esterno).
 ### llm-gateway — FastAPI · `:8080`
 **Chokepoint verso Azure AI Foundry.** Unico punto di uscita verso l'LLM.
 **Redige le PII** prima dell'invio (B1: CF, P.IVA, email, IBAN, telefoni; B1.1:
-pseudonimizzazione dei nomi via NER → `[SOGGETTO]`/`[PERSONA]`). Classificazione
+pseudonimizzazione dei nomi via NER → `[SOGGETTO]`/`[PERSONA]`: un nome è il soggetto
+solo se è parte del suo nome o lo contiene, mai per una sola parola in comune come il
+nome di battesimo). Classificazione
 FATF *dual-LLM*, embedding per l'anti-omonimia, NER italiana (spaCy) riusata da
 worker ed ER.
 *Tecnologia:* FastAPI; Azure AI Foundry (DefaultAzureCredential o API key); spaCy
@@ -328,6 +339,12 @@ Corroborazione a valle (persona fisica): azienda/località riscontrate negli
 articoli, dati anagrafici (età/anno/luogo) coerenti o discordanti, e NER
 (soggetto = persona, azienda = organizzazione) — riducono l'omonimia o segnalano
 un "possibile omonimo".
+
+Il registro **impara dai revisori** (`docs/REGISTRO_SOGGETTI.md`): i nomi simili
+confermati come **varianti** dello stesso soggetto contano come il suo nome; quelli
+dichiarati **soggetti diversi** non sono più candidati. Prima di uno screening la console
+chiede conferma se il nome somiglia a un soggetto noto; dopo, se gli articoli citano solo
+una variante vicina del nome (refuso), la scheda del caso lo segnala.
 
 ---
 

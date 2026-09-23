@@ -21,7 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.auth import User, check_roles, require_user
+from app.auth import User, check_roles, require_internal, require_user
 from app.config import settings
 from app.db import get_session
 from app.models import Alert as AlertModel
@@ -132,9 +132,11 @@ async def label_stats(session: AsyncSession = Depends(get_session)) -> LabelStat
     )
 
 
-def _export_record(label: CaseLabel, alert: AlertModel) -> dict:
+def _export_record(label: CaseLabel, alert: AlertModel, internal: bool = False) -> dict:
+    """Una riga del dataset. `internal` aggiunge ciò che serve a RIVALUTARE il caso
+    (CF/P.IVA, Entity Resolution, posizione degli snapshot): solo per il worker."""
     ev_labels = label.evidence_labels or {}
-    return {
+    record = {
         "schema": "ams-case-label/1",
         "label": {
             "id": label.id, "reviewer": label.reviewer, "affidabile": label.affidabile,
@@ -155,18 +157,18 @@ def _export_record(label: CaseLabel, alert: AlertModel) -> dict:
              "snippet": e.snippet, "content_hash": e.content_hash, "fetch_ts": e.fetch_ts,
              "warc_key": e.warc_key, "fonte_credibilita": e.fonte_credibilita,
              "mentioned": e.mentioned, "mention_match": e.mention_match,
-             "label": ev_labels.get(e.id)}
+             "label": ev_labels.get(e.id),
+             **({"bucket": e.bucket, "raw_key": e.raw_key} if internal else {})}
             for e in alert.evidence
         ],
     }
+    if internal:
+        record["alert"].update(cf_piva=alert.cf_piva, entity_resolution=alert.entity_resolution)
+    return record
 
 
-@router.get("/labels/export")
-async def export_labels(solo_affidabili: bool = Query(True), user: User = Depends(require_user),
-                        session: AsyncSession = Depends(get_session)) -> Response:
-    """Dataset in NDJSON (una riga per etichetta): giudizio del revisore + predizione
-    del sistema su caso e articoli. Riservato a DATASET_EXPORT_ROLES."""
-    check_roles(user, settings.dataset_export_roles)
+async def _labeled(session: AsyncSession, solo_affidabili: bool) -> list[tuple[CaseLabel, AlertModel]]:
+    """Etichette (con il loro alert e gli articoli), in ordine di creazione."""
     stmt = select(CaseLabel).order_by(CaseLabel.created_at)
     if solo_affidabili:
         stmt = stmt.where(CaseLabel.affidabile.is_(True))
@@ -175,10 +177,31 @@ async def export_labels(solo_affidabili: bool = Query(True), user: User = Depend
     alerts = {a.id: a for a in (await session.execute(
         select(AlertModel).options(selectinload(AlertModel.evidence)).where(AlertModel.id.in_(ids))
     )).scalars().all()} if ids else {}
-    lines = [json.dumps(_export_record(lab, alerts[lab.alert_id]), ensure_ascii=False, default=str)
-             for lab in labels]
+    return [(lab, alerts[lab.alert_id]) for lab in labels]
+
+
+@router.get("/labels/export")
+async def export_labels(solo_affidabili: bool = Query(True), user: User = Depends(require_user),
+                        session: AsyncSession = Depends(get_session)) -> Response:
+    """Dataset in NDJSON (una riga per etichetta): giudizio del revisore + predizione
+    del sistema su caso e articoli. Riservato a DATASET_EXPORT_ROLES."""
+    check_roles(user, settings.dataset_export_roles)
+    lines = [json.dumps(_export_record(lab, alert), ensure_ascii=False, default=str)
+             for lab, alert in await _labeled(session, solo_affidabili)]
     return Response(
         content="".join(line + "\n" for line in lines),
         media_type="application/x-ndjson",
         headers={"Content-Disposition": f'attachment; filename="dataset-casi-{date.today():%Y%m%d}.ndjson"'},
     )
+
+
+@router.get("/labels/replay", dependencies=[Depends(require_internal)])
+async def replay_input(solo_affidabili: bool = Query(True),
+                       session: AsyncSession = Depends(get_session)) -> Response:
+    """Casi etichettati da RIVALUTARE con la versione attuale del sistema (worker,
+    `replay.py`): come l'export, più CF/P.IVA, Entity Resolution e posizione degli
+    snapshot. Interno: token di servizio (il worker ce l'ha già)."""
+    records = [_export_record(lab, alert, internal=True)
+               for lab, alert in await _labeled(session, solo_affidabili)]
+    return Response(content=json.dumps({"records": records}, ensure_ascii=False, default=str),
+                    media_type="application/json")

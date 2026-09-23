@@ -95,6 +95,25 @@ def test_ner_helpers_use_whole_tokens() -> None:
     assert not mention.org_matches("Beta Infrastrutture", "Infrastrutture")   # solo parola generica
 
 
+def test_near_variants_only_when_exact_name_missing() -> None:
+    # refuso nel nome inserito: gli articoli citano il nome giusto → proposto come variante
+    pf = {"tipo_soggetto": "persona_fisica", "denominazione": "Stropp Andrea"}
+    res = mention.check(pf, "Tra gli indagati Andrea Stroppa, consulente.")
+    assert res["mentioned"] is False and res["variants"] == ["Andrea Stroppa"], res
+    # nome esatto presente: nessuna variante (sarebbe rumore)
+    ok = mention.check({"tipo_soggetto": "persona_fisica", "denominazione": "Stroppa Andrea"},
+                       "Andrea Stroppa e Andrea Stroppi")
+    assert ok["mentioned"] is True and ok["variants"] == []
+    # nomi corti e comuni: Rossi/Rosso, Mario/Maria sono di solito persone diverse
+    common = mention.check({"tipo_soggetto": "persona_fisica", "denominazione": "Rossi Mario"},
+                           "Mario Rosso e Maria Rossi")
+    assert common["variants"] == [], common
+    # impresa: nome distintivo con una lettera diversa, maiuscolo come nome proprio
+    pg = mention.check({"tipo_soggetto": "persona_giuridica", "denominazione": "Italware S.r.l."},
+                       "La Italwere ha vinto; l'italwere minuscolo no")
+    assert pg["variants"] == ["Italwere"], pg
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

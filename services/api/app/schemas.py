@@ -4,7 +4,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+
+from app import names
 
 
 class Source(BaseModel):
@@ -115,6 +117,57 @@ class SubjectOut(BaseModel):
     ruolo: str | None = None
     attivo: bool = True
     created_at: datetime
+    alias: list[str] = []                # varianti confermate («stesso soggetto»)
+    distinti: list[str] = []             # nomi simili confermati come ALTRI soggetti
+    articoli_confermati: int = 0         # notizie verificate dai revisori
+
+
+class SubjectArticleOut(BaseModel):
+    """Articolo confermato per il soggetto (storico verificato)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    alert_id: str | None = None
+    url: str
+    testata: str | None = None
+    title: str | None = None
+    data: str | None = None
+    pertinenza: str
+    avversa: str
+    categorie: list[str] = []
+    ruolo: str | None = None
+    esito: str | None = None
+    confirmed_by_name: str | None = None
+    confirmed_at: datetime | None = None
+
+
+class SimilarCandidate(BaseModel):
+    """Soggetto con nome simile a quello inserito: dal registro o da screening passati."""
+
+    fonte: Literal["registro", "screening"]
+    subject_id: str | None = None
+    denominazione: str
+    tipo_soggetto: str
+    cf_piva: str | None = None
+    data_nascita: str | None = None
+    luogo_nascita: str | None = None
+    score: float
+    alert: int = 0                       # alert già presenti con questo nome
+
+
+class SimilarOut(BaseModel):
+    nome: str
+    registro_esatto: SimilarCandidate | None = None   # stesso nome (o alias confermato) a registro
+    alert_esistenti: int = 0                          # alert già presenti con lo stesso nome
+    simili: list[SimilarCandidate] = []
+
+
+class NameDecisionIn(BaseModel):
+    """Decisione su un nome simile a quello di un soggetto del registro."""
+
+    name: str = Field(min_length=1, max_length=300)
+    decision: Literal["stesso", "diverso"]
 
 
 class SubjectImportRequest(BaseModel):
@@ -206,6 +259,7 @@ class AlertCreate(BaseModel):
     svi_status: SviStatus = "pending"
     entity_resolution: dict | None = None
     classification: dict | None = None   # metodo llm/keyword, severità, ruolo… (valutazione)
+    name_variants: list[str] = []        # varianti del nome citate al posto del nome esatto
     evidence: list[EvidenceCreate] = []
 
 
@@ -236,8 +290,96 @@ class Alert(BaseModel):
     svi_error: str | None = None
     entity_resolution: dict | None = None
     classification: dict | None = None
+    name_variants: list[str] = []
     evidence: list[EvidenceItem] = []
     created_at: datetime
+
+    @field_validator("name_variants", mode="before")
+    @classmethod
+    def _none_as_empty(cls, v):
+        return v or []
+
+    @computed_field
+    @property
+    def subject_key(self) -> str:
+        """Stesso soggetto scritto in modi diversi (duplicati): vedi app.names."""
+        return names.subject_key(self.subject, self.tipo_soggetto)
+
+
+class AlertDeleteRequest(BaseModel):
+    """Cancellazione di alert duplicati o errati (con motivo, registrata nell'audit)."""
+
+    ids: list[str] = Field(min_length=1, max_length=200)
+    motivo: Literal["duplicato", "errato"]
+    nota: str | None = Field(default=None, max_length=500)
+
+
+class AlertDeleteResult(BaseModel):
+    eliminati: int
+    etichette_eliminate: int
+    in_svi: list[dict] = []   # [{id, svi_alert_id}]: restano aperti in SAS VI, da chiudere là
+
+
+class RelatedCase(BaseModel):
+    """Altro caso dello stesso soggetto, con la sua presenza nel dataset."""
+
+    id: str
+    subject: str
+    created_at: datetime
+    disposition: str
+    etichette: int = 0          # etichette di tutti i revisori
+    affidabili: int = 0
+    mia: Literal["affidabile", "bozza"] | None = None
+
+
+class PriorJudgment(BaseModel):
+    """Giudizio già dato dal revisore sullo stesso articolo in un altro caso dello
+    stesso soggetto (riutilizzabile)."""
+
+    alert_id: str
+    created_at: datetime
+    pertinenza: str | None = None
+    avversa: str | None = None
+
+
+class RegistryArticle(BaseModel):
+    pertinenza: str
+    avversa: str
+    confirmed_by_name: str | None = None
+    confirmed_at: datetime | None = None
+
+
+class RegistryLink(BaseModel):
+    subject_id: str
+    denominazione: str
+    come: Literal["entity_resolution", "cf_piva", "nome", "alias"]
+    articoli: dict[str, RegistryArticle] = {}   # evidence_id → già confermato nel registro
+
+
+class RelatedOut(BaseModel):
+    stesso_soggetto: list[RelatedCase] = []
+    giudizi_precedenti: dict[str, list[PriorJudgment]] = {}   # evidence_id → miei giudizi altrove
+    registro: RegistryLink | None = None
+
+
+class ConfirmIn(BaseModel):
+    """Conferma nel registro: soggetto esistente (`subject_id`) oppure da creare."""
+
+    subject_id: str | None = None
+    nuovo: SubjectCreate | None = None
+
+    @model_validator(mode="after")
+    def _one_target(self) -> "ConfirmIn":
+        if bool(self.subject_id) == bool(self.nuovo):
+            raise ValueError("indicare il soggetto del registro (subject_id) oppure i dati del nuovo soggetto")
+        return self
+
+
+class ConfirmOut(BaseModel):
+    subject: SubjectOut
+    confermati: int                     # articoli confermati (nuovi o aggiornati)
+    saltati: int                        # articoli senza giudizio certo
+    alias_aggiunto: str | None = None   # il nome usato nell'alert, registrato come variante
 
 
 # --- Etichette dei casi (dataset di valutazione) ---------------------------------

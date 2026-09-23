@@ -38,6 +38,7 @@ with workflow.unsafe.imports_passed_through():
         update_alert_svi,
         verify_subject_mention,
     )
+    from analysis import ami_signals, classification_text, merge_risk_feed, saved_classification
     from outcome import apply_incomplete, incomplete_reasons
 
 _RETRY = RetryPolicy(maximum_attempts=3)
@@ -48,15 +49,9 @@ _TIMEOUT = timedelta(seconds=60)
 _SVI_TIMEOUT = timedelta(seconds=180)
 
 _DEFAULT_MAX_ARTICLES = 3      # quanti articoli screenare al massimo in modalità auto
-_MAX_CLASSIFY_CHARS = 12000    # cap del testo aggregato inviato alla classificazione
 _HEADLESS_TIMEOUT = timedelta(seconds=90)  # il render JS è più lento del fetch HTTP
 _HEADLESS_MIN_CHARS = 400      # sotto questa soglia l'estrazione è "povera" → prova headless
 _RENDER_RETRY = RetryPolicy(maximum_attempts=2)  # render costoso: meno tentativi
-
-_SEV_ORDER = {"bassa": 1, "media": 2, "alta": 3}
-# Predizione del classificatore salvata sull'alert (valutazione vs etichette dei revisori).
-_CLASSIFICATION_KEYS = ("method", "severity", "ruolo_processuale", "role_analysis",
-                        "secondary_agreement", "confidence", "fallback_reason")
 
 
 def _cause(exc: BaseException) -> str:
@@ -64,23 +59,6 @@ def _cause(exc: BaseException) -> str:
     while isinstance(exc, ActivityError) and exc.cause is not None:
         exc = exc.cause
     return (getattr(exc, "message", None) or str(exc) or type(exc).__name__)[:500]
-
-
-def _merge_risk_feed(classification: dict, risk_feed: dict) -> dict:
-    """Fonde il feed di rischio strutturato nella classificazione media: unione
-    delle categorie FATF (senza duplicati) e severità = massimo tra media e feed.
-    Così un riscontro dal feed alza l'AMI anche quando gli articoli tacciono.
-    Funzione **pura** (deterministica): sicura nel contesto workflow."""
-    merged = dict(classification)
-    cats = list(merged.get("fatf_categories") or [])
-    for c in risk_feed.get("fatf_categories") or []:
-        if c not in cats:
-            cats.append(c)
-    merged["fatf_categories"] = cats
-    sev_feed = risk_feed.get("severity")
-    if _SEV_ORDER.get(sev_feed, 0) > _SEV_ORDER.get(merged.get("severity"), 0):
-        merged["severity"] = sev_feed
-    return merged
 
 
 @workflow.defn
@@ -223,6 +201,7 @@ class ScreeningWorkflow:
             doc["_matched"] = men.get("matched", [])
             doc["_context"] = men.get("context", [])
             doc["_anagraphics"] = men.get("anagraphics") or {"status": "n/a"}
+            doc["_variants"] = men.get("variants") or []
             doc["_ner"] = men.get("ner")
             doc["_credibilita"] = info.get("credibilita")
             doc["_domain"] = info.get("domain")
@@ -231,9 +210,9 @@ class ScreeningWorkflow:
 
         # Testo per la classificazione: preferisci gli articoli che citano il
         # soggetto; se nessuno lo cita, usa tutti quelli con contenuto (con warning).
+        # Logica condivisa con la rivalutazione del dataset (analysis.py).
         with_text = [d for d in docs if d.get("text")]
-        screening_docs = [d for d in with_text if d.get("_mentioned")] or with_text
-        combined = "\n\n".join(d["text"] for d in screening_docs)[:_MAX_CLASSIFY_CHARS]
+        combined = classification_text(docs)
 
         if combined:
             classification = await workflow.execute_activity(
@@ -249,21 +228,12 @@ class ScreeningWorkflow:
         # pesa anche quando gli articoli tacciono). Default OFF → nessun effetto.
         risk_available = bool(risk_feed and risk_feed.get("available"))
         if risk_available:
-            classification = _merge_risk_feed(classification, risk_feed)
+            classification = merge_risk_feed(classification, risk_feed)
 
         # Segnali per la pesatura AMI: per ogni articolo, fonte + credibilità +
         # se cita il soggetto (corroborazione da fonti indipendenti).
-        signals = [
-            {
-                "url": d.get("source"),
-                "domain": d.get("_domain"),
-                "testata_credibilita": d.get("_credibilita"),
-                "mentioned": d.get("_mentioned"),
-            }
-            for d in docs
-        ]
         ami = await workflow.execute_activity(
-            compute_ami, args=[subject, classification, signals],
+            compute_ami, args=[subject, classification, ami_signals(docs)],
             start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
         )
 
@@ -282,6 +252,14 @@ class ScreeningWorkflow:
                 0,
                 "⚠ Soggetto non citato negli articoli analizzati: verificare attribuzione (possibile falsa attribuzione)",
             )
+        # Il nome esatto non c'è ma c'è un nome molto simile («Andrea Stroppa» per
+        # «Stropp Andrea»): probabile refuso nel nome inserito. Solo un'indicazione.
+        name_variants = [] if any_mention else list(dict.fromkeys(
+            v for d in docs for v in d.get("_variants") or []))[:5]
+        if name_variants:
+            drivers.insert(0, "⚠ Negli articoli compare un nome simile: "
+                           + ", ".join(f"«{v}»" for v in name_variants)
+                           + " — il nome del soggetto potrebbe contenere un refuso: verificarlo")
 
         # Corroborazione del contesto (persona fisica): azienda/località/ruolo
         # riscontrati negli articoli che citano il soggetto → riduce l'omonimia;
@@ -357,6 +335,7 @@ class ScreeningWorkflow:
             "fatf_categories": classification.get("fatf_categories", []),
             "drivers": outcome["drivers"],
             "disposition": outcome["disposition"],
+            "name_variants": name_variants,
         }
 
         # Evidenze ancorate all'alert (una per articolo effettivamente recuperato
@@ -391,7 +370,7 @@ class ScreeningWorkflow:
             persist_alert,
             {**alert_payload, "screening_id": req["screening_id"], "svi_status": "pending",
              "entity_resolution": resolution, "evidence": evidence,
-             "classification": {k: classification.get(k) for k in _CLASSIFICATION_KEYS}},
+             "classification": saved_classification(classification)},
             start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
         )
 
