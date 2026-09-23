@@ -96,11 +96,31 @@ def _name_variants(name: str) -> list[str]:
     return sorted(out, key=len, reverse=True)
 
 
+_INITIAL = re.compile(r"^[A-Z]\.?$")
+
+
+def _names_same_person(person: str, subject_tokens: set[str]) -> bool:
+    """Il nome trovato dalla NER indica il soggetto? Sì se è **parte** del nome del
+    soggetto ("Rossi", "Mario Rossi", "M. Rossi" per "Rossi Mario") o lo **contiene**
+    per intero (un secondo nome in più). Condividere UNA sola parola non basta:
+    "Mario Verdi" (stesso nome di battesimo) o "Luca Rossi" (stesso cognome) sono
+    altre persone, e trattarle come soggetto gli attribuirebbe i fatti altrui."""
+    tokens = _norm(person).replace(".", ". ").split()
+    words = [t for t in tokens if not _INITIAL.match(t)]
+    if not words or not subject_tokens:
+        return False
+    initials_ok = all(any(s.startswith(t[0]) for s in subject_tokens)
+                      for t in tokens if _INITIAL.match(t))
+    part_of_subject = initials_ok and all(w in subject_tokens for w in words)
+    contains_subject = subject_tokens <= set(words)
+    return part_of_subject or contains_subject
+
+
 def redact_persons(text: str, subject_name: str | None = None,
                    ner_persons: list[str] | None = None) -> tuple[str, dict]:
     """Redige i NOMI di persona (B1.1): il **soggetto** (se noto) → `[SOGGETTO]`,
-    gli **altri** (dalla NER) → `[PERSONA]`. Un nome NER che condivide un token
-    distintivo (es. il cognome) col soggetto è trattato come soggetto.
+    gli **altri** (dalla NER) → `[PERSONA]`. Un nome NER è il soggetto solo se è
+    parte del suo nome o lo contiene (vedi `_names_same_person`).
 
     Ritorna `(testo, {"soggetto": n, "persona": n})`. NON solleva; senza NER
     redige comunque il nome noto del soggetto."""
@@ -108,11 +128,10 @@ def redact_persons(text: str, subject_name: str | None = None,
     counts = {"soggetto": 0, "persona": 0}
     subj_variants = _name_variants(subject_name) if subject_name else []
     subj_forms = {_norm(v) for v in subj_variants}
-    subj_tokens = {t for v in subj_variants for t in _norm(v).split() if len(t) >= 3}
+    subj_tokens = {t for v in subj_variants for t in _norm(v).split()}
 
     def _is_subject(person: str) -> bool:
-        pn = _norm(person)
-        return pn in subj_forms or bool(subj_tokens & set(pn.split()))
+        return _norm(person) in subj_forms or _names_same_person(person, subj_tokens)
 
     # 1) Soggetto noto → [SOGGETTO] (anche senza NER).
     for v in subj_variants:

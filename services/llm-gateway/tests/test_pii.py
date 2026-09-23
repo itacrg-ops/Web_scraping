@@ -66,6 +66,41 @@ def test_redazione_soggetto_senza_ner() -> None:
     assert "[SOGGETTO]" in out and c["soggetto"] == 1
 
 
+def test_stesso_nome_di_battesimo_non_e_il_soggetto() -> None:
+    # Bug: bastava una parola in comune. "Mario Verdi" diventava [SOGGETTO] per il
+    # soggetto "Rossi Mario" e il modello gli attribuiva l'indagine di un altro.
+    text = "La ditta di Mario Rossi ha vinto l'appalto. Indagato Mario Verdi per turbativa."
+    out, c = pii.redact_persons(text, subject_name="Rossi Mario", ner_persons=["Mario Rossi", "Mario Verdi"])
+    assert out == "La ditta di [SOGGETTO] ha vinto l'appalto. Indagato [PERSONA] per turbativa.", out
+    assert c == {"soggetto": 1, "persona": 1}
+
+
+def test_stesso_cognome_non_e_il_soggetto() -> None:
+    text = "Minacce a Sigfrido Ranucci. Arrestato Mario Bianchi, accusato da Mario Ranucci."
+    out, _ = pii.redact_persons(text, subject_name="Ranucci Sigfrido",
+                                ner_persons=["Sigfrido Ranucci", "Mario Bianchi", "Mario Ranucci"])
+    assert out == "Minacce a [SOGGETTO]. Arrestato [PERSONA], accusato da [PERSONA].", out
+
+
+def test_riferimenti_parziali_al_soggetto() -> None:
+    # solo cognome, iniziale + cognome, nome completo con un secondo nome
+    for mention in ("Ranucci", "S. Ranucci", "Sigfrido Ranucci", "Sigfrido Maria Ranucci"):
+        out, c = pii.redact_persons(f"Parla {mention}.", subject_name="Ranucci Sigfrido",
+                                    ner_persons=[mention])
+        assert out == "Parla [SOGGETTO].", (mention, out)
+    # iniziale che non corrisponde: è un'altra persona
+    out, _ = pii.redact_persons("Parla M. Ranucci.", subject_name="Ranucci Sigfrido",
+                                ner_persons=["M. Ranucci"])
+    assert out == "Parla [PERSONA].", out
+
+
+def test_nome_con_refuso_non_viene_indovinato() -> None:
+    # "Stropp Andrea" (refuso) non è "Andrea Stroppa": meglio nessun [SOGGETTO] che uno sbagliato
+    out, c = pii.redact_persons("Perquisito Andrea Stroppa.", subject_name="Stropp Andrea",
+                                ner_persons=["Andrea Stroppa"])
+    assert out == "Perquisito [PERSONA]." and c["soggetto"] == 0, out
+
+
 def _run() -> int:
     fails = 0
     for name, fn in sorted(globals().items()):
