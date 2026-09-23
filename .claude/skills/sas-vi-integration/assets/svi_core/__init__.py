@@ -18,7 +18,7 @@ Uso tipico (nell'adapter dell'app):
 Config da ambiente/.env (prefissi SVI_/SAS_/VIYA_). Vedi templates/.env.svi.example.
 """
 from .auth import bearer, build_oauth_request, reset_cache
-from .client import publish, reset_idempotency
+from .client import SviRejected, publish, reset_idempotency
 from .config import SviConfig, settings
 from .envelope import build_alerting_payload
 from .models import SviAlert
@@ -28,6 +28,7 @@ __all__ = [
     "SviConfig",
     "settings",
     "publish",
+    "SviRejected",
     "reset_idempotency",
     "build_alerting_payload",
     "bearer",

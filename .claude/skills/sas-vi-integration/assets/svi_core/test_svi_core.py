@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import httpx  # noqa: E402
 
-from svi_core import SviAlert, build_alerting_payload, publish, reset_idempotency  # noqa: E402
+from svi_core import SviAlert, SviRejected, build_alerting_payload, publish, reset_idempotency  # noqa: E402
 from svi_core import auth as _auth  # noqa: E402
 from svi_core import client as _client  # noqa: E402
 from svi_core.config import settings  # noqa: E402
@@ -81,6 +81,8 @@ class _Resp:
 
 
 class _Client:
+    """`resp` è una risposta unica oppure una LISTA consumata in ordine (risposta o
+    eccezione da sollevare), es. [httpx.ReadTimeout(...), <1008>]."""
     def __init__(self, resp):
         self._r = resp
 
@@ -91,6 +93,11 @@ class _Client:
         return False
 
     async def post(self, *a, **k):
+        if isinstance(self._r, list):
+            item = self._r.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
         return self._r
 
     async def get(self, *a, **k):
@@ -102,6 +109,7 @@ def _run_live(resp, alert, dedup_on_1008=False):
     settings.svi_queue = "queue_test"
     settings.svi_alert_type_code = "strategy_default"
     settings.svi_dedup_on_1008 = dedup_on_1008
+    settings.svi_retry_backoff = 0.0
     reset_idempotency()
     oc, ob = _client.httpx.AsyncClient, _auth.bearer
 
@@ -117,6 +125,7 @@ def _run_live(resp, alert, dedup_on_1008=False):
         _auth.bearer = ob
         settings.svi_mode = "mock"
         settings.svi_dedup_on_1008 = False
+        settings.svi_retry_backoff = 1.5
 
 
 def test_live_1008_raises_by_default():
@@ -124,9 +133,26 @@ def test_live_1008_raises_by_default():
     a = SviAlert(business_key="ERR", entity_id="1")
     try:
         _run_live(_Resp(500, {"errorCode": 1008, "message": "data error"}), a)
-    except httpx.HTTPStatusError:
+    except SviRejected:
         return
-    raise AssertionError("un 1008 di default deve sollevare, non ritornare successo")
+    raise AssertionError("un 1008 senza tentativi ambigui deve sollevare SviRejected")
+
+
+def test_live_1008_after_ambiguous_timeout_is_duplicate():
+    # POST elaborato da SVI ma risposta persa (timeout): il retry riceve 1008 = nostro alert
+    a = SviAlert(business_key="AMB", entity_id="1")
+    r = _run_live([httpx.ReadTimeout("t"), _Resp(500, {"errorCode": 1008})], a)
+    assert r["deduplicated"] is True and r["svi_alert_id"] == a.event_id()
+
+
+def test_live_1008_after_connect_error_is_rejected():
+    # connessione mai stabilita = richiesta mai arrivata: il 1008 resta un rifiuto
+    a = SviAlert(business_key="CONN", entity_id="1")
+    try:
+        _run_live([httpx.ConnectError("x"), _Resp(500, {"errorCode": 1008})], a)
+    except SviRejected:
+        return
+    raise AssertionError("ConnectError + 1008 deve restare SviRejected")
 
 
 def test_live_1008_dedup_when_optin():

@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -60,12 +60,16 @@ class Screening(Base):
     cup: Mapped[list] = mapped_column(JSON, default=list)
     seed_url: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="running")  # running|completed|failed
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)   # motivo, se failed
     alert_id: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class Alert(Base):
     __tablename__ = "alerts"
+
+    # Un solo alert per screening: la persistenza dal worker è idempotente (0005).
+    __table_args__ = (UniqueConstraint("screening_id", name="uq_alerts_screening_id"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     screening_id: Mapped[str | None] = mapped_column(ForeignKey("screenings.id"), nullable=True)
@@ -79,6 +83,11 @@ class Alert(Base):
     drivers: Mapped[list] = mapped_column(JSON, default=list)
     disposition: Mapped[str] = mapped_column(String)
     svi_alert_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Esito della pubblicazione in SVI, tracciato separatamente: l'alert è salvato
+    # PRIMA di pubblicare, quindi un guasto SVI non fa perdere il risultato.
+    # pending | published | failed | skipped (non pubblicato per scelta, es. ER non superata)
+    svi_status: Mapped[str] = mapped_column(String, default="pending", server_default="pending")
+    svi_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     entity_resolution: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

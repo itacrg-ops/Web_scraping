@@ -129,11 +129,13 @@ prima dell'egress verso Azure.
 | 4 | **Fetch + Render** (B6) | Fetch conforme (robots/crawl-delay), snapshot WARC su MinIO, fallback headless Playwright per pagine JS. |
 | 5 | **Estrazione + Menzione + NER** | Testo (trafilatura), verifica che il soggetto sia citato, corroborazione anagrafica e NER. |
 | 6 | **PII → FATF** (B1/B1.1) | Redazione PII e pseudonimizzazione nomi, poi classificazione FATF dual-LLM. |
-| 7 | **AMI → SVI** (B2) | Punteggio pesato, pubblicazione dell'alert con evidenze, persistenza. |
+| 7 | **AMI → SVI** (B2) | Punteggio pesato, persistenza dell'alert con evidenze (sistema di record), poi pubblicazione in SVI con esito registrato sull'alert (`svi_status`). |
 
 Esito: alert motivato con AMI, categorie FATF, driver ed evidenze tracciabili.
 Disposition possibili: `AUTO_CHIUSO`, `ESCALATION_I_LIVELLO`,
-`HITL_ENTITY_RESOLUTION`.
+`HITL_ENTITY_RESOLUTION`, `ESITO_INCOMPLETO` (pipeline degradata: ricerca fallita,
+nessun contenuto recuperato, LLM o feed di rischio non disponibili — da ripetere o
+completare a mano; mai chiuso né escalato in automatico).
 
 ---
 
@@ -354,6 +356,7 @@ abbatte).
 | **ALTO** | ≥ 75 | ESCALATION_I_LIVELLO |
 | **MEDIO** | ≥ 45 | ESCALATION_I_LIVELLO |
 | **BASSO** | < 45 | AUTO_CHIUSO |
+| **N/D** | — | ESITO_INCOMPLETO (se la pipeline è degradata, prevale sulle soglie; l'AMI resta solo indicativo) |
 
 Ogni fattore è riportato nei *driver* dell'alert (es. «Credibilità fonte migliore:
 alta → ×1.05», «3 fonti indipendenti → ×1.07»). L'assenza di menzione del

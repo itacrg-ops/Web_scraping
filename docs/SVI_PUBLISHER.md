@@ -48,7 +48,7 @@ File del servizio (`services/svi-publisher/`):
 | `scripts/svi_smoketest.py` | smoke-test live: auth + discovery + `--create`/`--diagnose` |
 | `scripts/svi_admin.py` | discovery amministrativa (domini/strategie/code) |
 | `scripts/svi_metadata.py` | ispezione metadati/alert (grafo API, dump alert) |
-| `tests/` | test unitari (mapping 7/7, idempotenza 5/5) |
+| `tests/` | test unitari (mapping, idempotenza/1008/deadline, contratto errori 422/502) |
 
 ---
 
@@ -87,6 +87,16 @@ Riceve l'alert canonico dello screening (`AlertIn`) e pubblica in SVI.
 Un `svi_alert_id` che inizia con `svi-mock-` = servizio in mock; `deduplicated: true` =
 screening già pubblicato (nessun nuovo alert).
 
+**Errori** (contratto verso il worker):
+
+| HTTP | Significato | Il worker… |
+|---|---|---|
+| `422` | rifiuto **terminale** di SVI: `errorCode 1008` non riconducibile a un nostro duplicato, oppure un 4xx di SVI/SASLogon (dato o configurazione) | **non ritenta** (errore non-retryable); registra `svi_status=failed` sull'alert |
+| `502` | SVI non disponibile / transitorio (5xx, 429, rete, deadline esaurita) | ritenta (retry Temporal), poi registra `svi_status=failed` |
+
+In entrambi i casi l'alert è **già salvato** nel sistema di record (l'API) *prima* della
+pubblicazione: un guasto SVI non fa perdere il risultato dello screening.
+
 ---
 
 ## 3. Flusso di pubblicazione (modalità `live`)
@@ -99,25 +109,38 @@ screening già pubblicato (nessun nuovo alert).
 3. **(Opzionale) Entità Data Hub**: se `SVI_LOAD_ENTITY=true`, `POST /svi-datahub/documents`.
    **Non bloccante**: un errore (es. `400 DH5104`) logga un warning e prosegue con l'alert.
 4. **Alert**: `POST {alerts_base}/alertingEvents` con l'**envelope** (§4) e il media type
-   versionato. `_retry` gestisce il backoff sugli errori transitori.
+   versionato. `_retry` gestisce il backoff sugli errori transitori entro la deadline
+   complessiva `SVI_PUBLISH_DEADLINE`.
 5. **Esito**: risposta `2xx` → alert creato. **`500 errorCode 1008`** ("data error") è
    **ambiguo** — duplicato **oppure** riferimento non valido (dominio/coda/entityType/
-   alertTypeCode assenti nell'ambiente): di **default** viene **sollevato** come errore
-   (l'alert NON è creato; non lo si maschera da successo) e non ritentato. Con
-   `SVI_DEDUP_ON_1008=true` lo si tratta come duplicato idempotente (`deduplicated: true`).
+   alertTypeCode assenti nell'ambiente). Il publisher lo considera un **duplicato nostro**
+   solo se un tentativo precedente per la stessa chiave ha avuto **esito ambiguo**
+   (timeout in lettura, connessione caduta, 500/502/504: SVI può aver creato l'alert senza
+   che vedessimo la risposta) → `deduplicated: true`. Altrimenti è un **rifiuto terminale**
+   (`SviRejected` → HTTP 422, alert NON creato da questa richiesta, nessun retry). Con
+   `SVI_DEDUP_ON_1008=true` ogni 1008 è trattato come duplicato (maschera i config error).
 6. **id**: `alertId` dalla risposta, o (fallback) l'`alertingEventId` deterministico.
 
 ### Idempotenza (design)
 - `business_key(alert)` = `ams-<screening_id>`; in mancanza, `ams-<sha256(canonico)[:16]>`.
 - `alertingEventId` = `uuid5(NS, business_key)` → **deterministico**: stesso screening →
   stesso id. La dedup **primaria** è la cache in-process (prima della POST). Il 1008 lato
-  SVI **non** è una dedup affidabile (è ambiguo col config error) → di default solleva;
-  `SVI_DEDUP_ON_1008=true` lo riattiva dove i riferimenti sono validi.
+  SVI è ambiguo col config error: vale come dedup solo dopo un tentativo ambiguo per la
+  stessa chiave (marcatore in-process). **Limite noto**: se il publisher si riavvia tra il
+  tentativo ambiguo e il retry, il marcatore si perde e il 1008 risulta un rifiuto (errore
+  visibile, mai un falso successo); la soluzione definitiva è verificare in SVI l'esistenza
+  dell'alert per `alertingEventId`, da fare quando sarà confermato l'endpoint di lettura.
 
 ### Robustezza (retry)
 `_retry` ritenta su **429/500/502/503/504** con backoff `SVI_RETRY_BACKOFF × 2^tentativo`
 (1.5, 3.0, 6.0 s…), **tranne** il data-error **1008** (mai transitorio) e i **4xx**
-(terminali, propagati subito).
+(terminali, propagati subito). Non avvia un tentativo che potrebbe sforare
+`SVI_PUBLISH_DEADLINE`.
+
+**Catena dei timeout** (ognuno maggiore del precedente, altrimenti chi sta fuori rinuncia
+e ritenta mentre chi sta dentro è ancora in corso → pubblicazioni concorrenti):
+`SVI_PUBLISH_DEADLINE` (publisher, 90 s) < `SVI_PUBLISH_TIMEOUT` (worker → publisher,
+120 s) < `start_to_close` dell'activity `publish_svi` (workflow, 180 s).
 
 ### Osservabilità
 Log applicativi visibili sotto uvicorn (handler dedicato in `main.py`):
@@ -267,7 +290,7 @@ arriva dal `.env`, default `mock`).
 | `SVI_TRIGGER_SOURCES_LABEL` | `Fonti` | etichetta del blocco fonti accodato |
 | `SVI_TRIGGER_SOURCES_LIMIT` | `5` | max fonti accodate al trigger text |
 | `SVI_LOAD_ENTITY` | `false` | carica il documento Data Hub prima dell'alert (non bloccante) |
-| `SVI_DEDUP_ON_1008` | `false` | tratta `errorCode 1008` come duplicato idempotente invece di sollevarlo — solo su ambienti a riferimenti validi |
+| `SVI_DEDUP_ON_1008` | `false` | tratta **ogni** `errorCode 1008` come duplicato (di default solo dopo un tentativo ambiguo) — solo su ambienti a riferimenti verificati |
 
 ### Robustezza e TLS
 | Variabile | Default | Significato |
@@ -276,6 +299,8 @@ arriva dal `.env`, default `mock`).
 | `SVI_MAX_RETRIES` | `3` | tentativi sugli errori transitori |
 | `SVI_RETRY_BACKOFF` | `1.5` | base backoff (× 2^tentativo) |
 | `SVI_IDEMPOTENCY_TTL` | `86400` | TTL cache business_key → id (s) |
+| `SVI_PUBLISH_DEADLINE` | `90.0` | tempo massimo complessivo di una pubblicazione (s) |
+| `SVI_PUBLISH_TIMEOUT` | `120` | *(worker)* attesa della risposta del publisher: deve superare la deadline |
 | `SVI_VERIFY_TLS` | `true` | verifica cert Viya; `false` **solo** demo self-signed |
 | `SVI_CA_BUNDLE` | — | path al certificato/CA (verifica attiva, meglio di `false`) |
 
@@ -343,7 +368,7 @@ python services/svi-publisher/tests/test_idempotency.py   # 5/5
 | Sintomo | Causa | Rimedio |
 |---|---|---|
 | `500 tdc.bad.request` (anche a body vuoto) | manca l'**envelope** (`jsonLayout`/array) | usare `build_alerting_payload` (già a posto) |
-| `500 errorCode 1008` ("data error") | **ambiguo**: `alertTypeCode` mancante/non valido, oppure dominio/coda/entityType **inesistenti in questo ambiente** (tipico dopo un cambio ambiente), oppure `alertingEventId` **duplicato** | di default il publisher **solleva** (alert NON creato). Ricontrolla i valori del **nuovo** ambiente (`svi_smoketest.py --diagnose`, `svi_inspect.py`) nel `.env`. Solo se è un vero duplicato su ambiente valido → `SVI_DEDUP_ON_1008=true` |
+| `500 errorCode 1008` ("data error") | **ambiguo**: `alertTypeCode` mancante/non valido, oppure dominio/coda/entityType **inesistenti in questo ambiente** (tipico dopo un cambio ambiente), oppure `alertingEventId` **duplicato** | se preceduto da un timeout/5xx per lo stesso screening è il **nostro** alert già creato (dedup automatica); altrimenti il publisher risponde **422** (alert NON creato, nessun retry, `svi_status=failed` sull'alert). Ricontrolla i valori del **nuovo** ambiente (`svi_smoketest.py --diagnose`, `svi_inspect.py`) nel `.env` |
 | `400` su `/svi-datahub/documents` (DH5104) | `SVI_LOAD_ENTITY=true`, schema doc non allineato | `SVI_LOAD_ENTITY=false` (l'entità non serve) |
 | `415 unsupported media type` | manca `+json;version=1` | media type versionato (già default) |
 | `405` su `POST /svi-alert/alerts` | gli alert non si creano lì | usare `/svi-alert/alertingEvents` (già a posto) |

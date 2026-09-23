@@ -31,6 +31,33 @@ _published: dict[str, tuple[float, str, str | None]] = {}
 
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
+# Esiti AMBIGUI: la richiesta può essere arrivata a SVI ed essere stata elaborata
+# anche se noi non abbiamo visto la risposta (timeout in lettura, connessione caduta,
+# 5xx di gateway). Un 1008 successivo per la STESSA chiave è quindi il nostro alert
+# già creato, non un errore di configurazione. business_key -> ts del tentativo.
+_AMBIGUOUS_STATUS = {500, 502, 504}
+_ambiguous: dict[str, float] = {}
+
+
+class SviRejected(Exception):
+    """Rifiuto TERMINALE di SVI (dato/configurazione): ritentare non serve."""
+
+
+def _ambiguous_transport(exc: httpx.TransportError) -> bool:
+    """Connessione mai stabilita → la richiesta non è partita: esito NON ambiguo."""
+    return not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout))
+
+
+def _mark_ambiguous(key: str) -> None:
+    if len(_ambiguous) > 5000:
+        _ambiguous.clear()
+    _ambiguous[key] = time.time()
+
+
+def _was_ambiguous(key: str) -> bool:
+    ts = _ambiguous.get(key)
+    return ts is not None and (time.time() - ts) < settings.svi_idempotency_ttl
+
 
 def _errcode(resp: httpx.Response) -> str:
     """errorCode SAS dal corpo (stringa), se presente. Serve a distinguere un 500
@@ -58,27 +85,40 @@ def _idem_put(key: str, alert_id: str, document_id: str | None) -> None:
     _published[key] = (time.time(), alert_id, document_id)
 
 
-async def _retry(desc: str, call: Callable[[], Any]) -> httpx.Response:
+async def _retry(desc: str, call: Callable[[], Any], deadline: float | None = None,
+                 on_ambiguous: Callable[[], None] | None = None) -> httpx.Response:
     """Esegue `call()` (coroutine factory) con retry+backoff su errori transitori
-    (timeout/connessione/5xx/429). Rilancia l'ultimo errore se esauriti i tentativi."""
+    (timeout/connessione/5xx/429). Rilancia l'ultimo errore se esauriti i tentativi.
+
+    `deadline` (time.monotonic): non avvia un tentativo che potrebbe sforarla — chi
+    ci chiama ha un suo timeout e deve ricevere la risposta prima. `on_ambiguous`:
+    invocata quando un tentativo finisce con esito ambiguo (SVI può averlo elaborato)."""
     last: Exception | None = None
     for attempt in range(settings.svi_max_retries + 1):
         try:
             resp = await call()
         except httpx.TransportError as exc:            # timeout/connessione → transitorio
             last = exc
+            if on_ambiguous and _ambiguous_transport(exc):
+                on_ambiguous()
         else:
             # 5xx/429 transitori → retry, TRANNE il data error 1008 (mai transitorio).
             # Ogni altro esito (2xx, oppure 4xx e 5xx non-retryable incl. 1008) è
             # TERMINALE: raise_for_status lo solleva subito e lo propaga al chiamante.
             if resp.status_code in _RETRYABLE_STATUS and _errcode(resp) != "1008":
                 last = httpx.HTTPStatusError(f"{resp.status_code}", request=resp.request, response=resp)
+                if on_ambiguous and resp.status_code in _AMBIGUOUS_STATUS:
+                    on_ambiguous()
             else:
                 resp.raise_for_status()
                 return resp
         if attempt >= settings.svi_max_retries:
             break
         wait = settings.svi_retry_backoff * (2 ** attempt)
+        if deadline is not None and time.monotonic() + wait + settings.svi_request_timeout > deadline:
+            logger.warning("SVI %s: tentativo %d fallito (%s); nessun altro tentativo entro la "
+                           "deadline di pubblicazione (SVI_PUBLISH_DEADLINE)", desc, attempt + 1, last)
+            break
         logger.warning("SVI %s: tentativo %d fallito (%s), retry tra %.1fs",
                        desc, attempt + 1, last, wait)
         await asyncio.sleep(wait)
@@ -105,6 +145,7 @@ async def publish_alert(alert: dict[str, Any]) -> dict[str, Any]:
         return {"svi_alert_id": alert_id, "document_id": doc_id, "deduplicated": False}
 
     # --- Live: OAuth/broker → (opz. entità nel Data Hub) → Alert (triage) ---
+    deadline = time.monotonic() + settings.svi_publish_deadline
     async with httpx.AsyncClient(timeout=settings.svi_request_timeout,
                                  verify=settings.verify_opt()) as client:
         token = await auth.bearer(client)
@@ -121,6 +162,7 @@ async def publish_alert(alert: dict[str, Any]) -> dict[str, Any]:
                     lambda: client.post(f"{settings.datahub_base()}/documents", json=document,
                                         headers={**auth_h, "Content-Type": "application/json",
                                                  "Accept": "application/json"}),
+                    deadline=deadline,
                 )
                 document_id = (doc_resp.json() or {}).get("id")
             except (httpx.HTTPStatusError, httpx.TransportError) as exc:
@@ -141,29 +183,35 @@ async def publish_alert(alert: dict[str, Any]) -> dict[str, Any]:
                 "alert/alertingEvents",
                 lambda: client.post(f"{settings.alerts_base()}/alertingEvents", json=payload,
                                     headers={**auth_h, "Content-Type": mt, "Accept": "application/json"}),
+                deadline=deadline,
+                on_ambiguous=lambda: _mark_ambiguous(key),
             )
             duplicate = False
         except httpx.HTTPStatusError as exc:
-            # `errorCode 1008` ("data error") è AMBIGUO: può essere un alertingEventId
-            # duplicato (idempotenza), MA anche un riferimento non risolvibile
-            # (dominio/coda/entityType/alertTypeCode inesistenti per l'ambiente). NON va
-            # mascherato da successo: di default lo solleviamo come errore reale — l'alert
-            # NON è stato creato. Solo con SVI_DEDUP_ON_1008=true lo trattiamo come dedup
-            # (ambienti dove i riferimenti sono validi e si vogliono ripubblicazioni idempotenti).
             resp = exc.response
-            if resp is not None and resp.status_code == 500 and _errcode(resp) == "1008" \
-                    and settings.svi_dedup_on_1008:
-                logger.info("SVI 1008 key=%s → trattato come duplicato (SVI_DEDUP_ON_1008=true)", key)
+            if resp is None or resp.status_code != 500 or _errcode(resp) != "1008":
+                raise
+            # `errorCode 1008` ("data error") è AMBIGUO: alertingEventId duplicato OPPURE
+            # riferimento non risolvibile (dominio/coda/entityType/alertTypeCode
+            # inesistenti per l'ambiente). È un duplicato NOSTRO se un tentativo
+            # precedente per la stessa chiave ha avuto esito ambiguo (SVI può aver
+            # creato l'alert senza che vedessimo la risposta) o con SVI_DEDUP_ON_1008.
+            # Altrimenti NON va mascherato da successo: è un rifiuto terminale.
+            if _was_ambiguous(key) or settings.svi_dedup_on_1008:
+                why = ("dopo un tentativo con esito ambiguo" if _was_ambiguous(key)
+                       else "SVI_DEDUP_ON_1008=true")
+                logger.info("SVI 1008 key=%s → alert già creato, trattato come duplicato (%s)", key, why)
                 ev_resp, duplicate = resp, True
-            elif resp is not None and resp.status_code == 500 and _errcode(resp) == "1008":
-                logger.error(
-                    "SVI 1008 'data error' su alertingEvents key=%s: ALERT NON CREATO. Cause tipiche: "
-                    "dominio/coda/entityType/alertTypeCode non validi per QUESTO ambiente, oppure "
-                    "alertingEventId duplicato. Verifica il .env e usa svi_smoketest.py --diagnose. Body: %s",
-                    key, (resp.text or "")[:400])
-                raise
             else:
-                raise
+                logger.error(
+                    "SVI 1008 'data error' su alertingEvents key=%s: alert NON creato da questa "
+                    "richiesta. Senza tentativi precedenti ambigui la causa tipica è un riferimento "
+                    "non valido per QUESTO ambiente (dominio/coda/entityType/alertTypeCode): verifica "
+                    "il .env con svi_smoketest.py --diagnose. (Oppure alert già pubblicato prima di un "
+                    "riavvio del publisher.) Body: %s", key, (resp.text or "")[:400])
+                raise SviRejected(
+                    f"SVI errorCode 1008 (data error) per key={key}: riferimento non valido per "
+                    f"questo ambiente oppure alert già esistente") from exc
         if duplicate:
             alert_id = mapping.event_id(alert)
         else:
@@ -176,6 +224,7 @@ async def publish_alert(alert: dict[str, Any]) -> dict[str, Any]:
     logger.info("Alerting event SVI %s: alert=%s entity=%s http=%s dedup=%s",
                 esito, alert_id, entity_id, ev_resp.status_code, duplicate)
     _idem_put(key, alert_id, document_id)
+    _ambiguous.pop(key, None)
     return {"svi_alert_id": alert_id, "document_id": document_id, "deduplicated": duplicate}
 
 
@@ -195,5 +244,6 @@ async def publish_entities(entities: list[dict], relationships: list[dict]) -> N
 
 
 def reset_idempotency() -> None:
-    """Svuota la cache di idempotenza (uso nei test)."""
+    """Svuota la cache di idempotenza e i marcatori di esito ambiguo (uso nei test)."""
     _published.clear()
+    _ambiguous.clear()

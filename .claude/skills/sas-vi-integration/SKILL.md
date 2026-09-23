@@ -36,9 +36,14 @@ diagnosticare errori di pubblicazione. Vale anche se l'utente non nomina l'envel
   deve pre-esistere; l'evento non porta `domainId`.
 - Idempotenza: `alertingEventId` deterministico dalla `business_key`. Attenzione: SVI usa
   `errorCode 1008` sia per un **duplicato** sia per **riferimenti non validi**
-  (dominio/coda/entityType/alertTypeCode assenti nell'ambiente): è **ambiguo**, quindi di
-  default `publish()` lo **solleva** (non lo maschera da successo). Su un ambiente a
-  riferimenti validi, per ripubblicazioni idempotenti abilita `SVI_DEDUP_ON_1008=true`.
+  (dominio/coda/entityType/alertTypeCode assenti nell'ambiente): è **ambiguo**. `publish()`
+  lo tratta come duplicato **solo** se un tentativo precedente per la stessa chiave ha avuto
+  esito ambiguo (timeout/5xx: SVI può averlo creato senza che vedessimo la risposta);
+  altrimenti solleva `SviRejected` (terminale: non ritentare, non mascherare da successo).
+  `SVI_DEDUP_ON_1008=true` = ogni 1008 è duplicato (solo su riferimenti verificati).
+- Timeout: `svi_publish_deadline` (tempo massimo di una `publish()`) deve essere
+  **inferiore** al timeout di chi la chiama, altrimenti il chiamante ritenta mentre la
+  prima pubblicazione è ancora in corso.
 - `score` e `alertTriggerText` sono campi core **sempre mostrati** (metti la motivazione
   in `alertTriggerText`). L'`enrichment` è memorizzato in `enrichmentJson` ma **mostrarlo
   è config di pagina** (Page Builder), non definizione di attributi.

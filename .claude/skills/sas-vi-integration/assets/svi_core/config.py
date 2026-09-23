@@ -52,9 +52,9 @@ class SviConfig(BaseSettings):
     svi_send_contributing_objects: bool = False
 
     # errorCode 1008 = "data error" AMBIGUO (duplicato OPPURE riferimento non valido:
-    # dominio/coda/entityType/alertTypeCode inesistenti). Default: sollevalo (alert NON
-    # creato). True SOLO in ambienti a riferimenti validi dove vuoi ripubblicazioni
-    # idempotenti (1008 = duplicato).
+    # dominio/coda/entityType/alertTypeCode inesistenti). È duplicato solo dopo un
+    # tentativo con esito ambiguo per la stessa chiave; altrimenti SviRejected (alert NON
+    # creato). True = 1008 SEMPRE duplicato: solo in ambienti a riferimenti già verificati.
     svi_dedup_on_1008: bool = False
 
     # --- Robustezza ---
@@ -62,6 +62,9 @@ class SviConfig(BaseSettings):
     svi_max_retries: int = 3
     svi_retry_backoff: float = 1.5       # base (s): 1.5, 3.0, 6.0...
     svi_idempotency_ttl: int = 86400     # cache business_key -> id (s)
+    # Tempo massimo complessivo di una pubblicazione (token + tentativi + backoff). Tienilo
+    # INFERIORE al timeout di chi chiama publish(), così non ritenta mentre sei ancora in corso.
+    svi_publish_deadline: float = 90.0
 
     # --- TLS ---
     svi_verify_tls: bool = True          # False SOLO per demo self-signed (== curl -k)

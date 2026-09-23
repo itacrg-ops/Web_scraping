@@ -19,11 +19,13 @@ from activities import (
     compute_ami,
     extract_content,
     fetch_source,
+    mark_screening_failed,
     persist_alert,
     publish_svi,
     render_source,
     resolve_entity,
     search_articles,
+    update_alert_svi,
     verify_subject_mention,
 )
 from workflows import ScreeningWorkflow
@@ -66,6 +68,8 @@ async def main() -> None:
             verify_subject_mention,
             publish_svi,
             persist_alert,
+            update_alert_svi,
+            mark_screening_failed,
         ],
     )
     await worker.run()

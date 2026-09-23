@@ -76,6 +76,9 @@ export interface Alert {
   drivers?: string[];
   disposition: string;
   svi_alert_id?: string | null;
+  // Esito della pubblicazione in SVI (l'alert è salvato prima di pubblicare).
+  svi_status?: "pending" | "published" | "failed" | "skipped";
+  svi_error?: string | null;
   entity_resolution?: EntityResolution | null;
   evidence?: EvidenceItem[];
   created_at: string;

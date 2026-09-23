@@ -40,8 +40,8 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(sources.router, dependencies=[Depends(require_user)])
 app.include_router(subjects.router)  # auth per-route (CRUD: utente; /registry: interno)
-app.include_router(alerts.router)  # auth per-route (GET: utente, POST: interno)
-app.include_router(screening.router, dependencies=[Depends(require_user)])
+app.include_router(alerts.router)  # auth per-route (GET: utente; POST/PATCH …/svi: interno)
+app.include_router(screening.router)  # auth per-route (POST/GET: utente; …/failed: interno)
 app.include_router(search.router, dependencies=[Depends(require_user)])
 
 

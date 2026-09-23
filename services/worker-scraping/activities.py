@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 import httpx
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 import anagraphics
 import classifier
@@ -31,6 +32,9 @@ RISK_GATEWAY_URL = os.getenv("RISK_GATEWAY_URL", "http://risk-gateway:8096")
 # chiama nemmeno il gateway (nessun hop, nessun cambiamento di comportamento).
 RISK_PROVIDER = os.getenv("RISK_PROVIDER", "").strip()
 INTERNAL_API_TOKEN = os.getenv("INTERNAL_API_TOKEN", "")
+# Timeout HTTP verso il publisher SVI: DEVE superare la sua SVI_PUBLISH_DEADLINE (90s)
+# ed essere inferiore allo start_to_close dell'activity nel workflow (180s).
+SVI_PUBLISH_TIMEOUT = float(os.getenv("SVI_PUBLISH_TIMEOUT", "120"))
 # Fallback headless (Playwright) per pagine JS-rendered (B6): default attivo.
 HEADLESS_FALLBACK = os.getenv("HEADLESS_FALLBACK", "true").lower() == "true"
 # Corroborazione via NER (llm-gateway /v1/ner, B7 parte 2): default attivo, ma
@@ -42,8 +46,11 @@ NER_CORROBORATION = os.getenv("NER_CORROBORATION", "true").lower() == "true"
 @activity.defn
 async def search_articles(subject: dict, options: dict | None = None) -> list[dict]:
     """Ricerca articoli adverse-media per il soggetto via search-gateway
-    (provider mock in locale, GDELT keyless in pilota). Non fatale: su
-    errore/assenza ritorna lista vuota (la pipeline lo gestisce)."""
+    (provider mock in locale, GDELT keyless in pilota).
+
+    Un GUASTO (gateway irraggiungibile, HTTP≠200, provider in errore/429/non
+    configurato) SOLLEVA: Temporal ritenta e, se persiste, il workflow marca l'esito
+    INCOMPLETO. Un guasto non deve mai sembrare "nessun articolo trovato"."""
     options = options or {}
     payload = {
         # NB: il ruolo NON entra nella ricerca (né PF né PG): è generico e farebbe
@@ -54,19 +61,17 @@ async def search_articles(subject: dict, options: dict | None = None) -> list[di
         "mode": options.get("mode", "targeted"),
         "max_results": options.get("max_results"),
     }
-    try:
-        # timeout ampio: il gateway può attendere per il throttle/retry di GDELT.
-        async with httpx.AsyncClient(timeout=45) as client:
-            resp = await client.post(f"{SEARCH_GATEWAY_URL}/v1/search", json=payload)
-        if resp.status_code == 200:
-            data = resp.json()
-            activity.logger.info("search_articles: provider=%s count=%s query=%s",
-                                 data.get("provider"), data.get("count"), data.get("query"))
-            return data.get("results", [])
-        activity.logger.warning("search-gateway %s", resp.status_code)
-    except Exception as exc:  # noqa: BLE001 — ricerca non disponibile, non fatale
-        activity.logger.warning("search-gateway non disponibile (%s)", exc)
-    return []
+    # timeout ampio: il gateway può attendere per il throttle/retry di GDELT.
+    async with httpx.AsyncClient(timeout=45) as client:
+        resp = await client.post(f"{SEARCH_GATEWAY_URL}/v1/search", json=payload)
+    if resp.status_code != 200:
+        raise RuntimeError(f"search-gateway HTTP {resp.status_code}")
+    data = resp.json()
+    if data.get("error"):
+        raise RuntimeError(f"{data.get('provider')}: {data['error']}")
+    activity.logger.info("search_articles: provider=%s count=%s query=%s",
+                         data.get("provider"), data.get("count"), data.get("query"))
+    return data.get("results", [])
 
 
 @activity.defn
@@ -110,7 +115,8 @@ async def assess_risk_feed(subject: dict) -> dict | None:
 
     Gate a fonte di verità unica: se `RISK_PROVIDER` è vuoto (feed OFF, default)
     non si chiama nemmeno il gateway → `None` → nessun arricchimento dell'alert.
-    Non fatale: su gateway assente/errore ritorna `None` (la pipeline prosegue)."""
+    Feed ATTIVO ma gateway in errore/irraggiungibile: non fatale, ma NON silenzioso →
+    `{available: False, error: True, …}`, e il workflow marca l'esito INCOMPLETO."""
     if not RISK_PROVIDER:
         return None
     try:
@@ -122,10 +128,11 @@ async def assess_risk_feed(subject: dict) -> dict | None:
                                  data.get("provider"), data.get("available"),
                                  data.get("severity"), data.get("fatf_categories"))
             return data
-        activity.logger.warning("risk-gateway %s", resp.status_code)
+        reason = f"risk-gateway HTTP {resp.status_code}"
     except Exception as exc:  # noqa: BLE001 — feed non disponibile, non fatale
-        activity.logger.info("risk-gateway non disponibile (%s): alert senza feed di rischio", exc)
-    return None
+        reason = f"risk-gateway non raggiungibile ({type(exc).__name__})"
+    activity.logger.warning("feed di rischio attivo ma non disponibile: %s", reason)
+    return {"available": False, "error": True, "provider": RISK_PROVIDER, "reason": reason}
 
 
 @activity.defn
@@ -264,8 +271,9 @@ async def classify_fatf(text: str, subject_name: str | None = None,
     """Classificazione FATF strutturata via llm-gateway (dual-LLM su Foundry:
     categorie, ruolo processuale, Victim-Bystander, severità, confidence,
     motivazione). Il nome del soggetto/terzi è pseudonimizzato lato gateway (B1.1).
-    Fallback onesto all'euristica a keyword se il gateway non è
-    configurato/raggiungibile."""
+    Ripiego sull'euristica a keyword se il gateway non è configurato/raggiungibile:
+    il risultato porta `method=euristica_keyword` e `fallback_reason`, e il workflow
+    marca l'esito INCOMPLETO (categorie a keyword non affidabili)."""
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(f"{LLM_GATEWAY_URL}/v1/classify", json={
@@ -277,11 +285,11 @@ async def classify_fatf(text: str, subject_name: str | None = None,
             data.setdefault("method", "llm")
             activity.logger.info("classify_fatf via LLM: %s (%s)", data.get("fatf_categories"), data.get("method"))
             return data
-        activity.logger.info("llm-gateway %s: categorie via euristica", resp.status_code)
+        reason = f"llm-gateway HTTP {resp.status_code}"
     except Exception as exc:  # noqa: BLE001
-        activity.logger.info("llm-gateway non disponibile (%s): categorie via euristica", exc)
-
-    return classifier.classify_text(text)
+        reason = f"llm-gateway non raggiungibile ({type(exc).__name__})"
+    activity.logger.warning("%s: categorie via euristica a keyword (esito INCOMPLETO)", reason)
+    return {**classifier.classify_text(text), "fallback_reason": reason}
 
 
 # --- Pesatura AMI: credibilità della fonte e corroborazione (§ scoring) ---
@@ -381,32 +389,67 @@ async def compute_ami(subject: dict, classification: dict, evidence_signals: lis
     return {"ami_score": ami, "risk_level": risk, "disposition": disposition, "drivers": drivers}
 
 
+def _detail(resp: httpx.Response) -> str:
+    try:
+        return str(resp.json().get("detail"))[:500]
+    except Exception:  # noqa: BLE001
+        return (resp.text or "")[:500]
+
+
 @activity.defn
 async def publish_svi(alert_payload: dict) -> str:
-    """Pubblica l'alert in SAS Visual Investigator (mock in locale)."""
-    async with httpx.AsyncClient(timeout=30) as client:
+    """Pubblica l'alert in SAS Visual Investigator (mock in locale).
+
+    422 dal publisher = rifiuto TERMINALE (dato/configurazione SVI): nessun retry
+    (ApplicationError non-retryable). 502/rete = transitorio → retry di Temporal.
+    Il timeout HTTP (SVI_PUBLISH_TIMEOUT) supera la deadline del publisher
+    (SVI_PUBLISH_DEADLINE): non si rinuncia mentre il publisher sta ancora provando."""
+    async with httpx.AsyncClient(timeout=SVI_PUBLISH_TIMEOUT) as client:
         resp = await client.post(f"{SVI_PUBLISHER_URL}/publish/alert", json=alert_payload)
-        resp.raise_for_status()
-        body = resp.json()
-        # mode/dedup rendono subito diagnosticabile il risultato: un id svi-mock-* =
-        # servizio in mock; deduplicated=true = screening già pubblicato (niente di nuovo).
-        activity.logger.info(
-            "SVI publish: id=%s mode=%s dedup=%s screening=%s",
-            body.get("svi_alert_id"), body.get("mode"),
-            body.get("deduplicated"), alert_payload.get("screening_id"))
-        return body["svi_alert_id"]
+    if resp.status_code == 422:
+        raise ApplicationError(f"SVI ha rifiutato l'alert: {_detail(resp)}",
+                               type="SviRejected", non_retryable=True)
+    if resp.status_code >= 400:
+        raise RuntimeError(f"svi-publisher HTTP {resp.status_code}: {_detail(resp)}")
+    body = resp.json()
+    # mode/dedup rendono subito diagnosticabile il risultato: un id svi-mock-* =
+    # servizio in mock; deduplicated=true = screening già pubblicato (niente di nuovo).
+    activity.logger.info(
+        "SVI publish: id=%s mode=%s dedup=%s screening=%s",
+        body.get("svi_alert_id"), body.get("mode"),
+        body.get("deduplicated"), alert_payload.get("screening_id"))
+    return body["svi_alert_id"]
+
+
+def _internal_headers() -> dict | None:
+    """Header del token di servizio per gli endpoint interni dell'API (vuoto in dev)."""
+    return {"X-Internal-Token": INTERNAL_API_TOKEN} if INTERNAL_API_TOKEN else None
 
 
 @activity.defn
 async def persist_alert(alert_create: dict) -> str:
-    """Persiste l'alert richiamando l'API (sistema di record).
-
-    L'endpoint `POST /api/alerts` è interno: se l'API richiede un token di
-    servizio (INTERNAL_API_TOKEN valorizzato), lo inviamo nell'header
-    `X-Internal-Token`. In dev il token è vuoto e l'endpoint è aperto.
-    """
-    headers = {"X-Internal-Token": INTERNAL_API_TOKEN} if INTERNAL_API_TOKEN else None
+    """Persiste l'alert richiamando l'API (sistema di record) PRIMA della
+    pubblicazione in SVI. Idempotente lato API per `screening_id`: un retry dopo un
+    timeout restituisce lo stesso alert invece di duplicarlo."""
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(f"{API_BASE}/api/alerts", json=alert_create, headers=headers)
+        resp = await client.post(f"{API_BASE}/api/alerts", json=alert_create, headers=_internal_headers())
         resp.raise_for_status()
         return resp.json()["id"]
+
+
+@activity.defn
+async def update_alert_svi(alert_id: str, update: dict) -> None:
+    """Registra sull'alert l'esito della pubblicazione in SVI (published/failed)."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.patch(f"{API_BASE}/api/alerts/{alert_id}/svi", json=update,
+                                  headers=_internal_headers())
+        resp.raise_for_status()
+
+
+@activity.defn
+async def mark_screening_failed(screening_id: str, error: str) -> None:
+    """Segna lo screening come fallito (altrimenti resterebbe "running" per sempre)."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(f"{API_BASE}/api/screening/{screening_id}/failed",
+                                 json={"error": error[:2000]}, headers=_internal_headers())
+        resp.raise_for_status()

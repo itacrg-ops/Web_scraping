@@ -55,6 +55,7 @@ SVI risponde `500 tdc.bad.request` (rifiuto di struttura, identico anche a body 
   stesso id evento.
 - SVI rifiuta i duplicati con `500 errorCode 1008` — **ma lo stesso codice 1008 vale anche
   per riferimenti non risolvibili** (dominio/coda/entityType/alertTypeCode assenti). È
-  ambiguo: `svi_core` di **default solleva** il 1008 (l'alert non è creato). Per trattarlo
-  come duplicato idempotente su ambienti a riferimenti validi: `SVI_DEDUP_ON_1008=true`.
-  In ogni caso il 1008 non è transitorio e non viene ritentato.
+  ambiguo: `svi_core` lo tratta come duplicato solo dopo un tentativo con **esito ambiguo**
+  per la stessa chiave (timeout in lettura, connessione caduta, 500/502/504), altrimenti
+  solleva `SviRejected` (l'alert non è creato da questa richiesta). `SVI_DEDUP_ON_1008=true`
+  = ogni 1008 è duplicato. In ogni caso il 1008 non è transitorio e non viene ritentato.

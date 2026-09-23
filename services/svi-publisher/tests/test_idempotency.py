@@ -41,9 +41,13 @@ class _FakeResp:
 
 
 class _FakeClient:
-    """Sostituto di httpx.AsyncClient. `spec` è una risposta unica (per ogni POST/GET)
-    oppure un dict {sottostringa-url: risposta} per instradare chiamate diverse
-    (es. /svi-datahub/documents vs /svi-alert/alertingEvents)."""
+    """Sostituto di httpx.AsyncClient. `spec` è una risposta unica (per ogni POST/GET),
+    un dict {sottostringa-url: risposta} per instradare chiamate diverse
+    (es. /svi-datahub/documents vs /svi-alert/alertingEvents), oppure una LISTA
+    consumata in ordine, una voce per chiamata: risposta o eccezione da sollevare
+    (es. [httpx.ReadTimeout(...), <1008>] = timeout, poi 1008 al retry)."""
+    calls = 0
+
     def __init__(self, spec):
         self._spec = spec
 
@@ -54,6 +58,12 @@ class _FakeClient:
         return False
 
     def _pick(self, url: str) -> _FakeResp:
+        _FakeClient.calls += 1
+        if isinstance(self._spec, list):
+            item = self._spec.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
         if isinstance(self._spec, dict):
             for frag, resp in self._spec.items():
                 if frag in url:
@@ -68,14 +78,23 @@ class _FakeClient:
         return self._pick(url)
 
 
-def _run_live(spec, alert: dict, load_entity: bool = False, dedup_on_1008: bool = False) -> dict:
-    """Esegue publish_alert nel ramo live con client/auth finti, poi ripristina."""
+_1008 = {"errorCode": 1008, "message": "A data error occurred"}
+
+
+def _run_live(spec, alert: dict, load_entity: bool = False, dedup_on_1008: bool = False,
+              reset: bool = True, deadline: float = 90.0) -> dict:
+    """Esegue publish_alert nel ramo live con client/auth finti, poi ripristina.
+    `reset=False` conserva cache e marcatori tra due chiamate (retry di Temporal)."""
     settings.svi_mode = "live"
     settings.svi_load_entity = load_entity
     settings.svi_dedup_on_1008 = dedup_on_1008
     settings.svi_queue = "queue_test"
     settings.svi_alert_type_code = "strategy_default"
-    svi_client.reset_idempotency()
+    settings.svi_retry_backoff = 0.0          # niente attese reali nei test
+    settings.svi_publish_deadline = deadline
+    if reset:
+        svi_client.reset_idempotency()
+    _FakeClient.calls = 0
     orig_client, orig_bearer = svi_client.httpx.AsyncClient, svi_client.auth.bearer
 
     async def _fake_bearer(_client):
@@ -91,6 +110,8 @@ def _run_live(spec, alert: dict, load_entity: bool = False, dedup_on_1008: bool 
         settings.svi_mode = "mock"
         settings.svi_load_entity = False
         settings.svi_dedup_on_1008 = False
+        settings.svi_retry_backoff = 1.5
+        settings.svi_publish_deadline = 90.0
 
 
 def test_mock_publish_is_idempotent_per_screening():
@@ -114,14 +135,94 @@ def test_different_screening_yields_different_id():
 
 
 def test_live_1008_raises_by_default():
-    """errorCode 1008 è ambiguo (config errata vs duplicato): di default NON va mascherato
-    da successo → deve sollevare, così l'errore reale (alert NON creato) è visibile."""
+    """errorCode 1008 è ambiguo (config errata vs duplicato): senza un tentativo
+    precedente ambiguo NON va mascherato da successo → rifiuto terminale visibile."""
     a = {**ALERT, "screening_id": "ERR-1008"}
     try:
-        _run_live(_FakeResp(500, {"errorCode": 1008, "message": "A data error occurred"}), a)
-    except httpx.HTTPStatusError:
+        _run_live(_FakeResp(500, _1008), a)
+    except svi_client.SviRejected:
         return
-    raise AssertionError("un 1008 di default deve sollevare, non ritornare deduplicated")
+    raise AssertionError("un 1008 senza tentativi ambigui deve sollevare SviRejected")
+
+
+def test_live_1008_after_ambiguous_timeout_is_duplicate():
+    """Il POST crea l'alert ma la risposta va in timeout; il retry riceve 1008:
+    è il NOSTRO alert già creato → duplicato, non un errore."""
+    a = {**ALERT, "screening_id": "AMB-1"}
+    r = _run_live([httpx.ReadTimeout("lettura scaduta"), _FakeResp(500, _1008)], a)
+    assert r["deduplicated"] is True
+    assert r["svi_alert_id"] == mapping.event_id(a)
+
+
+def test_live_1008_after_connect_error_is_rejected():
+    """Connessione mai stabilita = richiesta mai arrivata: il 1008 successivo NON può
+    essere un nostro duplicato → resta un rifiuto terminale."""
+    a = {**ALERT, "screening_id": "AMB-2"}
+    try:
+        _run_live([httpx.ConnectError("rifiutata"), _FakeResp(500, _1008)], a)
+    except svi_client.SviRejected:
+        return
+    raise AssertionError("ConnectError + 1008 deve restare SviRejected")
+
+
+def test_live_1008_on_temporal_retry_after_ambiguous_call():
+    """Prima chiamata: solo timeout → fallisce (il worker riceve 502 e Temporal
+    ritenta). Seconda chiamata: 1008 → riconosciuto come duplicato del tentativo
+    ambiguo precedente."""
+    a = {**ALERT, "screening_id": "AMB-3"}
+    try:
+        _run_live([httpx.ReadTimeout("t")] * 4, a)
+        raise AssertionError("solo timeout: la prima chiamata deve fallire")
+    except httpx.TransportError:
+        pass
+    r = _run_live([_FakeResp(500, _1008)], a, reset=False)
+    assert r["deduplicated"] is True
+
+
+def test_retry_respects_publish_deadline():
+    """Nessun nuovo tentativo se potrebbe sforare SVI_PUBLISH_DEADLINE (il worker ha
+    un suo timeout e deve ricevere la risposta prima)."""
+    a = {**ALERT, "screening_id": "DL-1"}
+    try:
+        _run_live([_FakeResp(504, {})] * 4, a, deadline=5.0)   # 5s < request_timeout (30s)
+    except httpx.HTTPStatusError as exc:
+        assert exc.response.status_code == 504
+    assert _FakeClient.calls == 1, _FakeClient.calls
+    try:
+        _run_live([_FakeResp(504, {})] * 4, a, deadline=300.0)  # budget ampio: tutti i tentativi
+    except httpx.HTTPStatusError:
+        pass
+    assert _FakeClient.calls == settings.svi_max_retries + 1, _FakeClient.calls
+
+
+def test_endpoint_maps_errors_for_the_worker():
+    """422 = rifiuto terminale (il worker non ritenta); 502 = transitorio."""
+    from app import main
+
+    req = httpx.Request("POST", "https://viya.example/x")
+    cases = [
+        (svi_client.SviRejected("1008"), 422),
+        (httpx.HTTPStatusError("401", request=req, response=httpx.Response(401, request=req)), 422),
+        (httpx.HTTPStatusError("503", request=req, response=httpx.Response(503, request=req)), 502),
+        (httpx.HTTPStatusError("429", request=req, response=httpx.Response(429, request=req)), 502),
+        (httpx.ConnectError("giù"), 502),
+    ]
+    orig = svi_client.publish_alert
+    try:
+        for exc, expected in cases:
+            async def _boom(_alert, _exc=exc):
+                raise _exc
+            svi_client.publish_alert = _boom
+
+            async def _call():
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app),
+                                             base_url="http://t") as c:
+                    return await c.post("/publish/alert", json={"subject": "X", "ami_score": 1,
+                                                                "risk_level": "BASSO"})
+            status = asyncio.run(_call()).status_code
+            assert status == expected, (type(exc).__name__, status, expected)
+    finally:
+        svi_client.publish_alert = orig
 
 
 def test_live_1008_dedup_only_when_optin():

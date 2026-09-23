@@ -138,7 +138,13 @@ function AlertRow({ a }: { a: Alert }) {
         </TableCell>
         <TableCell>{a.disposition}</TableCell>
         <TableCell align="right">{evCount}</TableCell>
-        <TableCell>{a.svi_alert_id ?? "—"}</TableCell>
+        <TableCell>
+          {a.svi_status === "failed" ? (
+            <Chip size="small" color="error" label="pubblicazione fallita" title={a.svi_error ?? undefined} />
+          ) : a.svi_status === "pending" ? (
+            <Chip size="small" color="warning" label="in pubblicazione" />
+          ) : (a.svi_alert_id ?? "—")}
+        </TableCell>
       </TableRow>
       <TableRow>
         <TableCell sx={{ py: 0 }} colSpan={10}>

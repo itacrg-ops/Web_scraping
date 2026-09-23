@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -137,8 +138,15 @@ class ScreeningOut(BaseModel):
     denominazione: str
     tipo_soggetto: str = "persona_giuridica"
     status: str
+    error: str | None = None
     alert_id: str | None = None
     created_at: datetime
+
+
+class ScreeningFailure(BaseModel):
+    """Esito di fallimento della pipeline (dal worker)."""
+
+    error: str
 
 
 class EvidenceItem(BaseModel):
@@ -173,8 +181,11 @@ class EvidenceCreate(BaseModel):
     fonte_credibilita: str | None = None
 
 
+SviStatus = Literal["pending", "published", "failed", "skipped"]
+
+
 class AlertCreate(BaseModel):
-    """Payload di persistenza alert (chiamato dal worker a fine pipeline)."""
+    """Payload di persistenza alert (dal worker, PRIMA della pubblicazione in SVI)."""
 
     screening_id: str | None = None
     subject: str
@@ -187,8 +198,17 @@ class AlertCreate(BaseModel):
     drivers: list[str] = []
     disposition: str = "ESCALATION_I_LIVELLO"
     svi_alert_id: str | None = None
+    svi_status: SviStatus = "pending"
     entity_resolution: dict | None = None
     evidence: list[EvidenceCreate] = []
+
+
+class AlertSviUpdate(BaseModel):
+    """Esito della pubblicazione in SVI (dal worker, dopo il tentativo)."""
+
+    svi_status: SviStatus
+    svi_alert_id: str | None = None
+    svi_error: str | None = None
 
 
 class Alert(BaseModel):
@@ -206,6 +226,8 @@ class Alert(BaseModel):
     drivers: list[str] = []
     disposition: str
     svi_alert_id: str | None = None
+    svi_status: str = "pending"
+    svi_error: str | None = None
     entity_resolution: dict | None = None
     evidence: list[EvidenceItem] = []
     created_at: datetime

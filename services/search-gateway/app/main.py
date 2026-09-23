@@ -83,7 +83,11 @@ class SearchResponse(BaseModel):
     raw_count: int          # risultati grezzi prima di dedup/filtro
     removed: int            # rimossi da filtro credibilità + dedup per dominio
     min_credibility: str
-    note: str | None = None  # avviso (es. GDELT rate-limited / non raggiungibile)
+    note: str | None = None  # avviso (es. query allargata, o motivo del guasto)
+    # Valorizzato SOLO se la ricerca è FALLITA (provider in errore/429/non configurato):
+    # zero risultati per guasto ≠ zero articoli trovati. Il worker non deve trattarlo
+    # come esito "pulito".
+    error: str | None = None
     results: list[SearchResultOut] = []
 
 
@@ -192,5 +196,6 @@ async def search(req: SearchRequest) -> dict:
         "removed": removed,
         "min_credibility": min_cred,
         "note": note,
+        "error": str(note) if isinstance(note, providers.ProviderError) else None,
         "results": results,
     }

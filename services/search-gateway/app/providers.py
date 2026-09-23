@@ -36,6 +36,13 @@ def _is_person(subject: dict) -> bool:
     return (subject.get("tipo_soggetto") or "persona_giuridica") == "persona_fisica"
 
 
+class ProviderError(str):
+    """Nota che segnala un GUASTO del provider (rete, 429, chiave/config mancante),
+    distinta dalle note informative (es. "query allargata"). Resta una `str` per i
+    chiamanti che la mostrano come testo; `main` la espone come `error`, così il
+    worker non scambia un guasto per "nessun articolo trovato"."""
+
+
 def _broadened_note(used_query: str, subject: dict) -> str | None:
     """Nota per la console quando la query vincente ha PERSO i qualificatori
     (azienda/località): la ricerca si è allargata al solo nome. Avvisa che è la
@@ -205,9 +212,9 @@ async def _gdelt(subject: dict, mode: str, max_results: int, lang: str,
                 retry_after = pl  # ancora 429: aggiorna eventuale Retry-After
             if result:
                 return result, vq, _broadened_note(vq, subject)
-            return [], vq, ("GDELT ha limitato le richieste (429). Attendi qualche "
-                            "secondo e riprova, oppure dirada le ricerche.")
-        return [], vq, "GDELT non raggiungibile o query rifiutata. Riprova più tardi."
+            return [], vq, ProviderError("GDELT ha limitato le richieste (429). Attendi qualche "
+                                         "secondo e riprova, oppure dirada le ricerche.")
+        return [], vq, ProviderError("GDELT non raggiungibile o query rifiutata. Riprova più tardi.")
     return [], variants[-1], None
 
 
@@ -294,7 +301,7 @@ async def _brave(subject: dict, mode: str, max_results: int, lang: str,
     qualificatori), poi allarga fino al solo nome, fermandosi alla prima con
     risultati. Su errore (chiave/parametri/rete) non insiste."""
     if not settings.brave_api_key:
-        return [], "", "Brave non configurato: imposta BRAVE_API_KEY nel .env."
+        return [], "", ProviderError("Brave non configurato: imposta BRAVE_API_KEY nel .env.")
     # Brave/Google: sintassi "plain" (niente parentesi/OR — ogni frase quotata è AND).
     qvars = qb.build_query_variants(subject, mode, syntax="plain")
     if not qvars:
@@ -304,7 +311,7 @@ async def _brave(subject: dict, mode: str, max_results: int, lang: str,
         last_q = q
         status, payload = await _brave_call(q, max_results)
         if status == "error":
-            return [], q, payload  # chiave/parametri/rete: inutile allargare
+            return [], q, ProviderError(payload)  # chiave/parametri/rete: inutile allargare
         if payload:
             return payload, q, _broadened_note(q, subject)
         # 200 ma nessun risultato → prova la variante più larga
@@ -354,7 +361,7 @@ async def _searxng(subject: dict, mode: str, max_results: int, lang: str,
         last_q = q
         status, payload = await _searxng_call(q, max_results)
         if status == "error":
-            return [], q, payload
+            return [], q, ProviderError(payload)
         if payload:
             return payload, q, _broadened_note(q, subject)
     return [], last_q, _broadened_note(last_q, subject)
@@ -376,7 +383,7 @@ async def _run_one(name: str, subject: dict, mode: str, max_results: int,
         return await _searxng(subject, mode, max_results, lang, timespan)
     if name == "mock":
         return _mock(subject, mode, max_results), qb.build_query(subject, mode), None
-    return [], "", f"provider sconosciuto: {name}"
+    return [], "", ProviderError(f"provider sconosciuto: {name}")
 
 
 async def search(subject: dict, mode: str, max_results: int, lang: str,
@@ -395,7 +402,7 @@ async def search(subject: dict, mode: str, max_results: int, lang: str,
                 timeout=settings.search_fanout_timeout,
             )
         except Exception as exc:  # noqa: BLE001 — un provider lento/rotto non blocca gli altri
-            return ([], "", f"{type(exc).__name__}")
+            return ([], "", ProviderError(f"{type(exc).__name__}"))
 
     outcomes = await asyncio.gather(*[_guarded(n) for n in names])
     merged: dict[str, dict] = {}
@@ -428,4 +435,8 @@ async def search(subject: dict, mode: str, max_results: int, lang: str,
         results.append(d)
 
     note = " · ".join(notes) if notes else None
+    # Guasto della ricerca solo se TUTTI i provider sono falliti (nessun risultato):
+    # un guasto parziale resta un'informazione nella nota.
+    if note and not results and all(isinstance(o[2], ProviderError) for o in outcomes):
+        note = ProviderError(note)
     return results, " | ".join(queries), note

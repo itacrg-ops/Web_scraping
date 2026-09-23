@@ -3,8 +3,10 @@
 Orchestrazione durevole con Temporal:
   Entity Resolution (gate) → [se superata] web search (o URL forniti) →
   per ogni articolo: fetch → extract → verifica di menzione → classify FATF
-  (sul testo aggregato) → AMI → pubblicazione SVI → persistenza (un alert con
-  più evidenze).
+  (sul testo aggregato) → AMI → persistenza (un alert con più evidenze, PRIMA di
+  SVI) → pubblicazione SVI → esito della pubblicazione registrato sull'alert.
+Guasti (ricerca, contenuti, LLM, feed di rischio) → esito ESITO_INCOMPLETO, mai
+AUTO_CHIUSO; un errore non gestito segna lo screening come `failed`.
 Gli URL da screenare si scelgono in quest'ordine: `seed_url` singolo (override
 manuale) → `seed_urls` (candidati scelti in console) → ricerca automatica via
 search-gateway. Se il gate NON è superato (soggetto ambiguo/irrisolto), NON si
@@ -17,6 +19,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError
 
 with workflow.unsafe.imports_passed_through():
     from activities import (
@@ -26,16 +29,23 @@ with workflow.unsafe.imports_passed_through():
         compute_ami,
         extract_content,
         fetch_source,
+        mark_screening_failed,
         persist_alert,
         publish_svi,
         render_source,
         resolve_entity,
         search_articles,
+        update_alert_svi,
         verify_subject_mention,
     )
+    from outcome import apply_incomplete, incomplete_reasons
 
 _RETRY = RetryPolicy(maximum_attempts=3)
 _TIMEOUT = timedelta(seconds=60)
+# Pubblicazione SVI: > SVI_PUBLISH_TIMEOUT del worker (120s) > SVI_PUBLISH_DEADLINE del
+# publisher (90s). Se fosse più corto, Temporal ritenterebbe mentre la prima
+# pubblicazione è ancora in corso.
+_SVI_TIMEOUT = timedelta(seconds=180)
 
 _DEFAULT_MAX_ARTICLES = 3      # quanti articoli screenare al massimo in modalità auto
 _MAX_CLASSIFY_CHARS = 12000    # cap del testo aggregato inviato alla classificazione
@@ -44,6 +54,13 @@ _HEADLESS_MIN_CHARS = 400      # sotto questa soglia l'estrazione è "povera" �
 _RENDER_RETRY = RetryPolicy(maximum_attempts=2)  # render costoso: meno tentativi
 
 _SEV_ORDER = {"bassa": 1, "media": 2, "alta": 3}
+
+
+def _cause(exc: BaseException) -> str:
+    """Messaggio leggibile di un errore d'activity (la causa reale sta in `cause`)."""
+    while isinstance(exc, ActivityError) and exc.cause is not None:
+        exc = exc.cause
+    return (getattr(exc, "message", None) or str(exc) or type(exc).__name__)[:500]
 
 
 def _merge_risk_feed(classification: dict, risk_feed: dict) -> dict:
@@ -67,6 +84,21 @@ def _merge_risk_feed(classification: dict, risk_feed: dict) -> dict:
 class ScreeningWorkflow:
     @workflow.run
     async def run(self, req: dict) -> dict:
+        try:
+            return await self._screen(req)
+        except Exception as exc:
+            # Lo screening non deve restare "running" per sempre: registra il motivo
+            # (best effort) e rilancia, così Temporal mostra comunque l'errore.
+            try:
+                await workflow.execute_activity(
+                    mark_screening_failed, args=[req.get("screening_id"), _cause(exc)],
+                    start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
+                )
+            except Exception:  # noqa: BLE001 — l'errore da mostrare è quello originale
+                workflow.logger.warning("impossibile segnare lo screening come fallito")
+            raise
+
+    async def _screen(self, req: dict) -> dict:
         subject = {
             "tipo_soggetto": req.get("tipo_soggetto", "persona_giuridica"),
             "denominazione": req["denominazione"],
@@ -101,6 +133,7 @@ class ScreeningWorkflow:
                 "drivers": ["Entity Resolution non superata: richiede disambiguazione umana"],
                 "disposition": "HITL_ENTITY_RESOLUTION",
                 "svi_alert_id": None,
+                "svi_status": "skipped",   # non pubblicato in SVI per scelta (abstain)
                 "entity_resolution": resolution,
             }
             alert_id = await workflow.execute_activity(
@@ -126,18 +159,24 @@ class ScreeningWorkflow:
         # console) → ricerca automatica via search-gateway (web search).
         max_articles = int(req.get("max_articles") or _DEFAULT_MAX_ARTICLES)
         search_drivers: list[str] = []
+        search_error: str | None = None
         if req.get("seed_url"):
             urls = [req["seed_url"]]
         elif req.get("seed_urls"):
             urls = list(req["seed_urls"])[:max_articles]
             search_drivers.append(f"Screening su {len(urls)} articoli selezionati in console")
         else:
-            results = await workflow.execute_activity(
-                search_articles, args=[subject, {"mode": "targeted", "max_results": max_articles}],
-                start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
-            )
+            try:
+                results = await workflow.execute_activity(
+                    search_articles, args=[subject, {"mode": "targeted", "max_results": max_articles}],
+                    start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
+                )
+            except ActivityError as err:
+                # Guasto della ricerca ≠ "nessun articolo": esito INCOMPLETO (vedi sotto).
+                results, search_error = [], _cause(err)
             urls = [r["url"] for r in results if r.get("url")][:max_articles]
-            search_drivers.append(f"Web search: {len(urls)} articoli candidati analizzati")
+            if search_error is None:
+                search_drivers.append(f"Web search: {len(urls)} articoli candidati analizzati")
 
         # Credibilità delle testate (registro unico via search-gateway), uniforme
         # su tutti i percorsi: pesa l'AMI e annota l'evidenza.
@@ -227,8 +266,13 @@ class ScreeningWorkflow:
         drivers = search_drivers + list(ami["drivers"])
         if any(d.get("_fetch_method") == "headless" for d in docs):
             drivers.append("Alcune fonti JS-rendered recuperate con browser headless")
+        n_missing = len(urls) - len(with_text)
+        if 0 < n_missing < len(urls):
+            drivers.append(f"{n_missing} fonti su {len(urls)} non recuperate (robots.txt, paywall "
+                           "o errori di rete): analisi parziale")
         if not urls:
-            drivers.insert(0, "Nessun articolo trovato dalla ricerca (web search)")
+            if search_error is None:  # ricerca riuscita ma vuota (il guasto è gestito sotto)
+                drivers.insert(0, "Nessun articolo trovato dalla ricerca (web search)")
         elif not any_mention:
             drivers.insert(
                 0,
@@ -284,22 +328,31 @@ class ScreeningWorkflow:
         if risk_available:
             block = [f"— Feed di rischio ({risk_feed.get('provider')}) —"] + list(risk_feed.get("drivers", []))
             drivers = block + drivers
-        elif risk_feed is not None:
+        elif risk_feed is not None and not risk_feed.get("error"):
             drivers.append(
                 f"Feed di rischio ({risk_feed.get('provider')}): nessun riscontro utilizzabile "
                 f"({risk_feed.get('reason')})"
             )
+
+        # Pipeline degradata (ricerca fallita, nessun contenuto, LLM o feed di rischio
+        # non disponibili) → ESITO_INCOMPLETO: mai AUTO_CHIUSO né escalation automatica.
+        outcome = apply_incomplete(
+            {"ami_score": ami["ami_score"], "risk_level": ami["risk_level"],
+             "disposition": ami["disposition"], "drivers": drivers},
+            incomplete_reasons(search_error=search_error, urls=urls, docs_with_text=len(with_text),
+                               classification=classification, risk_feed=risk_feed),
+        )
 
         alert_payload = {
             "subject": subject["denominazione"],
             "tipo_soggetto": subject["tipo_soggetto"],
             "cf_piva": subject["cf_piva"],
             "cup": subject["cup"],
-            "ami_score": ami["ami_score"],
-            "risk_level": ami["risk_level"],
+            "ami_score": outcome["ami_score"],
+            "risk_level": outcome["risk_level"],
             "fatf_categories": classification.get("fatf_categories", []),
-            "drivers": drivers,
-            "disposition": ami["disposition"],
+            "drivers": outcome["drivers"],
+            "disposition": outcome["disposition"],
         }
 
         # Evidenze ancorate all'alert (una per articolo effettivamente recuperato
@@ -325,32 +378,39 @@ class ScreeningWorkflow:
                 "fonte_credibilita": d.get("_credibilita"),
             })
 
-        # Pubblicazione SVI (B2): payload con motivazione (drivers) + evidenze +
-        # screening_id (business key per l'idempotenza: nessun duplicato su retry).
-        svi_payload = {
-            **alert_payload,
-            "screening_id": req["screening_id"],
-            "evidence": evidence,
-        }
-        svi_alert_id = await workflow.execute_activity(
-            publish_svi, svi_payload, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
+        # 1) Salva PRIMA in locale (sistema di record; idempotente per screening): un
+        #    guasto di SVI non fa più perdere il risultato dello screening.
+        alert_id = await workflow.execute_activity(
+            persist_alert,
+            {**alert_payload, "screening_id": req["screening_id"], "svi_status": "pending",
+             "entity_resolution": resolution, "evidence": evidence},
+            start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
         )
 
-        alert_create = {
-            **alert_payload,
-            "screening_id": req["screening_id"],
-            "svi_alert_id": svi_alert_id,
-            "entity_resolution": resolution,
-            "evidence": evidence,
-        }
-        alert_id = await workflow.execute_activity(
-            persist_alert, alert_create, start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY
+        # 2) Pubblica in SVI (B2): motivazione + evidenze + screening_id (business key:
+        #    nessun duplicato su retry). Un fallimento resta registrato sull'alert.
+        svi_alert_id: str | None = None
+        try:
+            svi_alert_id = await workflow.execute_activity(
+                publish_svi, {**alert_payload, "screening_id": req["screening_id"], "evidence": evidence},
+                start_to_close_timeout=_SVI_TIMEOUT, retry_policy=_RETRY,
+            )
+            svi_update = {"svi_status": "published", "svi_alert_id": svi_alert_id}
+        except ActivityError as err:
+            svi_update = {"svi_status": "failed", "svi_error": _cause(err)}
+
+        # 3) Esito della pubblicazione sull'alert.
+        await workflow.execute_activity(
+            update_alert_svi, args=[alert_id, svi_update],
+            start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
         )
 
         return {
             "alert_id": alert_id,
             "svi_alert_id": svi_alert_id,
-            "ami_score": ami["ami_score"],
+            "svi_status": svi_update["svi_status"],
+            "ami_score": outcome["ami_score"],
+            "disposition": outcome["disposition"],
             "articles": len(docs),
             "resolved": True,
         }

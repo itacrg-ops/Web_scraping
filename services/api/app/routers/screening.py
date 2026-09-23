@@ -2,8 +2,9 @@
 
 `POST /api/screening` crea un record e avvia il workflow Temporal
 `ScreeningWorkflow` sulla task queue dello scraping; il worker esegue la
-pipeline (fetch → extract → classify FATF → AMI → pubblicazione SVI →
-persistenza) e a fine corsa richiama `POST /api/alerts`.
+pipeline (fetch → extract → classify FATF → AMI), salva l'alert (`POST
+/api/alerts`), lo pubblica in SVI e ne registra l'esito. Se la pipeline fallisce,
+il worker chiama `POST /api/screening/{id}/failed` (interno).
 """
 from __future__ import annotations
 
@@ -12,10 +13,11 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import require_internal, require_user
 from app.config import settings
 from app.db import get_session
 from app.models import Screening as ScreeningModel
-from app.schemas import ScreeningOut, ScreeningRequest
+from app.schemas import ScreeningFailure, ScreeningOut, ScreeningRequest
 from app.temporal_client import get_client
 
 logger = logging.getLogger("api.screening")
@@ -23,7 +25,7 @@ logger = logging.getLogger("api.screening")
 router = APIRouter(prefix="/api/screening", tags=["screening"])
 
 
-@router.post("", response_model=ScreeningOut, status_code=202)
+@router.post("", response_model=ScreeningOut, status_code=202, dependencies=[Depends(require_user)])
 async def start_screening(
     req: ScreeningRequest, session: AsyncSession = Depends(get_session)
 ) -> ScreeningModel:
@@ -75,11 +77,29 @@ async def start_screening(
     return screening
 
 
-@router.get("/{screening_id}", response_model=ScreeningOut)
+@router.get("/{screening_id}", response_model=ScreeningOut, dependencies=[Depends(require_user)])
 async def get_screening(
     screening_id: str, session: AsyncSession = Depends(get_session)
 ) -> ScreeningModel:
     row = await session.get(ScreeningModel, screening_id)
     if row is None:
         raise HTTPException(status_code=404, detail="screening non trovato")
+    return row
+
+
+@router.post("/{screening_id}/failed", response_model=ScreeningOut,
+             dependencies=[Depends(require_internal)])
+async def mark_screening_failed(
+    screening_id: str, payload: ScreeningFailure, session: AsyncSession = Depends(get_session)
+) -> ScreeningModel:
+    """Chiamato dal worker se la pipeline fallisce: lo screening non resta
+    "running" per sempre. Vale solo da `running` (uno screening già `completed`,
+    cioè con l'alert salvato, non viene retrocesso). Idempotente."""
+    row = await session.get(ScreeningModel, screening_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="screening non trovato")
+    if row.status == "running":
+        row.status = "failed"
+        row.error = payload.error[:2000]
+        await session.commit()
     return row

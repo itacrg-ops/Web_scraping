@@ -90,9 +90,12 @@ class Settings(BaseSettings):
     svi_external_id_attr: str = "externalId"
 
     # errorCode 1008 = "data error" AMBIGUO (duplicato OPPURE riferimento non valido:
-    # dominio/coda/entityType/alertTypeCode inesistenti). Default: sollevalo come errore
-    # (l'alert non è creato). True SOLO in ambienti con riferimenti validi dove vuoi che
-    # la ripubblicazione dello stesso screening sia idempotente (1008 = duplicato).
+    # dominio/coda/entityType/alertTypeCode inesistenti). Il publisher lo tratta come
+    # duplicato SOLO se un tentativo precedente per la stessa chiave ha avuto esito
+    # ambiguo (timeout/5xx: SVI può aver creato l'alert senza che vedessimo la
+    # risposta); altrimenti è un rifiuto terminale (alert NON creato da questa
+    # richiesta). True = considera SEMPRE il 1008 un duplicato: solo in ambienti con
+    # riferimenti già verificati (maschera gli errori di configurazione).
     svi_dedup_on_1008: bool = False
 
     # --- Robustezza ---
@@ -100,6 +103,13 @@ class Settings(BaseSettings):
     svi_max_retries: int = 3
     svi_retry_backoff: float = 1.5       # base backoff (s): 1.5, 3.0, 6.0...
     svi_idempotency_ttl: int = 86400     # cache business_key -> id (s)
+    # Tempo massimo complessivo di una pubblicazione (token + tentativi + backoff): un
+    # nuovo tentativo non parte se potrebbe sforarlo. Catena dei timeout (dall'interno
+    # verso l'esterno, ognuno > del precedente): SVI_PUBLISH_DEADLINE (90s) < timeout
+    # HTTP del worker verso il publisher (SVI_PUBLISH_TIMEOUT, 120s) < start_to_close
+    # dell'activity Temporal (180s). Così il worker non rinuncia (e ritenta in
+    # parallelo) mentre il publisher sta ancora provando.
+    svi_publish_deadline: float = 90.0
 
     # --- TLS ---
     # Verifica del certificato del server Viya. Default: attiva.

@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import FastAPI
+import httpx
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from app import svi_client
@@ -68,6 +69,20 @@ def healthz() -> dict[str, str]:
 
 @app.post("/publish/alert", response_model=PublishOut)
 async def publish_alert(alert: AlertIn) -> PublishOut:
-    res = await svi_client.publish_alert(alert.model_dump())
+    """Pubblica l'alert. Errori con semantica per il chiamante (worker):
+    **422** = rifiuto terminale (dato/configurazione SVI: ritentare non serve);
+    **502** = SVI non disponibile/transitorio (il chiamante può ritentare)."""
+    try:
+        res = await svi_client.publish_alert(alert.model_dump())
+    except svi_client.SviRejected as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        code = exc.response.status_code
+        body = (exc.response.text or "")[:300]
+        if 400 <= code < 500 and code not in (408, 429):
+            raise HTTPException(status_code=422, detail=f"SVI ha rifiutato la richiesta (HTTP {code}): {body}") from exc
+        raise HTTPException(status_code=502, detail=f"SVI non disponibile (HTTP {code}): {body}") from exc
+    except httpx.TransportError as exc:
+        raise HTTPException(status_code=502, detail=f"SVI non raggiungibile: {exc!r}") from exc
     return PublishOut(svi_alert_id=res["svi_alert_id"], mode=settings.svi_mode,
                       deduplicated=res["deduplicated"], document_id=res.get("document_id"))
