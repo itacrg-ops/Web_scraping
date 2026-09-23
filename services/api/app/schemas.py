@@ -154,6 +154,7 @@ class EvidenceItem(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    id: str | None = None
     url: str | None = None
     testata: str | None = None
     title: str | None = None
@@ -163,6 +164,8 @@ class EvidenceItem(BaseModel):
     fetch_ts: str | None = None
     warc_key: str | None = None
     fonte_credibilita: str | None = None
+    mentioned: bool | None = None           # predizione: soggetto citato nell'articolo
+    mention_match: list[str] | None = None  # come (cf_piva / nome_cognome / denominazione…)
 
 
 class EvidenceCreate(BaseModel):
@@ -179,6 +182,8 @@ class EvidenceCreate(BaseModel):
     raw_key: str | None = None
     warc_key: str | None = None
     fonte_credibilita: str | None = None
+    mentioned: bool | None = None
+    mention_match: list[str] | None = None
 
 
 SviStatus = Literal["pending", "published", "failed", "skipped"]
@@ -200,6 +205,7 @@ class AlertCreate(BaseModel):
     svi_alert_id: str | None = None
     svi_status: SviStatus = "pending"
     entity_resolution: dict | None = None
+    classification: dict | None = None   # metodo llm/keyword, severità, ruolo… (valutazione)
     evidence: list[EvidenceCreate] = []
 
 
@@ -229,5 +235,87 @@ class Alert(BaseModel):
     svi_status: str = "pending"
     svi_error: str | None = None
     entity_resolution: dict | None = None
+    classification: dict | None = None
     evidence: list[EvidenceItem] = []
     created_at: datetime
+
+
+# --- Etichette dei casi (dataset di valutazione) ---------------------------------
+# Stessa lista del llm-gateway (app/fatf.py): le etichette devono essere confrontabili
+# con le predizioni, quindi niente categorie libere.
+FATF_CATEGORIES = [
+    "Fraud & Financial Crime", "Corruption & Bribery", "Money Laundering", "Organized Crime",
+    "Terrorist Financing", "Tax Crimes", "Sanctions & Embargoes", "Trafficking (Human/Drugs/Arms)",
+    "Environmental Crime", "Cybercrime", "Market Manipulation & Securities", "Regulatory & Compliance",
+]
+Pertinenza = Literal["si", "omonimo", "non_citato", "incerto"]   # l'articolo riguarda il soggetto?
+Avversa = Literal["si", "no", "incerto"]                        # la notizia è avversa per lui?
+Ruolo = Literal["autore_indagato", "vittima", "menzionato", "non_determinabile"]
+DispositionAttesa = Literal["ESCALATION_I_LIVELLO", "AUTO_CHIUSO"]
+
+
+class EvidenceLabel(BaseModel):
+    pertinenza: Pertinenza | None = None
+    avversa: Avversa | None = None
+
+
+class CaseLabelIn(BaseModel):
+    """Giudizio del revisore. `affidabile` = caso da includere nel dataset: richiede un
+    giudizio completo e senza "incerto" (vedi `missing_for_reliable`)."""
+
+    evidence_labels: dict[str, EvidenceLabel] = {}
+    categorie_corrette: list[str] = []
+    ruolo: Ruolo | None = None
+    disposition_attesa: DispositionAttesa | None = None
+    affidabile: bool = False
+    note: str | None = Field(default=None, max_length=4000)
+
+    @model_validator(mode="after")
+    def _known_categories(self) -> "CaseLabelIn":
+        unknown = [c for c in self.categorie_corrette if c not in FATF_CATEGORIES]
+        if unknown:
+            raise ValueError(f"categorie FATF sconosciute: {unknown}")
+        self.categorie_corrette = list(dict.fromkeys(self.categorie_corrette))
+        return self
+
+    def missing_for_reliable(self, evidence_ids: list[str]) -> list[str]:
+        """Cosa manca perché il caso sia un esempio affidabile per il dataset."""
+        missing = []
+        if self.disposition_attesa is None:
+            missing.append("disposition attesa")
+        if self.ruolo is None:
+            missing.append("ruolo del soggetto")
+        for eid in evidence_ids:
+            lab = self.evidence_labels.get(eid)
+            if lab is None or lab.pertinenza in (None, "incerto") or lab.avversa in (None, "incerto"):
+                missing.append(f"giudizio certo su pertinenza e avversità dell'articolo {eid}")
+        return missing
+
+
+class CaseLabelOut(CaseLabelIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    alert_id: str
+    reviewer: str
+    reviewer_name: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class CaseLabelSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    alert_id: str
+    affidabile: bool
+    updated_at: datetime | None = None
+
+
+class LabelStats(BaseModel):
+    etichettati: int                 # casi con almeno un'etichetta
+    affidabili: int                  # casi con almeno un'etichetta "affidabile"
+    revisori: int
+    # Distribuzione per disposition PREDETTA dal sistema: rivela il bias di selezione
+    # (se si etichettano solo le escalation si misura la precisione ma non i falsi negativi).
+    per_disposition: dict[str, int] = {}
+    affidabili_per_disposition: dict[str, int] = {}

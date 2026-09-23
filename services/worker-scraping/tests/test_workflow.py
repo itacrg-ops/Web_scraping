@@ -76,7 +76,8 @@ def _fakes(cfg: dict) -> tuple[list, list, dict]:
 
     @activity.defn(name="verify_subject_mention")
     async def verify_subject_mention(subject: dict, text: str) -> dict:
-        return {"mentioned": True, "context": [], "anagraphics": {"status": "n/a"}, "ner": None}
+        return {"mentioned": True, "matched": ["denominazione"], "context": [],
+                "anagraphics": {"status": "n/a"}, "ner": None}
 
     @activity.defn(name="classify_fatf")
     async def classify_fatf(text: str, name: str | None, person: bool) -> dict:
@@ -143,7 +144,12 @@ async def test_persist_before_publish_and_record_outcome(env) -> None:
     res, log, st = await _screen(env, {})
     assert log == [("persist", "pending"), "publish", ("svi", "published")], log
     assert res["svi_status"] == "published" and res["disposition"] == "ESCALATION_I_LIVELLO"
-    assert _alert(st)["svi_alert_id"] == "svi-123"
+    a = _alert(st)
+    assert a["svi_alert_id"] == "svi-123"
+    # predizioni salvate per il dataset di valutazione
+    assert a["classification"]["method"] == "llm_dual" and a["classification"]["severity"] == "alta"
+    assert a["evidence"][0]["mentioned"] is True
+    assert a["evidence"][0]["mention_match"] == ["denominazione"]
 
 
 async def test_terminal_svi_rejection_is_not_retried_and_screening_completes(env) -> None:

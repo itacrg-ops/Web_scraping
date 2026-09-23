@@ -1,11 +1,15 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
-  Alert as MuiAlert, Box, Chip, Collapse, IconButton, Link, Paper, Table, TableBody,
+  Alert as MuiAlert, Box, Button, Chip, Collapse, IconButton, Link, Paper, Table, TableBody,
   TableCell, TableContainer, TableHead, TableRow, Typography,
 } from "@mui/material";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
-import { listAlerts, type Alert } from "../api";
+import {
+  downloadDataset, getLabelStats, listAlerts, listMyLabels,
+  type Alert, type CaseLabelSummary, type LabelStats,
+} from "../api";
+import CaseLabelPanel from "../components/CaseLabelPanel";
 
 const erColor = (s?: string): "success" | "warning" | "default" =>
   s === "resolved" ? "success" : s === "unresolved" ? "default" : "warning";
@@ -99,7 +103,44 @@ function EvidenceDetail({ a }: { a: Alert }) {
   );
 }
 
-function AlertRow({ a }: { a: Alert }) {
+const plural = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+
+// Avanzamento del dataset di valutazione + export. La distribuzione per esito del
+// sistema rende visibile il bias di selezione (solo escalation = niente falsi negativi).
+function DatasetBar({ stats }: { stats: LabelStats }) {
+  const [error, setError] = useState<string | null>(null);
+  const soloEscalation = stats.etichettati >= 10
+    && (stats.per_disposition.ESCALATION_I_LIVELLO ?? 0) === stats.etichettati;
+  const perEsito = Object.entries(stats.per_disposition).map(([d, n]) => `${d} ${n}`).join(" · ");
+  return (
+    <Paper variant="outlined" sx={{ p: 1.5, mt: 2 }}>
+      <Box sx={{ display: "flex", gap: 2, alignItems: "center", flexWrap: "wrap" }}>
+        <Typography variant="body2" sx={{ flex: "1 1 320px" }}>
+          <strong>Dataset di valutazione:</strong>{" "}
+          {plural(stats.affidabili, "caso affidabile", "casi affidabili")} su{" "}
+          {plural(stats.etichettati, "etichettato", "etichettati")} (obiettivo 100–200) ·{" "}
+          {plural(stats.revisori, "revisore", "revisori")}
+          {perEsito && <> · per esito del sistema: {perEsito}</>}
+        </Typography>
+        <Button size="small" variant="outlined"
+          onClick={() => downloadDataset(true).catch((e) => setError(e instanceof Error ? e.message : String(e)))}>
+          Esporta dataset (NDJSON)
+        </Button>
+      </Box>
+      {soloEscalation && (
+        <Typography variant="caption" color="warning.main" component="div" sx={{ mt: 0.5 }}>
+          Stai etichettando solo escalation: aggiungi casi chiusi o incompleti, altrimenti non si
+          possono misurare i falsi negativi.
+        </Typography>
+      )}
+      {error && <MuiAlert severity="error" sx={{ mt: 1 }}>{error}</MuiAlert>}
+    </Paper>
+  );
+}
+
+type RowProps = { a: Alert; label?: CaseLabelSummary; onLabelSaved: (s: CaseLabelSummary) => void };
+
+function AlertRow({ a, label, onLabelSaved }: RowProps) {
   const [open, setOpen] = useState(false);
   const evCount = a.evidence?.length ?? 0;
   return (
@@ -145,13 +186,20 @@ function AlertRow({ a }: { a: Alert }) {
             <Chip size="small" color="warning" label="in pubblicazione" />
           ) : (a.svi_alert_id ?? "—")}
         </TableCell>
+        <TableCell>
+          {label ? (
+            <Chip size="small" color={label.affidabile ? "success" : "default"}
+              label={label.affidabile ? "affidabile" : "bozza"} />
+          ) : "—"}
+        </TableCell>
       </TableRow>
       <TableRow>
-        <TableCell sx={{ py: 0 }} colSpan={10}>
+        <TableCell sx={{ py: 0 }} colSpan={11}>
           <Collapse in={open} timeout="auto" unmountOnExit>
             <MotivazioneDetail a={a} />
             <ResolutionDetail a={a} />
             <EvidenceDetail a={a} />
+            <CaseLabelPanel a={a} onSaved={onLabelSaved} />
           </Collapse>
         </TableCell>
       </TableRow>
@@ -162,20 +210,37 @@ function AlertRow({ a }: { a: Alert }) {
 export default function Alerts() {
   const [rows, setRows] = useState<Alert[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [labels, setLabels] = useState<Record<string, CaseLabelSummary>>({});
+  const [stats, setStats] = useState<LabelStats | null>(null);
+
+  const refreshStats = useCallback(() => {
+    getLabelStats().then(setStats).catch(() => setStats(null));
+  }, []);
 
   useEffect(() => {
     listAlerts().then(setRows).catch((e) => setError(String(e)));
-  }, []);
+    listMyLabels()
+      .then((ls) => setLabels(Object.fromEntries(ls.map((l) => [l.alert_id, l]))))
+      .catch(() => setLabels({}));
+    refreshStats();
+  }, [refreshStats]);
+
+  const onLabelSaved = (s: CaseLabelSummary) => {
+    setLabels((prev) => ({ ...prev, [s.alert_id]: s }));
+    refreshStats();
+  };
 
   return (
     <div>
       <Typography variant="h5" gutterBottom>Alert (sintesi)</Typography>
       <Typography variant="body2" color="text.secondary" gutterBottom>
         Vista di monitoraggio. Espandi una riga per le <strong>evidenze ancorate</strong>
-        (URL, snippet, hash, timestamp, WARC). La lavorazione investigativa avviene in
+        (URL, snippet, hash, timestamp, WARC) e per <strong>etichettare il caso</strong> nel
+        dataset di valutazione. La lavorazione investigativa avviene in
         <strong> SAS Visual Investigator</strong>.
       </Typography>
       {error && <MuiAlert severity="error" sx={{ my: 2 }}>{error}</MuiAlert>}
+      {stats && <DatasetBar stats={stats} />}
       <TableContainer component={Paper} sx={{ mt: 2 }}>
         <Table size="small">
           <TableHead>
@@ -190,10 +255,13 @@ export default function Alerts() {
               <TableCell>Disposizione</TableCell>
               <TableCell align="right">Evidenze</TableCell>
               <TableCell>SVI</TableCell>
+              <TableCell>Etichetta</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {rows.map((a) => <AlertRow key={a.id} a={a} />)}
+            {rows.map((a) => (
+              <AlertRow key={a.id} a={a} label={labels[a.id]} onLabelSaved={onLabelSaved} />
+            ))}
           </TableBody>
         </Table>
       </TableContainer>

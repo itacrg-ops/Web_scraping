@@ -54,6 +54,9 @@ _HEADLESS_MIN_CHARS = 400      # sotto questa soglia l'estrazione Ã¨ "povera" â†
 _RENDER_RETRY = RetryPolicy(maximum_attempts=2)  # render costoso: meno tentativi
 
 _SEV_ORDER = {"bassa": 1, "media": 2, "alta": 3}
+# Predizione del classificatore salvata sull'alert (valutazione vs etichette dei revisori).
+_CLASSIFICATION_KEYS = ("method", "severity", "ruolo_processuale", "role_analysis",
+                        "secondary_agreement", "confidence", "fallback_reason")
 
 
 def _cause(exc: BaseException) -> str:
@@ -217,6 +220,7 @@ class ScreeningWorkflow:
             )
             info = cred_map.get(url) or {}
             doc["_mentioned"] = bool(men.get("mentioned"))
+            doc["_matched"] = men.get("matched", [])
             doc["_context"] = men.get("context", [])
             doc["_anagraphics"] = men.get("anagraphics") or {"status": "n/a"}
             doc["_ner"] = men.get("ner")
@@ -376,6 +380,9 @@ class ScreeningWorkflow:
                 "raw_key": prov.get("raw_key"),
                 "warc_key": prov.get("warc_key"),
                 "fonte_credibilita": d.get("_credibilita"),
+                # predizione del sistema, confrontata poi con le etichette dei revisori
+                "mentioned": d.get("_mentioned"),
+                "mention_match": d.get("_matched") or [],
             })
 
         # 1) Salva PRIMA in locale (sistema di record; idempotente per screening): un
@@ -383,7 +390,8 @@ class ScreeningWorkflow:
         alert_id = await workflow.execute_activity(
             persist_alert,
             {**alert_payload, "screening_id": req["screening_id"], "svi_status": "pending",
-             "entity_resolution": resolution, "evidence": evidence},
+             "entity_resolution": resolution, "evidence": evidence,
+             "classification": {k: classification.get(k) for k in _CLASSIFICATION_KEYS}},
             start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
         )
 

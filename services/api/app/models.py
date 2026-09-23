@@ -89,6 +89,9 @@ class Alert(Base):
     svi_status: Mapped[str] = mapped_column(String, default="pending", server_default="pending")
     svi_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     entity_resolution: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Predizione del classificatore (metodo llm/keyword, severità, ruolo, …): serve a
+    # confrontare il sistema con le etichette dei revisori (dataset di valutazione).
+    classification: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     evidence: Mapped[list["Evidence"]] = relationship(
@@ -115,4 +118,31 @@ class Evidence(Base):
     raw_key: Mapped[str | None] = mapped_column(String, nullable=True)
     warc_key: Mapped[str | None] = mapped_column(String, nullable=True)
     fonte_credibilita: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Predizione del sistema su questo articolo: il soggetto è citato? (e come:
+    # cf_piva / nome_cognome / denominazione / denominazione_breve).
+    mentioned: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    mention_match: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class CaseLabel(Base):
+    """Etichetta di un revisore su un caso (alert), per il dataset di valutazione:
+    per ogni articolo se riguarda davvero il soggetto e se è avverso; per il caso le
+    categorie FATF corrette, il ruolo del soggetto, la disposition attesa e se il caso
+    è **affidabile** (da includere nel dataset). Una per alert e revisore."""
+
+    __tablename__ = "case_labels"
+    __table_args__ = (UniqueConstraint("alert_id", "reviewer", name="uq_case_labels_alert_reviewer"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    alert_id: Mapped[str] = mapped_column(ForeignKey("alerts.id", ondelete="CASCADE"), index=True)
+    reviewer: Mapped[str] = mapped_column(String)                 # sub (Entra) o nome
+    reviewer_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    evidence_labels: Mapped[dict] = mapped_column(JSON, default=dict)   # {evidence_id: {...}}
+    categorie_corrette: Mapped[list] = mapped_column(JSON, default=list)
+    ruolo: Mapped[str | None] = mapped_column(String, nullable=True)
+    disposition_attesa: Mapped[str | None] = mapped_column(String, nullable=True)
+    affidabile: Mapped[bool] = mapped_column(Boolean, default=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

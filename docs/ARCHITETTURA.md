@@ -127,7 +127,7 @@ prima dell'egress verso Azure.
 | 2 | **Feed di rischio** (B9, opz.) | Indicatori AML/CFT + connessioni sul soggetto risolto. |
 | 3 | **Web search** (B8) | Fan-out su più motori, merge/dedup per URL, boost di corroborazione. |
 | 4 | **Fetch + Render** (B6) | Fetch conforme (robots/crawl-delay), snapshot WARC su MinIO, fallback headless Playwright per pagine JS. |
-| 5 | **Estrazione + Menzione + NER** | Testo (trafilatura), verifica che il soggetto sia citato, corroborazione anagrafica e NER. |
+| 5 | **Estrazione + Menzione + NER** | Testo (trafilatura), verifica che il soggetto sia citato (a **parole intere**: nome e cognome adiacenti; denominazione senza forma giuridica; nome breve solo con iniziale maiuscola), corroborazione anagrafica e NER. |
 | 6 | **PII → FATF** (B1/B1.1) | Redazione PII e pseudonimizzazione nomi, poi classificazione FATF dual-LLM. |
 | 7 | **AMI → SVI** (B2) | Punteggio pesato, persistenza dell'alert con evidenze (sistema di record), poi pubblicazione in SVI con esito registrato sull'alert (`svi_status`). |
 
@@ -136,6 +136,10 @@ Disposition possibili: `AUTO_CHIUSO`, `ESCALATION_I_LIVELLO`,
 `HITL_ENTITY_RESOLUTION`, `ESITO_INCOMPLETO` (pipeline degradata: ricerca fallita,
 nessun contenuto recuperato, LLM o feed di rischio non disponibili — da ripetere o
 completare a mano; mai chiuso né escalato in automatico).
+
+La **qualità** si misura su casi reali etichettati dai revisori nella console (pagina
+Alert): per ogni articolo pertinenza e avversità, per il caso categorie, ruolo ed esito
+corretti. Vedi [`DATASET_VALUTAZIONE.md`](DATASET_VALUTAZIONE.md).
 
 ---
 

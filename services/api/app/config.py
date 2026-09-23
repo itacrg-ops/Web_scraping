@@ -35,5 +35,8 @@ class Settings(BaseSettings):
     # Vuoto in dev = endpoint interno aperto; valorizzalo per bloccarlo.
     internal_api_token: str = ""
 
+    # Export del dataset di valutazione (dati personali in blocco): solo questi ruoli.
+    dataset_export_roles: list[str] = ["amministratore"]
+
 
 settings = Settings()

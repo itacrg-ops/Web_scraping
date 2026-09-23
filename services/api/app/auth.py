@@ -72,6 +72,13 @@ async def require_user(request: Request) -> User:
     return User(name=name, roles=list(roles), sub=claims.get("sub"))
 
 
+def check_roles(user: User, roles: list[str]) -> None:
+    """403 se l'utente non ha ALMENO uno dei ruoli (app roles di Entra). In dev (auth
+    disabilitata) l'utente fittizio ha i ruoli amministrativi."""
+    if not set(roles) & set(user.roles):
+        raise HTTPException(status_code=403, detail=f"serve uno dei ruoli: {', '.join(roles)}")
+
+
 async def require_internal(x_internal_token: str | None = Header(default=None)) -> None:
     """Protegge gli endpoint interni service-to-service (worker/entity-resolution → API).
 

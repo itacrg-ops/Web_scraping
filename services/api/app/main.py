@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.auth import require_user
 from app.config import settings
 from app.db import init_db
-from app.routers import alerts, health, screening, search, sources, subjects
+from app.routers import alerts, health, labels, screening, search, sources, subjects
 
 
 @asynccontextmanager
@@ -35,6 +35,7 @@ app.add_middleware(
     allow_origins=settings.cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],  # nome file dell'export del dataset
 )
 
 app.include_router(health.router)
@@ -42,6 +43,7 @@ app.include_router(sources.router, dependencies=[Depends(require_user)])
 app.include_router(subjects.router)  # auth per-route (CRUD: utente; /registry: interno)
 app.include_router(alerts.router)  # auth per-route (GET: utente; POST/PATCH …/svi: interno)
 app.include_router(screening.router)  # auth per-route (POST/GET: utente; …/failed: interno)
+app.include_router(labels.router)  # auth per-route (utente; export del dataset: ruolo)
 app.include_router(search.router, dependencies=[Depends(require_user)])
 
 
