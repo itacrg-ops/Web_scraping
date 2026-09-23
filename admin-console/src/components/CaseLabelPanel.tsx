@@ -4,11 +4,13 @@
 // orizzontale. L'esito del sistema è chiuso di default e la predizione per articolo
 // non è mostrata, per non influenzare il giudizio (il confronto lo fa
 // scripts/evaluate_labels.py).
-import { useEffect, useState } from "react";
+// Un caso "affidabile" richiede un giudizio completo e certo: la scheda lo verifica
+// prima di salvare, evidenzia cosa manca (per numero di articolo) e porta al primo punto.
+import { useEffect, useRef, useState } from "react";
 import {
   Accordion, AccordionDetails, AccordionSummary, Alert as MuiAlert, Autocomplete, Box, Button,
-  Checkbox, Chip, FormControl, FormControlLabel, InputLabel, Link, MenuItem, Paper, Select,
-  TextField, ToggleButton, ToggleButtonGroup, Typography,
+  Checkbox, Chip, FormControl, FormControlLabel, FormHelperText, InputLabel, Link, MenuItem, Paper,
+  Select, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography,
 } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import {
@@ -17,10 +19,24 @@ import {
   type EvidenceItem, type EvidenceLabel, type Pertinenza, type Ruolo,
 } from "../api";
 
-const PERTINENZA: [Pertinenza, string][] = [
-  ["si", "Sì"], ["omonimo", "Omonimo"], ["non_citato", "Non citato"], ["incerto", "Incerto"],
+type Ev = EvidenceItem & { id: string };
+type Question = "pertinenza" | "avversa";
+type Gap = { q: Question; incerto: boolean };
+
+// [valore, etichetta, significato]: il significato va nella legenda e nel tooltip.
+const PERTINENZA: [Pertinenza, string, string][] = [
+  ["si", "Sì", "parla proprio di questo soggetto"],
+  ["omonimo", "Omonimo", "parla di un'altra persona o azienda con lo stesso nome"],
+  ["non_citato", "Non citato", "il soggetto non è nominato"],
+  ["incerto", "Incerto", "non si può stabilire (il caso resta una bozza)"],
 ];
-const AVVERSA: [Avversa, string][] = [["si", "Sì"], ["no", "No"], ["incerto", "Incerto"]];
+const AVVERSA: [Avversa, string, string][] = [
+  ["si", "Sì", "attribuisce al soggetto reati, indagini, accuse, condanne, sanzioni o legami con ambienti criminali"],
+  ["no", "No", "il soggetto è vittima, testimone o parte lesa, o è solo citato; anche se l'articolo non lo riguarda"],
+  ["incerto", "Incerto", "non si può stabilire (il caso resta una bozza)"],
+];
+const DOMANDA: Record<Question, string> = { pertinenza: "riguarda il soggetto?", avversa: "notizia avversa?" };
+const NON_LO_RIGUARDA: Pertinenza[] = ["omonimo", "non_citato"];
 const RUOLI: [Ruolo, string][] = [
   ["autore_indagato", "Autore / indagato"], ["vittima", "Vittima"],
   ["menzionato", "Solo menzionato"], ["non_determinabile", "Non determinabile"],
@@ -33,6 +49,48 @@ const EMPTY: CaseLabelIn = {
   evidence_labels: {}, categorie_corrette: [], ruolo: null, disposition_attesa: null,
   affidabile: false, note: "",
 };
+
+// Domande di un articolo senza risposta certa: in un caso affidabile servono entrambe e
+// «Incerto» non basta (stessa regola dell'API, CaseLabelIn.missing_for_reliable).
+function articleGaps(v?: EvidenceLabel): Gap[] {
+  return (["pertinenza", "avversa"] as const)
+    .filter((q) => !v?.[q] || v[q] === "incerto")
+    .map((q) => ({ q, incerto: v?.[q] === "incerto" }));
+}
+
+// Nel riepilogo: "notizia avversa?", "riguarda il soggetto? «Incerto»".
+const gapText = (gaps: Gap[]) => gaps.map((g) => DOMANDA[g.q] + (g.incerto ? " «Incerto»" : "")).join(", ");
+
+// Sull'articolo: cosa manca e, per le risposte «Incerto», perché non bastano.
+function gapCaption(gaps: Gap[]): string {
+  const missing = gaps.filter((g) => !g.incerto).map((g) => DOMANDA[g.q]);
+  const uncertain = gaps.filter((g) => g.incerto).map((g) => DOMANDA[g.q]);
+  return [
+    missing.length ? `Manca: ${missing.join(", ")}` : "",
+    uncertain.length ? `«Incerto» non basta per un caso affidabile: ${uncertain.join(", ")}` : "",
+  ].filter(Boolean).join(" · ");
+}
+
+// Combinazioni sospette, non bloccanti: tengono coerente il dataset.
+function consistencyHints(label: CaseLabelIn, evidence: Ev[]): string[] {
+  const labels = evidence.map((e) => label.evidence_labels[e.id] ?? {});
+  const hints: string[] = [];
+  if (label.disposition_attesa === "ESCALATION_I_LIVELLO") {
+    if (label.ruolo === "vittima" || label.ruolo === "menzionato") {
+      hints.push("Soggetto vittima o solo citato, ma esito «Escalation»: di norma queste notizie non sono "
+        + "avverse per il soggetto. Se l'escalation è voluta (es. rischio di infiltrazione), spiegalo nelle note.");
+    } else if (labels.length > 0 && labels.every((v) => v.avversa && v.avversa !== "si")) {
+      hints.push("Esito «Escalation» ma nessun articolo è una notizia avversa: se ti basi su notizie che il "
+        + "sistema non ha trovato, indicalo nelle note.");
+    }
+  }
+  const n = labels.findIndex((v) => v.pertinenza === "si" && v.avversa === "si");
+  if (label.disposition_attesa === "AUTO_CHIUSO" && n >= 0) {
+    hints.push(`Esito «Chiusura» ma l'articolo ${n + 1} riguarda il soggetto ed è una notizia avversa: `
+      + "verifica l'esito.");
+  }
+  return hints;
+}
 
 // Esito del sistema: chiuso di default (aprilo dopo aver giudicato).
 function SystemOutcome({ a }: { a: Alert }) {
@@ -81,19 +139,69 @@ function SystemOutcome({ a }: { a: Alert }) {
   );
 }
 
+// Come rispondere: lo stesso testo dei tooltip, sempre visibile sopra gli articoli.
+function Legend() {
+  const line = (options: [string, string, string][]) =>
+    options.filter(([v]) => v !== "incerto").map(([, t, d]) => `${t}: ${d}`).join(" · ");
+  return (
+    <Box sx={{ bgcolor: "action.hover", borderRadius: 1, px: 1.5, py: 1, mb: 1.5 }}>
+      <Typography variant="caption" component="div">
+        <strong>Riguarda il soggetto?</strong> {line(PERTINENZA)}.
+      </Typography>
+      <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>
+        <strong>Notizia avversa per il soggetto?</strong> {line(AVVERSA)}. Con «Omonimo» o «Non
+        citato» si imposta da sé su «No».
+      </Typography>
+      <Typography variant="caption" component="div" color="text.secondary" sx={{ mt: 0.5 }}>
+        «Incerto» se non si può stabilire: il caso resta una bozza, fuori dal dataset.
+      </Typography>
+    </Box>
+  );
+}
+
+// Una domanda a risposta singola. Come i radio: la risposta si cambia ma non si toglie
+// (un secondo clic sulla stessa, anche su un «No» impostato da sé, non la cancella).
+function Choice<T extends string>({ label, options, value, missing, onChange }: {
+  label: string; options: [T, string, string][]; value: T | null; missing: boolean;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <Box>
+      <Typography variant="caption" component="div" color={missing ? "error" : "text.secondary"}>
+        {label}
+      </Typography>
+      <ToggleButtonGroup size="small" exclusive color="primary" value={value} aria-label={label}
+        onChange={(_, v: T | null) => { if (v !== null) onChange(v); }}>
+        {options.map(([v, t, d]) => (
+          <Tooltip key={v} title={`${t}: ${d}`} describeChild enterDelay={500} disableInteractive>
+            <ToggleButton value={v}>{t}</ToggleButton>
+          </Tooltip>
+        ))}
+      </ToggleButtonGroup>
+    </Box>
+  );
+}
+
 type ArticleProps = {
-  e: EvidenceItem & { id: string };
+  n: number;
+  e: Ev;
   value?: EvidenceLabel;
-  onChange: (patch: Partial<EvidenceLabel>) => void;
+  gaps?: Gap[];     // cosa manca per un caso affidabile (dopo un salvataggio bloccato)
+  onPertinenza: (v: Pertinenza) => void;
+  onAvversa: (v: Avversa) => void;
+  boxRef: (el: HTMLDivElement | null) => void;
 };
 
 // Un articolo: contenuto (per giudicare senza aprire la pagina) + le due domande.
-function Article({ e, value, onChange }: ArticleProps) {
+function Article({ n, e, value, gaps, onPertinenza, onAvversa, boxRef }: ArticleProps) {
+  const missing = (q: Question) => !!gaps?.some((g) => g.q === q);
   return (
-    <Paper variant="outlined" sx={{ p: 1.5, mb: 1.5 }}>
+    <Paper ref={boxRef} variant="outlined" role="group" aria-label={`Articolo ${n}`}
+      sx={{ p: 1.5, mb: 1.5, scrollMarginTop: 8,
+            ...(gaps?.length ? { borderColor: "error.main", boxShadow: (t) => `inset 0 0 0 1px ${t.palette.error.main}` } : {}) }}>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
         <Typography variant="body2">
-          <strong>{e.testata || "—"}</strong>{e.data ? ` · ${e.data}` : ""}
+          <strong>Articolo {n}</strong> · {e.testata || "—"}{e.data ? ` · ${e.data}` : ""}
         </Typography>
         {e.url && <Link variant="body2" href={e.url} target="_blank" rel="noreferrer">apri articolo</Link>}
         {e.fonte_credibilita && (
@@ -107,23 +215,16 @@ function Article({ e, value, onChange }: ArticleProps) {
         </Typography>
       )}
       <Box sx={{ display: "flex", gap: 2, rowGap: 1, flexWrap: "wrap", mt: 1 }}>
-        <Box>
-          <Typography variant="caption" color="text.secondary" component="div">Riguarda il soggetto?</Typography>
-          <ToggleButtonGroup size="small" exclusive color="primary" value={value?.pertinenza ?? null}
-            onChange={(_, v: Pertinenza | null) => onChange({ pertinenza: v })}>
-            {PERTINENZA.map(([v, t]) => <ToggleButton key={v} value={v}>{t}</ToggleButton>)}
-          </ToggleButtonGroup>
-        </Box>
-        <Box>
-          <Typography variant="caption" color="text.secondary" component="div">
-            Notizia avversa per il soggetto?
-          </Typography>
-          <ToggleButtonGroup size="small" exclusive color="primary" value={value?.avversa ?? null}
-            onChange={(_, v: Avversa | null) => onChange({ avversa: v })}>
-            {AVVERSA.map(([v, t]) => <ToggleButton key={v} value={v}>{t}</ToggleButton>)}
-          </ToggleButtonGroup>
-        </Box>
+        <Choice label="Riguarda il soggetto?" options={PERTINENZA} value={value?.pertinenza ?? null}
+          missing={missing("pertinenza")} onChange={onPertinenza} />
+        <Choice label="Notizia avversa per il soggetto?" options={AVVERSA} value={value?.avversa ?? null}
+          missing={missing("avversa")} onChange={onAvversa} />
       </Box>
+      {!!gaps?.length && (
+        <Typography variant="caption" color="error" component="div" sx={{ mt: 0.5, fontWeight: 500 }}>
+          {gapCaption(gaps)}
+        </Typography>
+      )}
       <Typography variant="caption" color="text.secondary" component="div"
         sx={{ mt: 1, wordBreak: "break-all" }} title={e.content_hash ?? undefined}>
         hash {(e.content_hash ?? "—").slice(0, 12)}… · fetch {e.fetch_ts || "—"}
@@ -146,8 +247,30 @@ export default function CaseLabelPanel({ a, onSaved, onDirtyChange, onNext, onCl
   const [saved, setSaved] = useState(JSON.stringify(EMPTY));   // ultimo stato salvato/caricato
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const evidence = (a.evidence ?? []).filter((e): e is EvidenceItem & { id: string } => !!e.id);
+  const [checked, setChecked] = useState(false);   // un salvataggio "affidabile" è stato bloccato
+  const articleEls = useRef<Record<string, HTMLDivElement | null>>({});
+  const caseEl = useRef<HTMLDivElement>(null);
+  const autoNo = useRef(new Set<string>());   // articoli con «avversa = No» impostato da sé
+  const evidence = (a.evidence ?? []).filter((e): e is Ev => !!e.id);
   const dirty = JSON.stringify(label) !== saved;
+
+  // Cosa manca perché il caso sia affidabile, nell'ordine in cui appare nella scheda.
+  const incomplete = evidence
+    .map((e, i) => ({ id: e.id, n: i + 1, gaps: articleGaps(label.evidence_labels[e.id]) }))
+    .filter((x) => x.gaps.length > 0);
+  const missingRuolo = !label.ruolo;
+  const missingEsito = !label.disposition_attesa;
+  const complete = incomplete.length === 0 && !missingRuolo && !missingEsito;
+  const showGaps = checked && label.affidabile && !complete;
+  const answered = evidence.filter((e) => {
+    const v = label.evidence_labels[e.id];
+    return v?.pertinenza && v?.avversa;
+  }).length;
+  const uncertain = evidence.filter((e) => {
+    const v = label.evidence_labels[e.id];
+    return v?.pertinenza === "incerto" || v?.avversa === "incerto";
+  }).length;
+  const hints = consistencyHints(label, evidence);
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
 
@@ -171,9 +294,35 @@ export default function CaseLabelPanel({ a, onSaved, onDirtyChange, onNext, onCl
       ...l, evidence_labels: { ...l.evidence_labels, [id]: { ...l.evidence_labels[id], ...patch } },
     }));
 
+  // Un articolo su un omonimo (o che non cita il soggetto) non è avverso per il soggetto:
+  // «No» da sé, se non già risposto; tolto di nuovo se la pertinenza torna «Sì» / «Incerto».
+  const setPertinenza = (id: string, v: Pertinenza) => {
+    const patch: Partial<EvidenceLabel> = { pertinenza: v };
+    if (NON_LO_RIGUARDA.includes(v)) {
+      if (!label.evidence_labels[id]?.avversa) {
+        patch.avversa = "no";
+        autoNo.current.add(id);
+      }
+    } else if (autoNo.current.delete(id)) {
+      patch.avversa = null;
+    }
+    setEvidence(id, patch);
+  };
+  const setAvversa = (id: string, v: Avversa) => {
+    autoNo.current.delete(id);
+    setEvidence(id, { avversa: v });
+  };
+
   const save = async (andThen?: () => void) => {
-    setSaving(true);
     setMsg(null);
+    if (label.affidabile && !complete) {
+      // Blocca prima dell'API: evidenzia cosa manca e porta al primo punto da completare.
+      setChecked(true);
+      const first = incomplete.length ? articleEls.current[incomplete[0].id] : caseEl.current;
+      first?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    setSaving(true);
     try {
       const res = await saveLabel(a.id, { ...label, note: label.note || null });
       setSaved(JSON.stringify(label));
@@ -194,6 +343,15 @@ export default function CaseLabelPanel({ a, onSaved, onDirtyChange, onNext, onCl
     }
   };
 
+  // Riepilogo di cosa manca: per numero di articolo (tutti i dettagli se sono pochi).
+  const todo = [
+    ...(incomplete.length <= 3
+      ? incomplete.map((x) => `articolo ${x.n} (${gapText(x.gaps)})`)
+      : [`articoli ${incomplete.map((x) => x.n).join(", ")}`]),
+    ...(missingRuolo ? ["ruolo del soggetto"] : []),
+    ...(missingEsito ? ["esito corretto"] : []),
+  ];
+
   return (
     <>
       <Box sx={{ flex: 1, overflowY: "auto", px: 2, py: 2 }}>
@@ -206,25 +364,33 @@ export default function CaseLabelPanel({ a, onSaved, onDirtyChange, onNext, onCl
             superata). Se sai che esistono notizie avverse su questo soggetto, indica «Escalation»
             come esito corretto: serve a misurare i falsi negativi.
           </Typography>
-        ) : evidence.map((e) => (
-          <Article key={e.id} e={e} value={label.evidence_labels[e.id]}
-            onChange={(patch) => setEvidence(e.id, patch)} />
-        ))}
+        ) : (
+          <>
+            <Legend />
+            {evidence.map((e, i) => (
+              <Article key={e.id} n={i + 1} e={e} value={label.evidence_labels[e.id]}
+                gaps={showGaps ? articleGaps(label.evidence_labels[e.id]) : undefined}
+                onPertinenza={(v) => setPertinenza(e.id, v)} onAvversa={(v) => setAvversa(e.id, v)}
+                boxRef={(el) => { articleEls.current[e.id] = el; }} />
+            ))}
+          </>
+        )}
 
         <Typography variant="subtitle2" sx={{ mt: 2, mb: 1.5 }}>Giudizio sul caso</Typography>
         <Autocomplete multiple size="small" options={FATF_CATEGORIES} value={label.categorie_corrette}
           onChange={(_, v) => setLabel((l) => ({ ...l, categorie_corrette: v }))}
           renderInput={(params) => <TextField {...params} label="Categorie FATF corrette (vuoto = nessuna)" />} />
-        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2, mt: 2 }}>
-          <FormControl size="small" fullWidth>
+        <Box ref={caseEl} sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2, mt: 2 }}>
+          <FormControl size="small" fullWidth error={showGaps && missingRuolo}>
             <InputLabel id={`ruolo-${a.id}`}>Ruolo del soggetto</InputLabel>
             <Select labelId={`ruolo-${a.id}`} label="Ruolo del soggetto" value={label.ruolo ?? ""}
               onChange={(ev) => setLabel((l) => ({ ...l, ruolo: (ev.target.value || null) as Ruolo | null }))}>
               <MenuItem value=""><em>—</em></MenuItem>
               {RUOLI.map(([v, t]) => <MenuItem key={v} value={v}>{t}</MenuItem>)}
             </Select>
+            {showGaps && missingRuolo && <FormHelperText>Serve per un caso affidabile</FormHelperText>}
           </FormControl>
-          <FormControl size="small" fullWidth>
+          <FormControl size="small" fullWidth error={showGaps && missingEsito}>
             <InputLabel id={`esito-${a.id}`}>Esito corretto</InputLabel>
             <Select labelId={`esito-${a.id}`} label="Esito corretto" value={label.disposition_attesa ?? ""}
               onChange={(ev) => setLabel((l) => ({
@@ -233,25 +399,41 @@ export default function CaseLabelPanel({ a, onSaved, onDirtyChange, onNext, onCl
               <MenuItem value=""><em>—</em></MenuItem>
               {ESITI.map(([v, t]) => <MenuItem key={v} value={v}>{t}</MenuItem>)}
             </Select>
+            {showGaps && missingEsito && <FormHelperText>Serve per un caso affidabile</FormHelperText>}
           </FormControl>
         </Box>
+        {hints.map((h) => <MuiAlert key={h} severity="info" sx={{ mt: 2 }}>{h}</MuiAlert>)}
         <TextField size="small" fullWidth multiline minRows={2} label="Note" sx={{ mt: 2 }}
           value={label.note ?? ""} onChange={(ev) => setLabel((l) => ({ ...l, note: ev.target.value }))} />
       </Box>
 
       <Box sx={{ borderTop: 1, borderColor: "divider", px: 2, py: 1.5, bgcolor: "background.paper" }}>
         {msg && <MuiAlert severity={msg.ok ? "success" : "error"} sx={{ mb: 1 }}>{msg.text}</MuiAlert>}
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
-          <FormControlLabel label="Caso affidabile (includi nel dataset)" control={
+        {showGaps && (
+          <MuiAlert severity="error" sx={{ mb: 1 }}>
+            Per includere il caso nel dataset completa: {todo.join("; ")} (in rosso nella scheda). Oppure
+            togli la spunta «Caso affidabile» per salvarlo come bozza.
+          </MuiAlert>
+        )}
+        {evidence.length > 0 && (
+          <Typography variant="caption" component="div" aria-live="polite"
+            color={answered === evidence.length && !uncertain ? "success.main" : "text.secondary"}>
+            Articoli completi: {answered} di {evidence.length}
+            {uncertain > 0 && ` · ${uncertain} con «Incerto»`}
+          </Typography>
+        )}
+        <Box sx={{ display: "flex", alignItems: "center", columnGap: 1, flexWrap: "wrap" }}>
+          <FormControlLabel label="Caso affidabile (includi nel dataset)" sx={{ mr: 0 }} control={
             <Checkbox checked={label.affidabile}
               onChange={(ev) => setLabel((l) => ({ ...l, affidabile: ev.target.checked }))} />
           } />
-          <Box sx={{ flex: 1 }} />
-          <Button variant="outlined" size="small" onClick={() => save()} disabled={saving}>Salva</Button>
-          <Button variant="contained" size="small" disabled={saving}
-            onClick={() => save(onNext ?? onClose)}>
-            {onNext ? "Salva e successivo" : "Salva e chiudi"}
-          </Button>
+          <Box sx={{ display: "flex", gap: 1, ml: "auto" }}>
+            <Button variant="outlined" size="small" onClick={() => save()} disabled={saving}>Salva</Button>
+            <Button variant="contained" size="small" disabled={saving}
+              onClick={() => save(onNext ?? onClose)}>
+              {onNext ? "Salva e successivo" : "Salva e chiudi"}
+            </Button>
+          </Box>
         </Box>
       </Box>
     </>

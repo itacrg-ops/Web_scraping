@@ -278,17 +278,23 @@ class CaseLabelIn(BaseModel):
         self.categorie_corrette = list(dict.fromkeys(self.categorie_corrette))
         return self
 
-    def missing_for_reliable(self, evidence_ids: list[str]) -> list[str]:
-        """Cosa manca perché il caso sia un esempio affidabile per il dataset."""
+    def missing_for_reliable(self, evidence: list[tuple[str, str]]) -> list[str]:
+        """Cosa manca perché il caso sia un esempio affidabile per il dataset, in termini
+        leggibili dal revisore e nell'ordine della scheda in console. `evidence`:
+        [(id, "articolo N (testata)")]. "Incerto" non basta: un caso affidabile è un
+        giudizio certo (stessa regola della console, CaseLabelPanel)."""
         missing = []
-        if self.disposition_attesa is None:
-            missing.append("disposition attesa")
+        for eid, desc in evidence:
+            lab = self.evidence_labels.get(eid) or EvidenceLabel()
+            gaps = [q + (" «Incerto»" if v == "incerto" else "")
+                    for q, v in (("riguarda il soggetto?", lab.pertinenza), ("notizia avversa?", lab.avversa))
+                    if v in (None, "incerto")]
+            if gaps:
+                missing.append(f"{desc}: {', '.join(gaps)}")
         if self.ruolo is None:
             missing.append("ruolo del soggetto")
-        for eid in evidence_ids:
-            lab = self.evidence_labels.get(eid)
-            if lab is None or lab.pertinenza in (None, "incerto") or lab.avversa in (None, "incerto"):
-                missing.append(f"giudizio certo su pertinenza e avversità dell'articolo {eid}")
+        if self.disposition_attesa is None:
+            missing.append("esito corretto")
         return missing
 
 

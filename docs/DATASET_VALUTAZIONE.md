@@ -7,10 +7,11 @@ nella pagina **Alert**; l'export alimenta lo script di valutazione.
 ## Come si etichetta un caso
 
 Pagina **Alert** → clicca il caso: si apre la **scheda laterale** (larga quanto lo schermo,
-senza scroll orizzontale). Per ogni articolo trovi testata, titolo, estratto e link, con le
-due domande subito sotto; poi il giudizio sul caso. Il piè di pagina resta sempre visibile:
-**Salva**, oppure **Salva e successivo** per passare al caso seguente (pulsanti ‹ › in alto per
-spostarsi, Esc per chiudere; se ci sono modifiche non salvate viene chiesta conferma).
+senza scroll orizzontale). Gli articoli sono numerati (**Articolo 1 · testata**) con titolo,
+estratto e link, e le due domande subito sotto; poi il giudizio sul caso. Il piè di pagina
+resta sempre visibile, con il contatore **Articoli completi: N di M**: **Salva**, oppure
+**Salva e successivo** per passare al caso seguente (pulsanti ‹ › in alto per spostarsi, Esc
+per chiudere; se ci sono modifiche non salvate viene chiesta conferma).
 L'**esito del sistema** (AMI, categorie, motivazione) è in una sezione chiusa: aprila dopo
 aver giudicato, per non farti influenzare.
 
@@ -23,9 +24,13 @@ aver giudicato, per non farti influenzare.
 | per caso | Esito corretto | Escalation (I livello) · Chiusura |
 | per caso | Caso affidabile | includi nel dataset |
 
-- **Affidabile** = giudizio completo e certo: esito, ruolo e, per ogni articolo, pertinenza e
-  avversità senza «Incerto». Se manca qualcosa l'API rifiuta il salvataggio e dice cosa
-  manca; senza la spunta il caso si salva come **bozza** (non entra nel dataset).
+- **Affidabile** = giudizio completo e certo: esito, ruolo e, per ogni articolo, entrambe le
+  risposte senza «Incerto». Se manca qualcosa la scheda **non salva**: evidenzia in rosso gli
+  articoli e i campi incompleti («Manca: notizia avversa?»), porta al primo e riassume nel
+  piè di pagina cosa manca per numero di articolo; l'evidenziazione si aggiorna mentre
+  completi. Senza la spunta il caso si salva come **bozza** (non entra nel dataset). L'API
+  applica la stessa regola e risponde nello stesso modo («articolo 2 (testata): notizia
+  avversa?»).
 - Un'etichetta per caso **per revisore**: due revisori sullo stesso caso permettono di
   misurare l'accordo tra revisori.
 - La colonna **Etichetta** mostra *affidabile* / *bozza*; la barra in alto mostra
@@ -33,6 +38,33 @@ aver giudicato, per non farti influenzare.
 
 La predizione del sistema **per articolo** («citato / non citato») non è mostrata nel
 modulo, per non influenzare il giudizio: il confronto lo fa lo script.
+
+### Come rispondere
+
+La legenda sopra gli articoli e i suggerimenti sui pulsanti (al passaggio del mouse)
+riportano queste definizioni:
+
+| Domanda | Risposta | Significato |
+|---|---|---|
+| Riguarda il soggetto? | Sì | l'articolo parla proprio di questo soggetto |
+| | Omonimo | parla di un'altra persona o azienda con lo stesso nome |
+| | Non citato | il soggetto non è nominato |
+| Notizia avversa per il soggetto? | Sì | attribuisce al soggetto reati, indagini, accuse, condanne, sanzioni o legami con ambienti criminali |
+| | No | il soggetto è vittima, testimone o parte lesa, o è solo citato; anche se l'articolo non lo riguarda |
+| entrambe | Incerto | non si può stabilire: il caso resta una bozza |
+
+- Con **Omonimo** o **Non citato** la seconda risposta si imposta da sé su **No** (se non
+  l'avevi già data); se poi torni a «Sì» viene tolta, così non resta un «No» non scelto.
+- Le risposte si comportano come pulsanti di scelta: si cambiano ma un secondo clic sulla
+  stessa non la cancella.
+- *Esempio:* giornalista o imprenditore **vittima** di intimidazioni → «Riguarda il
+  soggetto?» **Sì**, «Notizia avversa?» **No**, ruolo **Vittima**; di norma l'esito corretto è
+  **Chiusura**.
+
+Alcune combinazioni sospette mostrano un **suggerimento** (non blocca il salvataggio): ruolo
+Vittima o Solo menzionato con esito Escalation; Escalation senza alcun articolo avverso;
+Chiusura con un articolo pertinente e avverso. Se la scelta è voluta (es. rischio di
+infiltrazione, notizie note ma non trovate dal sistema), spiegala nelle **note**.
 
 ## Tre accortezze perché i numeri siano credibili
 

@@ -66,7 +66,8 @@ async def put_label(alert_id: str, payload: CaseLabelIn, user: User = Depends(re
     unknown = sorted(set(payload.evidence_labels) - set(evidence_ids))
     if unknown:
         raise HTTPException(status_code=422, detail=f"evidenze non appartenenti all'alert: {unknown}")
-    if payload.affidabile and (missing := payload.missing_for_reliable(evidence_ids)):
+    described = [(e.id, f"articolo {i} ({e.testata or 'fonte'})") for i, e in enumerate(alert.evidence, 1)]
+    if payload.affidabile and (missing := payload.missing_for_reliable(described)):
         raise HTTPException(status_code=422, detail="per includere il caso nel dataset manca: "
                             + "; ".join(missing))
 

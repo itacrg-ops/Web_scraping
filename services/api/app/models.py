@@ -94,8 +94,11 @@ class Alert(Base):
     classification: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
+    # Ordine stabile (di inserimento, id a parità): la numerazione in console
+    # ("articolo 2") e quella dei messaggi dell'API coincidono.
     evidence: Mapped[list["Evidence"]] = relationship(
-        cascade="all, delete-orphan", lazy="selectin"
+        cascade="all, delete-orphan", lazy="selectin",
+        order_by=lambda: (Evidence.created_at, Evidence.id),
     )
 
 

@@ -29,7 +29,8 @@ async def _alert_with_evidence(client, disposition: str = "ESCALATION_I_LIVELLO"
         "fatf_categories": ["Money Laundering"],
         "classification": {"method": "euristica_keyword", "severity": None},
         "evidence": [
-            {"url": "https://a.it/1", "content_hash": "h1", "mentioned": True, "mention_match": ["denominazione"]},
+            {"url": "https://a.it/1", "testata": "a.it", "content_hash": "h1", "mentioned": True,
+             "mention_match": ["denominazione"]},
             {"url": "https://b.it/2", "content_hash": "h2", "mentioned": False, "mention_match": []},
         ],
     }
@@ -89,7 +90,13 @@ async def test_validation(client) -> None:
     incompleto = {"evidence_labels": {e1: {"pertinenza": "incerto", "avversa": "no"}},
                   "disposition_attesa": "AUTO_CHIUSO", "affidabile": True}
     r = await client.put(url, json=incompleto)
-    assert r.status_code == 422 and "ruolo" in r.text and "articolo" in r.text, r.text
+    assert r.status_code == 422, r.text
+    # cosa manca, in termini del revisore: numero e testata dell'articolo, domanda — non gli id
+    detail = r.json()["detail"]
+    assert "ruolo del soggetto" in detail and "esito corretto" not in detail, detail
+    assert "articolo 1 (a.it): riguarda il soggetto? «Incerto»" in detail, detail    # «Incerto» non basta
+    assert "articolo 2 (fonte): riguarda il soggetto?, notizia avversa?" in detail, detail
+    assert not any(e["id"] in detail for e in a["evidence"]), detail
     # lo stesso giudizio, NON marcato affidabile, si salva (bozza)
     assert (await client.put(url, json={**incompleto, "affidabile": False})).status_code == 200
     assert (await client.get("/api/alerts/non-esiste/label")).status_code == 404
