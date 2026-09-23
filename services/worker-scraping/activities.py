@@ -149,10 +149,6 @@ async def verify_subject_mention(subject: dict, text: str) -> dict:
     return res
 
 
-def _norm_ent(s: str) -> str:
-    return " ".join((s or "").upper().split())
-
-
 async def _ner_corroborate(subject: dict, text: str) -> dict | None:
     """Chiede la NER al llm-gateway e verifica se il soggetto è riconosciuto come
     PERSONA e l'azienda come ORGANIZZAZIONE. Non fatale: su assenza/errore o NER
@@ -171,16 +167,16 @@ async def _ner_corroborate(subject: dict, text: str) -> dict | None:
     if not data.get("available"):
         return None
 
-    persons = {_norm_ent(p) for p in data.get("persons", [])}
-    orgs = {_norm_ent(o) for o in data.get("orgs", [])}
-    nome, cognome = _norm_ent(subject.get("nome")), _norm_ent(subject.get("cognome"))
-    subject_person = bool(cognome) and any(
-        cognome in p and (not nome or nome in p) for p in persons
-    )
-    azienda = _norm_ent(subject.get("azienda"))
-    azienda_org = bool(azienda) and any(azienda in o or o in azienda for o in orgs)
+    persons = data.get("persons", [])
+    orgs = data.get("orgs", [])
+    # Confronto a PAROLE INTERE (mai sottostringhe: "Rossi" non è "Rossini"): la persona
+    # della NER deve contenere nome e cognome adiacenti; l'organizzazione deve
+    # coincidere con l'azienda come sequenza di parole (forma giuridica esclusa).
+    subject_person = any(mention.person_in(mention.tokens(p), subject) for p in persons)
+    azienda = subject.get("azienda") or ""
+    azienda_org = bool(azienda) and any(mention.org_matches(azienda, o) for o in orgs)
     return {"available": True, "subject_person": subject_person, "azienda_org": azienda_org,
-            "n_persons": len(persons), "n_orgs": len(orgs)}
+            "n_persons": len(set(persons)), "n_orgs": len(set(orgs))}
 
 
 @activity.defn

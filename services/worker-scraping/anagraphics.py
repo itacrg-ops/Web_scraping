@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
+import mention
+
 # "45 anni", "di 45 anni"
 _AGE = re.compile(r"\b(?:di\s+)?(\d{1,3})\s+anni\b", re.IGNORECASE)
 # "45enne", "45-enne"
@@ -23,6 +25,14 @@ _BIRTH_YEAR = re.compile(r"\b(?:classe|nat[oa]\s+(?:nel\s+)?)\s*(\d{4})\b", re.I
 _BIRTH_DATE = re.compile(r"\bnat[oa]\s+il\s+\d{1,2}[/\-.]\d{1,2}[/\-.](\d{4})\b", re.IGNORECASE)
 # "nato a Milano", "nata a Reggio Emilia" (1-2 parole con iniziale maiuscola)
 _BIRTHPLACE = re.compile(r"\bnat[oa]\s+a\s+([A-ZÀ-Ù][\wàèéìòù'\-]+(?:\s+[A-ZÀ-Ù][\wàèéìòù'\-]+)?)")
+
+
+_PLACE_STOP = {"DI", "DEL", "DELLA", "DELLO", "DEI", "DEGLI", "DELLE", "NELL", "NEL", "NELLA",
+               "IN", "SU", "SUL", "SULLA", "A", "AL", "ALLA", "E", "D", "L"}
+
+
+def _place(s: str) -> list[str]:
+    return [t for t in mention.tokens(s) if t not in _PLACE_STOP]
 
 
 def extract(text: str) -> dict:
@@ -62,13 +72,22 @@ def corroborate(subject: dict, text: str) -> dict:
                 conflict = True
                 findings.append(f"anno di nascita {y} discordante (atteso {birth_year})")
 
-    luogo = " ".join((subject.get("luogo_nascita") or "").upper().split())
+    # Luogo: confronto a PAROLE INTERE ("Roma" non vale dentro "Romano"), ignorando le
+    # preposizioni ("Reggio nell'Emilia" = "Reggio Emilia") e accettando il contenimento
+    # nei due sensi (la regex cattura al più 2 parole: "San Giovanni [Rotondo]"). Un
+    # luogo diverso citato con "nato a …" è una discordanza (possibile omonimo).
+    luogo = _place(subject.get("luogo_nascita") or "")
     if luogo:
         for bp in ex["birthplaces"]:
-            b = " ".join(bp.upper().split())
-            if luogo in b or b in luogo:
+            b = _place(bp)
+            if not b:
+                continue
+            if mention.contains(b, luogo) or mention.contains(luogo, b):
                 confirm = True
                 findings.append(f"luogo di nascita «{bp}» confermato")
+            else:
+                conflict = True
+                findings.append(f"luogo di nascita «{bp}» discordante (atteso {subject.get('luogo_nascita')})")
 
     status = "discordante" if conflict else ("confermato" if confirm else "assente")
     return {"status": status, "findings": findings, "extracted": ex}
