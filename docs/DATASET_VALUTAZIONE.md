@@ -6,8 +6,13 @@ nella pagina **Alert**; l'export alimenta lo script di valutazione.
 
 ## Come si etichetta un caso
 
-Pagina **Alert** → espandi la riga → sezione **«Etichetta del caso — dataset di
-valutazione»**:
+Pagina **Alert** → clicca il caso: si apre la **scheda laterale** (larga quanto lo schermo,
+senza scroll orizzontale). Per ogni articolo trovi testata, titolo, estratto e link, con le
+due domande subito sotto; poi il giudizio sul caso. Il piè di pagina resta sempre visibile:
+**Salva**, oppure **Salva e successivo** per passare al caso seguente (pulsanti ‹ › in alto per
+spostarsi, Esc per chiudere; se ci sono modifiche non salvate viene chiesta conferma).
+L'**esito del sistema** (AMI, categorie, motivazione) è in una sezione chiusa: aprila dopo
+aver giudicato, per non farti influenzare.
 
 | Livello | Domanda | Valori |
 |---|---|---|
