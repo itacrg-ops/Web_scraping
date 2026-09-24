@@ -1,0 +1,17 @@
+# syntax=docker/dockerfile:1
+# Console in SVILUPPO (Vite dev server), usata da docker-compose.dev.yml.
+#
+# Il sorgente viene COPIATO nell'immagine. All'avvio si usa il sorgente montato da
+# ./admin-console (aggiornamento automatico delle modifiche) se il volume funziona;
+# se il volume arriva vuoto — cartella non condivisa con Docker Desktop, percorso
+# diverso — la console parte comunque dalla copia inclusa (vedi dev-start.sh).
+FROM node:20-alpine
+WORKDIR /opt/console
+COPY package.json ./
+RUN npm install --no-audit --no-fund
+COPY . .
+# Un checkout Windows (core.autocrlf) può dare fine riga CRLF: lo script non partirebbe.
+RUN sed -i 's/\r$//' /opt/console/dev-start.sh
+WORKDIR /app
+EXPOSE 5173
+CMD ["sh", "/opt/console/dev-start.sh"]

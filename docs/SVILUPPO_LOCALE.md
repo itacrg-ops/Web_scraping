@@ -311,16 +311,30 @@ Un driver dell'alert segnala quando una fonte è stata recuperata via headless.
 ## Troubleshooting
 
 **La console non riflette le modifiche al codice.**
-La `admin-console` in locale **non è un'immagine buildata**: gira come **Vite
-dev server** (`node:20-alpine`) con la sorgente montata come volume. Quindi
-`docker compose up --build` **non** la rigenera (ricostruisce solo i servizi
-Python). Se le modifiche non compaiono:
+In locale la `admin-console` gira come **Vite dev server** (`admin-console/Dockerfile.dev`):
+usa la sorgente montata da `./admin-console` (le modifiche si vedono subito) e, se il
+volume arriva vuoto, la **copia inclusa nell'immagine**. Se le modifiche non compaiono:
 1. Verifica di avere il codice aggiornato: `git log --oneline -1` nel repo.
-2. Ricrea il container della console:
+2. Guarda come è partita: `docker compose -f docker-compose.dev.yml logs admin-console | head`.
+   Se dice che il volume **arriva VUOTO**, sta usando la copia dell'immagine: ricostruiscila
+   dopo ogni `git pull` (sotto) oppure risolvi il volume (punto successivo).
+3. Ricostruisci e ricrea il container della console:
    ```bash
-   docker compose -f docker-compose.dev.yml up -d --force-recreate admin-console
+   docker compose -f docker-compose.dev.yml up -d --build --force-recreate admin-console
    ```
-3. **Hard refresh** del browser (Ctrl/Cmd+Shift+R).
+4. **Hard refresh** del browser (Ctrl/Cmd+Shift+R).
+
+**Volume della console vuoto** («il volume ./admin-console arriva VUOTO nel container»).
+Docker non vede la cartella del progetto: gli altri servizi funzionano perché sono
+immagini costruite (il contesto di build lo legge il client Docker), mentre il volume
+richiede che la cartella sia condivisa con Docker Desktop. Controlla:
+- di lanciare `docker compose` dalla **cartella del repository** (`ls admin-console/package.json`);
+- Docker Desktop → *Settings → Resources → File sharing*: la cartella (o il disco) del
+  progetto deve essere condivisa; con WSL 2, meglio tenere il repository nel file system
+  di WSL e lanciare `docker compose` da lì;
+- cartelle sincronizzate (OneDrive/iCloud) con file «solo online»: rendili disponibili offline.
+Poi `docker compose -f docker-compose.dev.yml up -d --force-recreate admin-console`: nel log
+deve comparire «sorgente montato».
 
 L'HMR su bind mount di Docker Desktop usa il **polling** (`vite.config.ts`,
 `server.watch.usePolling`): senza, le modifiche potrebbero non essere rilevate.
