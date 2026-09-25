@@ -179,7 +179,8 @@ fermava alla prima query con almeno un risultato: con «nome + 8 termini avversi
 motori web vogliono tutti presenti, spesso ne restava uno solo. Eccezione: persona con
 azienda/località (qui sotto), dove ci si allarga solo se non si trova nulla. Sotto i
 risultati la console mostra **cosa ha fatto ogni motore**: quanti risultati, quali query,
-errori e motori che non hanno risposto (es. «google cse: CAPTCHA»).
+errori e motori di SearXNG «senza risposta» (es. «bing news: pagina non leggibile»). Un
+motore senza risposta è normale se gli altri trovano risultati: non compare come avviso.
 
 **Qualificatori persona fisica (anti-omonimia).** Per una persona si possono
 indicare (opzionali) **Azienda** e **Località**: entrano nella query come
@@ -240,11 +241,15 @@ Provider (`SEARCH_PROVIDER` nel `.env`):
 - **`searxng`** (meta-search self-hosted, **keyless**): aggrega più motori. Cerca sia
   nel **web** (categoria `general`: Google tramite Custom Search, DuckDuckGo, Brave —
   trova anche articoli di anni fa, sentenze, provvedimenti) sia nelle **notizie**
-  (`news`: Google/Bing/DuckDuckGo/Brave News e le testate italiane ANSA e Il Post, che
-  cercano nel proprio archivio). Gira come servizio nel compose; la configurazione (API
-  JSON abilitata, motori, `search-gateway/searxng/settings.yml`) è **inclusa
-  nell'immagine** e letta da `SEARXNG_SETTINGS_PATH`, non montata: dopo una modifica al
-  file, `docker compose -f docker-compose.dev.yml up -d --build searxng`.
+  (`news`: Google/Bing/DuckDuckGo/Brave News e Il Post, che cerca nel proprio archivio;
+  esclusi startpage, che chiede il CAPTCHA, e ANSA, che risponde con errori HTTP). Gira
+  come servizio nel compose; la configurazione (API JSON abilitata, motori,
+  `search-gateway/searxng/settings.yml`) è **inclusa nell'immagine** e letta da
+  `SEARXNG_SETTINGS_PATH`, non montata: dopo una modifica al file,
+  `docker compose -f docker-compose.dev.yml up -d --build searxng`. La **versione** di
+  SearXNG è fissata (digest nel `Dockerfile`), quella su cui è verificata la
+  configurazione: con `latest` la build riusava un'immagine già scaricata, anche vecchia
+  di mesi, con motori rotti. Per aggiornarla si cambia il digest e si ricostruisce.
 - **Persone giuridiche con nomi comuni** («Vita Srl», «Nuova Vita S.p.A.»): la ricerca
   usa la denominazione con la forma giuridica (mai la sola parola «vita») e mette prima
   i risultati che la citano per intero; nell'articolo il nome conta solo se usato come
@@ -361,9 +366,12 @@ L'HMR su bind mount di Docker Desktop usa il **polling** (`vite.config.ts`,
 `server.watch.usePolling`): senza, le modifiche potrebbero non essere rilevate.
 
 **La ricerca trova meno articoli di Google.** Guarda sotto i risultati cosa ha fatto
-ogni motore. «Non hanno risposto: google cse: CAPTCHA/timeout» = il motore ha bloccato
-le richieste (troppe in poco tempo): riprova più tardi o aggiungi Brave
-(`SEARCH_PROVIDER=searxng,brave`, con `BRAVE_API_KEY`). Se un motore trova molti
+ogni motore. «Senza risposta: google cse: CAPTCHA/timeout» = il motore ha bloccato le
+richieste (troppe in poco tempo): riprova più tardi o aggiungi Brave
+(`SEARCH_PROVIDER=searxng,brave`, con `BRAVE_API_KEY`). «Pagina non leggibile» o «errore
+HTTP» sempre sullo stesso motore = il sito ha cambiato le sue pagine: serve una versione
+più recente di SearXNG (digest nel `Dockerfile`) o si esclude il motore
+(`use_default_settings.engines.remove` in `settings.yml`). Se un motore trova molti
 risultati ma in lista ne restano pochi, sono stati tolti i doppioni della stessa testata
 e i siti che non sono notizie (il numero dei «rimossi» è accanto al totale).
 

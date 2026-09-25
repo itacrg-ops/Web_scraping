@@ -1,7 +1,19 @@
 # SearXNG per il pilota adverse-media (provider "searxng").
 # Punto chiave: abilitare il formato **JSON** dell'API (di default disattivato),
 # così il search-gateway può consumare i risultati via /search?format=json.
-use_default_settings: true
+#
+# Motori: quelli di default della versione nel Dockerfile, meno quelli che bloccano le
+# richieste automatiche (solo errori e tempo perso), più Il Post (ricerca nel proprio
+# archivio, spento di default). Il search-gateway interroga le categorie "general" (web:
+# Google tramite Custom Search, DuckDuckGo, Brave) e "news" (Google News, Bing News,
+# DuckDuckGo News, Brave News, Il Post): i motori di sole notizie restituiscono
+# soprattutto articoli recenti. ANSA resta spento: la sua ricerca risponde con errori
+# HTTP alle richieste di SearXNG.
+use_default_settings:
+  engines:
+    remove:
+      - startpage        # CAPTCHA
+      - startpage news   # CAPTCHA
 
 server:
   # In locale va bene un segreto statico; in produzione usare un secret gestito.
@@ -17,16 +29,7 @@ search:
   # Lingua di default coerente col pilota.
   default_lang: "it"
 
-# Motori: si parte da quelli di default (use_default_settings) e si attivano le testate
-# italiane con ricerca nell'archivio, disattivate di default. Il search-gateway
-# interroga le categorie "general" (web: Google tramite Custom Search, DuckDuckGo,
-# Brave) e "news" (Google News, Bing News, DuckDuckGo News, Brave News, ANSA, Il Post):
-# i motori di sole notizie restituiscono soprattutto articoli recenti.
 engines:
-  - name: ansa
-    engine: ansa
-    shortcut: ans
-    disabled: false
   - name: il post
     engine: il_post
     shortcut: pst

@@ -357,7 +357,8 @@ async def _plain_ladder(subject: dict, mode: str, max_results: int,
                 break
             timeout = min(timeout, remaining)
         status, payload, unresponsive = await call(q, max_results, timeout)
-        down += [e for e in unresponsive if e not in down]
+        named = {d.split(":")[0] for d in down}
+        down += [e for e in unresponsive if e.split(":")[0] not in named]
         if status == "error":
             if not out:
                 return [], q, ProviderError(payload), {"queries": used + [q], "non_disponibili": down}
@@ -375,22 +376,38 @@ async def _plain_ladder(subject: dict, mode: str, max_results: int,
 
 
 # --- Provider SearXNG (meta-search self-hosted, keyless) -------------------
-def _engine_down(item) -> str:
-    """["google cse", "Suspended: timeout"] → "google cse: timeout"."""
+# Motivi con cui SearXNG segnala un motore che non ha risposto, in breve e in italiano.
+_DOWN_REASONS = (("captcha", "CAPTCHA"), ("too many", "troppe richieste"), ("429", "troppe richieste"),
+                 ("access denied", "accesso negato"), ("403", "accesso negato"),
+                 ("parsing", "pagina non leggibile"), ("http error", "errore HTTP"),
+                 ("timeout", "timeout"), ("ssl", "errore SSL"), ("crash", "errore interno"))
+
+
+def _engine_down(item) -> tuple[str, str]:
+    """["ansa", "Suspended: HTTP error"] → ("ansa", "errore HTTP")."""
     name, reason = (list(item) + ["", ""])[:2]
     low = str(reason).lower()
-    for key, short in (("captcha", "CAPTCHA"), ("too many", "troppe richieste"), ("429", "troppe richieste"),
-                       ("access denied", "accesso negato"), ("403", "accesso negato"),
-                       ("timeout", "timeout"), ("ssl", "errore SSL")):
+    for key, short in _DOWN_REASONS:
         if key in low:
-            return f"{name}: {short}"
-    return f"{name}: {str(reason)[:40]}" if reason else str(name)
+            return str(name), short
+    text = str(reason).removeprefix("Suspended:").strip()
+    return str(name), text[:40]
+
+
+def _engines_down(items) -> list[str]:
+    """Un motore una volta sola (SearXNG può ripeterlo: errore, poi «Suspended»)."""
+    out: dict[str, str] = {}
+    for it in items or []:
+        name, why = _engine_down(it)
+        out.setdefault(name, why)
+    return [f"{n}: {w}" if w else n for n, w in out.items()]
 
 
 async def _searxng_call(query_str: str, max_results: int,
                         timeout: float | None = None) -> tuple[str, object, list[str]]:
     """Una chiamata all'API JSON di SearXNG: ("ok", risultati, motori_giù) |
-    ("error", nota, []). Interroga web e news (`searxng_categories`)."""
+    ("error", nota, []). Interroga web e news (`searxng_categories`). `motori_giù`:
+    i motori interni di SearXNG che non hanno risposto (CAPTCHA, timeout…)."""
     params = {"q": query_str, "format": "json",
               "language": settings.searxng_language, "categories": settings.searxng_categories}
     try:
@@ -423,7 +440,7 @@ async def _searxng_call(query_str: str, max_results: int,
                            provider="searxng", score=a.get("score")))
         if len(out) >= max_results:
             break
-    down = [_engine_down(e) for e in (data.get("unresponsive_engines") or [])]
+    down = _engines_down(data.get("unresponsive_engines"))
     if down:
         logger.warning("SearXNG: motori non disponibili per query=%r: %s", query_str, down)
     return "ok", out, down
@@ -432,15 +449,17 @@ async def _searxng_call(query_str: str, max_results: int,
 async def _searxng(subject: dict, mode: str, max_results: int, lang: str,
                    timespan: str) -> tuple[list[dict], str, str | None, dict]:
     """Scala di query cumulativa come Brave (vedi `_plain_ladder`). SearXNG aggrega più
-    motori: niente chiave, niente rate-limit centralizzato. Nessun risultato mentre dei
-    motori non rispondevano non è «nessun articolo»: è una ricerca incompleta (errore)."""
+    motori: niente chiave, niente rate-limit centralizzato.
+
+    Un motore interno che non risponde è normale (CAPTCHA, pagina cambiata): se gli
+    altri trovano risultati resta solo nella diagnostica (`non_disponibili`), senza
+    avviso. Nessun risultato mentre dei motori non rispondevano invece non è «nessun
+    articolo»: è una ricerca incompleta (errore)."""
     results, query, note, info = await _plain_ladder(subject, mode, max_results, _searxng_call)
     down = info.get("non_disponibili") or []
     if not results and down and not isinstance(note, ProviderError):
         note = ProviderError("SearXNG: nessun risultato mentre alcuni motori non rispondevano ("
                              + "; ".join(down) + "): ricerca incompleta, riprova tra poco.")
-    elif down and not note:
-        note = "SearXNG: motori non disponibili: " + "; ".join(down)
     return results, query, note, info
 
 

@@ -101,9 +101,20 @@ def test_no_results_while_engines_down_is_an_error() -> None:
     assert d["engines"][0]["non_disponibili"] == ["google cse: timeout", "duckduckgo: CAPTCHA"]
 
 
-def test_engines_down_with_results_is_only_a_note() -> None:
+def test_engines_down_with_results_is_not_a_warning() -> None:
+    # normale: un motore interno blocca o cambia pagina, gli altri rispondono
     d, _ = _run(ONLY, lambda q: ("ok", [_res(f"https://www.t{hash(q) % 97}.it/x")], ["google cse: timeout"]))
-    assert d["count"] >= 1 and d["error"] is None and "google cse: timeout" in d["note"]
+    assert d["count"] >= 1 and d["error"] is None and d["note"] is None
+    assert d["engines"][0]["non_disponibili"] == ["google cse: timeout"]
+
+
+def test_engines_down_are_translated_and_not_repeated() -> None:
+    # caso reale: ANSA segnalato due volte (errore, poi «Suspended»)
+    reported = [["ansa", "HTTP error"], ["bing news", "parsing error"], ["startpage", "CAPTCHA"],
+                ["startpage news", "CAPTCHA"], ["ansa", "Suspended: HTTP error"], ["reuters", "Suspended: boh"]]
+    assert providers._engines_down(reported) == [
+        "ansa: errore HTTP", "bing news: pagina non leggibile", "startpage: CAPTCHA", "startpage news: CAPTCHA",
+        "reuters: boh"]
 
 
 def test_time_budget_stops_the_ladder() -> None:

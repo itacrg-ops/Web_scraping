@@ -505,7 +505,13 @@ function EngineReports({ engines }: { engines: SearchEngineReport[] }) {
             <> · {e.queries.length === 1 ? "query" : `${e.queries.length} query`}:{" "}
               {e.queries.map((q, i) => <code key={i} style={{ marginRight: 6 }}>{q}</code>)}</>
           )}
-          {!!e.non_disponibili?.length && <> · non hanno risposto: {e.non_disponibili.join(", ")}</>}
+          {!!e.non_disponibili?.length && (
+            <Box component="span" title={"Capita: un motore può bloccare le richieste automatiche (CAPTCHA) o "
+              + "cambiare le sue pagine. La ricerca usa gli altri; se nessuno risponde risulta incompleta."}>
+              {" "}· {e.count > 0 ? "senza risposta (usati gli altri motori)" : "senza risposta"}:{" "}
+              {e.non_disponibili.join(", ")}
+            </Box>
+          )}
         </Typography>
       ))}
     </Box>

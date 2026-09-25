@@ -28,13 +28,20 @@ def test_settings_read_from_a_path_outside_the_volume() -> None:
     assert not copy.group(1).startswith("/etc/searxng"), copy.group(1)
 
 
-def test_json_format_and_italian_news_engines_enabled() -> None:
+def test_version_is_pinned() -> None:
+    # con :latest la build riusava un'immagine vecchia già scaricata (motori rotti)
+    assert re.search(r"^FROM\s+searxng/searxng@sha256:[0-9a-f]{64}\s*$", _read("Dockerfile"), re.M)
+
+
+def test_json_format_and_engines() -> None:
     settings = _read("settings.yml")
     formats = re.search(r"^\s*formats:\s*\n((?:\s+-\s*\w+\s*\n)+)", settings, re.M)
     assert formats and re.search(r"-\s*json\b", formats.group(1)), settings
-    for engine in ("ansa", "il post"):
-        block = re.search(rf"- name: {engine}\n((?:\s{{4}}.*\n)+)", settings)
-        assert block and "disabled: false" in block.group(1), engine
+    block = re.search(r"- name: il post\n((?:\s{4}.*\n)+)", settings)
+    assert block and "disabled: false" in block.group(1)
+    assert "- name: ansa" not in settings                    # errori HTTP: resta spento
+    remove = re.search(r"remove:\s*\n((?:\s+-\s*[^\n]+\n)+)", settings)
+    assert remove and "startpage" in remove.group(1)          # CAPTCHA
 
 
 if __name__ == "__main__":
