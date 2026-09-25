@@ -536,7 +536,8 @@ export default function CaseLabelPanel({ a, onSaved, onDirtyChange, onNext, onCl
         {msg && <MuiAlert severity={msg.ok ? "success" : "error"} sx={{ mb: 1 }}>{msg.text}</MuiAlert>}
         {confirmed && (
           <MuiAlert severity="success" sx={{ mb: 1 }} onClose={() => setConfirmed(null)}>
-            Nel registro di «{confirmed.subject.denominazione}»: {confirmed.confermati === 1 ? "1 articolo confermato"
+            {confirmed.nuovo_soggetto ? "Soggetto inserito nel registro" : "Soggetto già inserito nel registro"}:
+            {" "}«{confirmed.subject.denominazione}» — {confirmed.confermati === 1 ? "1 articolo confermato"
               : `${confirmed.confermati} articoli confermati`}
             {confirmed.alias_aggiunto && `; «${confirmed.alias_aggiunto}» registrato come sua variante`}.
           </MuiAlert>

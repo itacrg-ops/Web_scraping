@@ -8,6 +8,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import type { Alert, CaseLabelSummary } from "../api";
 import CaseLabelPanel from "./CaseLabelPanel";
+import RoleChips from "./RoleChips";
 
 type Props = {
   alerts: Alert[];
@@ -71,6 +72,7 @@ export default function CaseDrawer({ alerts, index, onNavigate, onSaved, onDelet
             <Typography variant="caption" color="text.secondary" component="div" sx={{ wordBreak: "break-word" }}>
               CF/P.IVA {a.cf_piva ?? "—"} · CUP {a.cup.length ? a.cup.join(", ") : "—"}
             </Typography>
+            <RoleChips roles={a.roles} pep={a.pep} />
           </Box>
           <CaseLabelPanel key={a.id} a={a} onSaved={onSaved} onDirtyChange={onDirtyChange}
             onNext={last ? undefined : () => onNavigate(index + 1)} onClose={() => onNavigate(null)}

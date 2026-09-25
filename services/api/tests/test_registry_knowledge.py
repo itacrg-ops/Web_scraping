@@ -128,10 +128,10 @@ async def test_related_cases_and_prior_judgments(client) -> None:
 
 # --- (c) nomi simili -------------------------------------------------------------
 async def test_similar_names_and_decisions(client) -> None:
-    surname = f"Stroppa{TAG}"
+    surname = f"Bertolla{TAG}"   # nome proprio del test: gli altri test registrano "Stroppa…"
     subj = (await client.post("/api/subjects", json={
         "tipo_soggetto": "persona_fisica", "cognome": surname, "nome": "Andrea"})).json()
-    q = {"tipo_soggetto": "persona_fisica", "cognome": surname[:6] + surname[7:], "nome": "Andrea"}  # "Stropp…"
+    q = {"tipo_soggetto": "persona_fisica", "cognome": surname[:6] + surname[7:], "nome": "Andrea"}  # "Bertola…"
     sim = (await client.get("/api/subjects/similar", params=q)).json()
     hit = next(c for c in sim["simili"] if c["subject_id"] == subj["id"])
     assert hit["fonte"] == "registro" and hit["score"] >= 0.9 and sim["registro_esatto"] is None
@@ -210,6 +210,96 @@ async def test_confirm_articles_into_registry(client) -> None:
     assert next(c for c in sim["simili"] if c["subject_id"] == sid)["alert"] == 1
     assert rel["articoli"][a["evidence"][1]["id"]]["pertinenza"] == "omonimo"
     assert {x.action for x in await _audit(sid)} >= {"subject.create", "subject.confirm_articles"}
+
+
+# --- soggetto già inserito, PEP e ruoli dagli articoli ------------------------------
+async def test_already_registered_pep_and_roles(client) -> None:
+    name = f"Verdi{TAG} Anna"
+    first = await client.post("/api/subjects", json={"tipo_soggetto": "persona_fisica", "denominazione": name,
+                                                     "cf_piva": "VRDNNA85M41H501K"})
+    assert first.status_code == 201, first.text
+    sid = first.json()["id"]
+    for dup in ({"denominazione": name}, {"denominazione": f"Anna Verdi{TAG}"},            # stesso nome
+                {"denominazione": "Qualcun Altro", "cf_piva": "vrdnna85m41h501k"}):         # stesso CF
+        r = await client.post("/api/subjects", json={"tipo_soggetto": "persona_fisica", **dup})
+        assert r.status_code == 409 and "Soggetto già inserito nel registro" in r.text, r.text
+    homonym = await client.post("/api/subjects", json={"tipo_soggetto": "persona_fisica", "denominazione": name,
+                                                       "cf_piva": "VRDNNA70A41F205X"})
+    assert homonym.status_code == 201, homonym.text                                         # omonimo: CF diverso
+    hid = homonym.json()["id"]
+
+    # /similar con il CF: «già inserito» con la stessa regola; lo stesso nome con altro CF è un omonimo
+    async def similar(denominazione, cf):
+        r = await client.get("/api/subjects/similar", params={"tipo_soggetto": "persona_fisica",
+                                                               "denominazione": denominazione, "cf_piva": cf})
+        body = r.json()
+        return (body["registro_esatto"] or {}).get("subject_id"), {c["subject_id"] for c in body["simili"]
+                                                                      if c["score"] == 1.0}
+    assert await similar("Qualcun Altro", "vrdnna85m41h501k") == (sid, set())
+    assert await similar(name, "VRDNNA70A41F205X") == (hid, {sid})
+    assert await similar(name, "VRDNNA90A41F205Y") == (None, {sid, hid})
+
+    # anche la data di nascita distingue gli omonimi (registro senza CF)
+    born = f"Gialli{TAG} Rita"
+    r = await client.post("/api/subjects", json={"tipo_soggetto": "persona_fisica", "denominazione": born,
+                                                 "data_nascita": "1970-01-01"})
+    assert r.status_code == 201, r.text
+    for dob, status in (("1970-01-01", 409), (None, 409), ("1981-02-02", 201)):
+        r = await client.post("/api/subjects", json={"tipo_soggetto": "persona_fisica", "denominazione": born,
+                                                     **({"data_nascita": dob} if dob else {})})
+        assert r.status_code == status, (dob, r.text)
+    # con due omonimi a registro: già inserito solo se non distinto da nessuno dei due
+    r = await client.post("/api/subjects", json={"tipo_soggetto": "persona_fisica", "denominazione": born,
+                                                 "data_nascita": "1981-02-02"})
+    assert r.status_code == 409, r.text
+
+    # alert di una persona con ruoli e PEP (dal worker) → scheda ed export
+    a = await _alert(client, name, ["https://p.it/1"], tipo="persona_fisica", cf_piva="VRDNNA85M41H501K",
+                     roles=[{"ruolo": "sindaco di Latina", "tipo": "sindaco", "categoria": "pep",
+                             "pep": "verifica", "ex": False, "articoli": 1}], pep=True)
+    got = (await client.get(f"/api/alerts/{a['id']}")).json()
+    assert got["pep"] is True and got["roles"][0]["ruolo"] == "sindaco di Latina"
+
+    # conferma nel registro: soggetto già inserito, ruoli e PEP confermati
+    await client.put(f"/api/alerts/{a['id']}/label", json=_label(a, [("si", "si")]))
+    r = await client.post(f"/api/alerts/{a['id']}/confirm", json={
+        "subject_id": sid, "cariche": ["sindaco di Latina", "Sindaco di  Latina", "imprenditrice"], "pep": True})
+    out = r.json()
+    assert r.status_code == 200 and out["nuovo_soggetto"] is False, r.text
+    assert out["subject"]["pep"] is True and out["subject"]["cariche"] == ["sindaco di Latina", "imprenditrice"]
+    new = await client.post(f"/api/alerts/{a['id']}/confirm", json={
+        "nuovo": {"tipo_soggetto": "persona_fisica", "denominazione": name, "cf_piva": "VRDNNA85M41H501K"}})
+    assert new.status_code == 409 and "Soggetto già inserito" in new.text
+    # modificabili dalla pagina Soggetti
+    r = await client.patch(f"/api/subjects/{sid}", json={"pep": False, "cariche": ["assessora"]})
+    assert r.json()["pep"] is False and r.json()["cariche"] == ["assessora"]
+
+
+async def test_csv_import_pep_roles_without_duplicates(client) -> None:
+    csv = ("tipo_soggetto,denominazione,nome,cognome,cf_piva,pep,cariche\n"
+           f"persona_fisica,,Luca,Neri{TAG},,si,sindaco di Latina;AD di Acme\n"
+           f"persona_fisica,,Luca,Neri{TAG},,,dirigente\n")      # stesso nome senza CF: aggiorna
+    r = (await client.post("/api/subjects/import", json={"csv": csv})).json()
+    assert (r["created"], r["updated"], r["errors"]) == (1, 1, []), r
+    subj = next(s for s in (await client.get("/api/subjects")).json() if s["denominazione"] == f"Neri{TAG} Luca")
+    assert subj["pep"] is True and subj["cariche"] == ["sindaco di Latina", "AD di Acme", "dirigente"]
+
+    # una riga scritta con una variante confermata aggiorna il soggetto senza rinominarlo
+    await client.post(f"/api/subjects/{subj['id']}/names", json={"name": f"Nerri{TAG} Luca", "decision": "stesso"})
+    csv = "tipo_soggetto,denominazione,nome,cognome,cf_piva,ruolo\n" + f"persona_fisica,,Luca,Nerri{TAG},,RUP\n"
+    r = (await client.post("/api/subjects/import", json={"csv": csv})).json()
+    assert (r["created"], r["updated"]) == (0, 1), r
+    subj = next(s for s in (await client.get("/api/subjects")).json() if s["id"] == subj["id"])
+    assert subj["denominazione"] == f"Neri{TAG} Luca" and subj["ruolo"] == "RUP", subj
+
+    # celle vuote: non cancellano i dati; il CF aggiunto vale per le righe successive
+    csv = ("tipo_soggetto,denominazione,nome,cognome,cf_piva,ruolo,cup\n"
+           f"persona_fisica,,Luca,Neri{TAG},NRELCU80A01H501Z,,\n"
+           f"persona_fisica,,Luchino,Neri{TAG},NRELCU80A01H501Z,,E51B21000000001\n")
+    r = (await client.post("/api/subjects/import", json={"csv": csv})).json()
+    assert (r["created"], r["updated"]) == (0, 2), r
+    subj = next(s for s in (await client.get("/api/subjects")).json() if s["id"] == subj["id"])
+    assert subj["ruolo"] == "RUP" and subj["cf_piva"] == "NRELCU80A01H501Z" and subj["cup"] == ["E51B21000000001"]
 
 
 async def _cleanup() -> None:

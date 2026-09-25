@@ -15,6 +15,16 @@ export type NameChoice =
   | { action: "prosegui" }                        // continua con il nome inserito
   | { action: "annulla" };
 
+// Un omonimo si distingue con un identificativo diverso da quello del soggetto già
+// inserito: CF/P.IVA o, per una persona, data di nascita.
+function homonymHint(c: SimilarCandidate) {
+  const pf = c.tipo_soggetto === "persona_fisica";
+  const ids = pf ? "il codice fiscale o la data di nascita" : "il CF/P.IVA";
+  return c.cf_piva || (pf && c.data_nascita)
+    ? `Se è un omonimo, indica ${ids} per distinguerlo.`
+    : `Se è un omonimo, aggiungi prima ${ids} a «${c.denominazione}», poi indica i suoi.`;
+}
+
 type Props = {
   typed: string;
   data: SimilarOut | null;              // null = chiuso
@@ -24,11 +34,15 @@ type Props = {
 
 export default function SimilarNamesDialog({ typed, data, mode, onChoice }: Props) {
   const exact = data?.registro_esatto;
+  // Aggiunta al registro di un soggetto che c'è già (stesso nome o CF/P.IVA): l'API la
+  // rifiuterebbe, quindi niente «Aggiungi comunque».
+  const already = mode === "registro" && !!exact;
+  const simili = already ? [] : data?.simili ?? [];
   return (
     <Dialog open={!!data} onClose={() => onChoice({ action: "annulla" })} maxWidth="sm" fullWidth
       aria-labelledby="sim-title">
       <DialogTitle id="sim-title">
-        {data?.simili.length ? "Nome simile a soggetti già noti" : "Soggetto già presente"}
+        {already ? "Soggetto già inserito" : simili.length ? "Nome simile a soggetti già noti" : "Soggetto già presente"}
       </DialogTitle>
       <DialogContent>
         {mode === "screening" && !!data?.alert_esistenti && (
@@ -37,18 +51,21 @@ export default function SimilarNamesDialog({ typed, data, mode, onChoice }: Prop
             nuovo screening crea un altro caso dello stesso soggetto (duplicato nel dataset).
           </MuiAlert>
         )}
-        {mode === "registro" && exact && (
+        {already && exact && (
           <MuiAlert severity="warning" sx={{ mb: 1.5 }}>
-            «{exact.denominazione}» è già nel registro{exact.denominazione !== typed && " (stesso soggetto)"}.
+            Soggetto già inserito nel registro: «{exact.denominazione}»
+            {exact.cf_piva && ` (CF/P.IVA ${exact.cf_piva})`}
+            {exact.denominazione !== typed && `: «${typed}» è lo stesso soggetto`}. Per cambiarne i dati usa
+            la modifica nella tabella. {homonymHint(exact)}
           </MuiAlert>
         )}
-        {!!data?.simili.length && (
+        {simili.length > 0 && (
           <Typography variant="body2" gutterBottom>
-            «<strong>{typed}</strong>» è simile a {data.simili.length === 1 ? "questo soggetto" : "questi soggetti"}.
+            «<strong>{typed}</strong>» è simile a {simili.length === 1 ? "questo soggetto" : "questi soggetti"}.
             È la stessa persona o impresa (il nome ha un refuso) o un'altra?
           </Typography>
         )}
-        {data?.simili.map((c) => (
+        {simili.map((c) => (
           <Paper key={`${c.fonte}-${c.subject_id ?? c.denominazione}`} variant="outlined" sx={{ p: 1.5, mt: 1 }}>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
               <Typography variant="body2"><strong>{c.denominazione}</strong></Typography>
@@ -63,32 +80,42 @@ export default function SimilarNamesDialog({ typed, data, mode, onChoice }: Prop
                   c.luogo_nascita].filter(Boolean).join(" · ")}
               </Typography>
             )}
-            <Box sx={{ display: "flex", gap: 1, mt: 1, flexWrap: "wrap" }}>
-              {mode === "registro" && c.fonte === "registro" ? (
-                <Button size="small" variant="outlined" onClick={() => onChoice({ action: "variante", c })}>
-                  È lo stesso: registra «{typed}» come sua variante
-                </Button>
-              ) : (
-                <Button size="small" variant="outlined" onClick={() => onChoice({ action: "usa", c })}>
-                  È lo stesso: usa «{c.denominazione}»
-                </Button>
-              )}
-              {mode === "screening" && c.fonte === "registro" && (
-                <Button size="small" onClick={() => onChoice({ action: "correggi", c })}
-                  title={`Il registro ha il nome sbagliato: diventa «${typed}» (il vecchio nome resta come variante)`}>
-                  È lo stesso: correggi il registro
-                </Button>
-              )}
-              <Button size="small" onClick={() => onChoice({ action: "diverso", c })}>È un altro soggetto</Button>
-            </Box>
+            {c.score >= 1 ? (
+              // stesso nome ma identificativo diverso (solo nel registro): un omonimo
+              <Typography variant="caption" color="warning.main" component="div" sx={{ mt: 0.5 }}>
+                Stesso nome, {c.tipo_soggetto === "persona_fisica" ? "codice fiscale o data di nascita diversi"
+                  : "CF/P.IVA diverso"}: è un omonimo? Se sì, aggiungilo.
+              </Typography>
+            ) : (
+              <Box sx={{ display: "flex", gap: 1, mt: 1, flexWrap: "wrap" }}>
+                {mode === "registro" && c.fonte === "registro" ? (
+                  <Button size="small" variant="outlined" onClick={() => onChoice({ action: "variante", c })}>
+                    È lo stesso: registra «{typed}» come sua variante
+                  </Button>
+                ) : (
+                  <Button size="small" variant="outlined" onClick={() => onChoice({ action: "usa", c })}>
+                    È lo stesso: usa «{c.denominazione}»
+                  </Button>
+                )}
+                {mode === "screening" && c.fonte === "registro" && (
+                  <Button size="small" onClick={() => onChoice({ action: "correggi", c })}
+                    title={`Il registro ha il nome sbagliato: diventa «${typed}» (il vecchio nome resta come variante)`}>
+                    È lo stesso: correggi il registro
+                  </Button>
+                )}
+                <Button size="small" onClick={() => onChoice({ action: "diverso", c })}>È un altro soggetto</Button>
+              </Box>
+            )}
           </Paper>
         ))}
       </DialogContent>
       <DialogActions>
-        <Button onClick={() => onChoice({ action: "annulla" })}>Annulla</Button>
-        <Button variant="contained" onClick={() => onChoice({ action: "prosegui" })}>
-          {mode === "registro" ? "Aggiungi comunque" : `Prosegui con «${typed}»`}
-        </Button>
+        <Button onClick={() => onChoice({ action: "annulla" })}>{already ? "Chiudi" : "Annulla"}</Button>
+        {!already && (
+          <Button variant="contained" onClick={() => onChoice({ action: "prosegui" })}>
+            {mode === "registro" ? "Aggiungi comunque" : `Prosegui con «${typed}»`}
+          </Button>
+        )}
       </DialogActions>
     </Dialog>
   );

@@ -32,7 +32,14 @@ from app.models import Screening as ScreeningModel
 from app.models import Subject as SubjectModel
 from app.models import SubjectArticle, SubjectName
 from app.names import subject_key
-from app.registry_lookup import confirmed_counts, same_subject, subject_by_name, subject_for_alert, subject_out
+from app.registry_lookup import (
+    confirmed_counts,
+    find_duplicate,
+    merge_roles,
+    same_subject,
+    subject_for_alert,
+    subject_out,
+)
 from app.schemas import (
     Alert,
     AlertCreate,
@@ -262,17 +269,22 @@ async def confirm_in_registry(alert_id: str, payload: ConfirmIn, user: User = De
             raise HTTPException(status_code=404, detail="soggetto del registro non trovato")
     else:
         new = payload.nuovo
-        existing = await subject_by_name(session, new.denominazione, new.tipo_soggetto)
+        existing = await find_duplicate(session, new.tipo_soggetto, new.denominazione, new.cf_piva,
+                                        new.data_nascita)
         if existing is not None:
-            raise HTTPException(status_code=409, detail=f"«{existing[0].denominazione}» è già nel registro: "
-                                                        "sceglilo invece di crearne uno nuovo")
+            raise HTTPException(status_code=409, detail=f"Soggetto già inserito nel registro: "
+                                                        f"«{existing.denominazione}». Conferma su quel soggetto.")
         subj = SubjectModel(tipo_soggetto=new.tipo_soggetto, denominazione=new.denominazione.strip(),
                             cf_piva=new.cf_piva or None, data_nascita=new.data_nascita or None,
                             luogo_nascita=new.luogo_nascita or None, cup=new.cup, ruolo=new.ruolo or None,
-                            attivo=new.attivo, names=[])
+                            attivo=new.attivo, pep=new.pep, cariche=merge_roles([], new.cariche), names=[])
         session.add(subj)
         await session.flush()
         audit.record(session, user, "subject.create", "subject", subj.id, da_alert=alert.id)
+    # ruoli dagli articoli e flag PEP confermati dal revisore
+    subj.cariche = merge_roles(subj.cariche, payload.cariche)
+    if payload.pep:
+        subj.pep = True
 
     existing_articles = {a.url: a for a in (await session.execute(
         select(SubjectArticle).where(SubjectArticle.subject_id == subj.id))).scalars().all()}
@@ -297,9 +309,10 @@ async def confirm_in_registry(alert_id: str, payload: ConfirmIn, user: User = De
         alias = alert.subject
     saltati = len(alert.evidence) - len(certain)
     audit.record(session, user, "subject.confirm_articles", "subject", subj.id, alert_id=alert.id,
-                 articoli=len(certain), saltati=saltati, alias=alias)
+                 articoli=len(certain), saltati=saltati, alias=alias, cariche=len(payload.cariche),
+                 pep=bool(payload.pep))
     await session.commit()
     counts = await confirmed_counts(session, [subj.id])
-    return ConfirmOut(subject=subject_out(subj, counts.get(subj.id, 0)), confermati=len(certain),
-                      saltati=saltati, alias_aggiunto=alias)
+    return ConfirmOut(subject=subject_out(subj, counts.get(subj.id, 0)), nuovo_soggetto=not payload.subject_id,
+                      confermati=len(certain), saltati=saltati, alias_aggiunto=alias)
 

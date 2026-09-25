@@ -227,7 +227,13 @@ Provider (`SEARCH_PROVIDER` nel `.env`):
   docker compose -f docker-compose.dev.yml up -d --build search-gateway
   ```
 - **`searxng`** (meta-search self-hosted, **keyless**): aggrega più motori. Gira
-  come servizio nel compose (API JSON abilitata in `search-gateway/searxng/settings.yml`).
+  come servizio nel compose; la configurazione (API JSON abilitata,
+  `search-gateway/searxng/settings.yml`) è **inclusa nell'immagine**, non montata: dopo
+  una modifica al file, `docker compose -f docker-compose.dev.yml up -d --build searxng`.
+- **Persone giuridiche con nomi comuni** («Vita Srl», «Nuova Vita S.p.A.»): la ricerca
+  usa la denominazione con la forma giuridica (mai la sola parola «vita») e mette prima
+  i risultati che la citano per intero; nell'articolo il nome conta solo se usato come
+  nome proprio o in contesto societario («la Vita Srl», «la società Vita»).
 - **Multi-provider (B8)**: metti una **lista** in `SEARCH_PROVIDER`
   (es. `searxng,gdelt,brave`) → **fan-out parallelo** con timeout per provider,
   **merge + dedup per URL** e **boost di corroborazione** (un URL trovato da più
@@ -342,6 +348,17 @@ L'HMR su bind mount di Docker Desktop usa il **polling** (`vite.config.ts`,
 **Il back-end mostra codice vecchio dopo un `git pull`.** I servizi Python sono
 immagini buildate: dopo un pull rigenera con `--build`
 (`docker compose -f docker-compose.dev.yml up --build`).
+
+**«searxng: SearXNG ha risposto 403»** nella pagina Screening. SearXNG sta usando la sua
+configurazione di default, che non abilita il formato JSON: succedeva quando il file
+`settings.yml` era montato come volume e il volume arrivava vuoto (come per la console).
+Ora la configurazione è nell'immagine: ricostruisci il servizio.
+```bash
+docker compose -f docker-compose.dev.yml up -d --build searxng
+curl -s "http://localhost:8888/search?q=test&format=json" | head -c 200   # JSON, non 403
+```
+Un **429** invece è il limite di richieste dei motori a monte: riprova più tardi o
+aggiungi un altro provider (`SEARCH_PROVIDER=searxng,gdelt`).
 
 ## Promozione in produzione
 Stesse immagini, su **Azure/AKS** via Helm (§11.1): store gestiti (Azure

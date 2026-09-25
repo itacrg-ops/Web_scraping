@@ -22,6 +22,45 @@ Se il soggetto ha già degli alert, la console lo dice prima di crearne un altro
 Lo stesso controllo vale quando si **aggiunge un soggetto** al registro: se esiste già con un
 nome simile, si può registrare il nome come sua variante invece di creare un doppione.
 
+## Soggetto già inserito
+
+Un soggetto è **già inserito** nel registro se ha lo stesso **CF/P.IVA** (anche con un nome
+scritto in altro modo) oppure lo stesso **nome** o una sua variante confermata — a meno che
+un identificativo presente su entrambi sia diverso (CF/P.IVA o, per una persona, data di
+nascita): è un **omonimo** e si registra a parte.
+
+- **Aggiunta dalla pagina Soggetti**: la console mostra «Soggetto già inserito nel registro:
+  «…»» e non crea il doppione (per cambiarne i dati si usa la modifica nella tabella). Con
+  lo stesso nome e un CF o una data di nascita diversi propone l'omonimo con «Aggiungi
+  comunque».
+- **Conferma dalla scheda del caso**: se il soggetto è già nel registro il dialogo lo dice
+  e, dopo la conferma, il messaggio è «Soggetto già inserito nel registro: «…» — N articoli
+  confermati» (per un soggetto nuovo: «Soggetto inserito nel registro»). Se si sceglie di
+  aggiungerlo ma c'è già, la console passa al soggetto esistente.
+- **Import CSV**: una riga di un soggetto già inserito lo **aggiorna** (anche senza CF, per
+  nome) e le celle vuote non cancellano i dati presenti; una riga scritta con una variante
+  confermata non lo rinomina.
+
+L'API applica la stessa regola: `409` «Soggetto già inserito nel registro: «…»».
+
+## Ruoli negli articoli e PEP
+
+Per una persona fisica il worker legge il **ruolo scritto accanto al nome** negli articoli
+(«il sindaco di Latina Mario Rossi», «Mario Rossi, AD di Acme») e segnala una possibile
+**PEP** (persona politicamente esposta, D.Lgs. 231/2007) se la carica è nell'elenco di
+legge — dettagli in `docs/ARCHITETTURA.md` §7. Nella console:
+
+- **Alert**: chip **PEP** accanto al nome; la scheda del caso mostra i ruoli trovati;
+- **Screening**: al termine, l'esito con i ruoli e il flag PEP (e «Apri il caso»);
+- **Conferma nel registro**: i ruoli sono proposti (spuntati) e diventano le **cariche**
+  del soggetto; il flag **PEP** è proposto per una carica certa e in corso, e va spuntato
+  a mano quando dipende da dati da verificare (sindaco: capoluogo o almeno 15.000
+  abitanti; carica cessata: vale un anno). Una conferma successiva non toglie il flag;
+- **Soggetti**: chip PEP e colonna «Ruolo · cariche»; entrambi modificabili, anche
+  nell'aggiunta. Nel CSV: colonne `pep` (`si`/vuoto) e `cariche` (separate da `;`).
+
+Il flag PEP non cambia l'AMI: è un'informazione per l'analista e per l'adeguata verifica.
+
 ## Nome con refuso scoperto dopo lo screening
 
 Se il nome esatto non compare in nessun articolo ma compare un nome molto simile
@@ -67,12 +106,12 @@ notizie. I dettagli contengono identificativi e motivi, non i dati del soggetto.
 
 | Metodo | Percorso | Note |
 |---|---|---|
-| GET | `/api/subjects/similar` | nomi simili nel registro e tra gli screening; alert già presenti |
+| GET | `/api/subjects/similar` | nomi simili nel registro e tra gli screening; alert già presenti. Con `cf_piva` e `data_nascita`, `registro_esatto` è il soggetto già inserito (stessa regola del 409) |
 | POST | `/api/subjects/{id}/names` | decisione su un nome: `stesso` (variante) o `diverso` |
 | DELETE | `/api/subjects/{id}/names/{name_id}` | annulla una decisione |
 | GET | `/api/subjects/{id}/articles` | notizie confermate |
 | DELETE | `/api/subjects/{id}/articles/{article_id}` | rimuove una conferma |
-| POST | `/api/alerts/{id}/confirm` | conferma gli articoli del caso nel registro |
+| POST | `/api/alerts/{id}/confirm` | conferma gli articoli del caso nel registro; `cariche` e `pep` aggiornano il soggetto; `nuovo_soggetto` dice se è stato creato |
 | POST | `/api/alerts/delete` | elimina alert duplicati/errati (ruoli `ALERT_DELETE_ROLES`) |
 
 `GET /api/subjects/registry` (interno, per l'Entity Resolution) include `alias` e `distinti`.

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import {
-  Alert as MuiAlert, Box, Button, Chip, IconButton, Link, Paper, Stack, Switch, Table, TableBody,
-  TableCell, TableContainer, TableHead, TableRow, TextField, ToggleButton,
+  Alert as MuiAlert, Box, Button, Checkbox, Chip, FormControlLabel, IconButton, Link, Paper, Stack, Switch,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, ToggleButton,
   ToggleButtonGroup, Typography,
 } from "@mui/material";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
@@ -16,6 +16,7 @@ import {
   type SimilarOut, type Subject, type SubjectArticle, type SubjectImportResult, type TipoSoggetto,
 } from "../api";
 import { checkCf } from "../codiceFiscale";
+import { PepChip } from "../components/RoleChips";
 import SimilarNamesDialog, { type NameChoice } from "../components/SimilarNamesDialog";
 import { splitPerson } from "../personName";
 
@@ -59,14 +60,20 @@ function ConfirmedArticles({ subject, onChanged }: { subject: Subject; onChanged
   );
 }
 
+// pep: si/no; cariche: ruoli negli articoli separati da «;» (come i CUP)
 const CSV_TEMPLATE =
-  "tipo_soggetto,denominazione,nome,cognome,cf_piva,data_nascita,luogo_nascita,cup,ruolo\n" +
-  "persona_giuridica,Italware S.r.l.,,,12345670159,,,E51B21000000001;B22C21000000002,beneficiario\n" +
-  "persona_fisica,,Anna,Verdi,VRDNNA85M41H501K,1985-08-01,Roma,,RUP\n";
+  "tipo_soggetto,denominazione,nome,cognome,cf_piva,data_nascita,luogo_nascita,cup,ruolo,pep,cariche\n" +
+  "persona_giuridica,Italware S.r.l.,,,12345670159,,,E51B21000000001;B22C21000000002,beneficiario,,\n" +
+  "persona_fisica,,Anna,Verdi,VRDNNA85M41H501K,1985-08-01,Roma,,RUP,si,sindaco di Bari;AD di Acme S.p.A.\n";
+
+// Cariche (ruoli negli articoli) scritte in un campo di testo, separate da «;».
+const splitRoles = (text: string) => text.split(";").map((c) => c.trim()).filter(Boolean);
+// Messaggio dell'API senza il codice HTTP («409: Soggetto già inserito…»).
+const apiMessage = (e: unknown) => (e instanceof Error ? e.message : String(e)).replace(/^\d{3}: /, "");
 
 interface EditForm {
   denominazione: string; cf_piva: string; data_nascita: string;
-  cup: string; ruolo: string; attivo: boolean;
+  cup: string; ruolo: string; attivo: boolean; pep: boolean; cariche: string;
 }
 
 export default function Soggetti() {
@@ -84,6 +91,8 @@ export default function Soggetti() {
   const [cfPiva, setCfPiva] = useState("");
   const [cup, setCup] = useState("");
   const [ruolo, setRuolo] = useState("");
+  const [cariche, setCariche] = useState("");
+  const [pep, setPep] = useState(false);
 
   // modifica in linea
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -115,7 +124,9 @@ export default function Soggetti() {
     let data: SimilarOut;
     try {
       data = await similarSubjects({ tipo_soggetto: tipo, denominazione: isPerson ? undefined : denominazione,
-                                     cognome: isPerson ? cognome : undefined, nome: isPerson ? nome : undefined });
+                                     cognome: isPerson ? cognome : undefined, nome: isPerson ? nome : undefined,
+                                     cf_piva: cfPiva.trim() || undefined,
+                                     data_nascita: isPerson && dataNascita ? dataNascita : undefined });
     } catch {
       return true;
     }
@@ -162,11 +173,14 @@ export default function Soggetti() {
         cf_piva: cfPiva || undefined,
         cup: cup ? cup.split(",").map((c) => c.trim()).filter(Boolean) : [],
         ruolo: ruolo || undefined,
+        pep: isPerson ? pep : undefined,
+        cariche: isPerson ? splitRoles(cariche) : undefined,
       });
       setDenominazione(""); setCognome(""); setNome("");
       setDataNascita(""); setLuogoNascita(""); setCfPiva(""); setCup(""); setRuolo("");
+      setCariche(""); setPep(false);
       await reload();
-    } catch (e) { setError(String(e)); } finally { setBusy(false); }
+    } catch (e) { setError(apiMessage(e)); } finally { setBusy(false); }
   }
 
   function startEdit(s: Subject) {
@@ -174,7 +188,7 @@ export default function Soggetti() {
     setEdit({
       denominazione: s.denominazione, cf_piva: s.cf_piva ?? "",
       data_nascita: s.data_nascita ?? "", cup: s.cup.join(", "),
-      ruolo: s.ruolo ?? "", attivo: s.attivo,
+      ruolo: s.ruolo ?? "", attivo: s.attivo, pep: !!s.pep, cariche: (s.cariche ?? []).join("; "),
     });
   }
 
@@ -190,10 +204,12 @@ export default function Soggetti() {
         cup: edit.cup ? edit.cup.split(",").map((c) => c.trim()).filter(Boolean) : [],
         ruolo: edit.ruolo,
         attivo: edit.attivo,
+        pep: edit.pep,
+        cariche: splitRoles(edit.cariche),
       });
       setEditingId(null); setEdit(null);
       await reload();
-    } catch (e) { setError(String(e)); }
+    } catch (e) { setError(apiMessage(e)); }
   }
 
   async function remove(id: string, label: string) {
@@ -276,6 +292,15 @@ export default function Soggetti() {
               helperText="es. beneficiario, RUP, legale rappresentante" />
           </Stack>
 
+          {isPerson && (
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ sm: "center" }}>
+              <TextField label="Cariche (separate da ;)" value={cariche} onChange={(e) => setCariche(e.target.value)}
+                fullWidth helperText="Ruoli negli articoli, es. sindaco di Bari; AD di Acme S.p.A." />
+              <FormControlLabel sx={{ whiteSpace: "nowrap" }} label="PEP (verificata)"
+                control={<Checkbox color="secondary" checked={pep} onChange={(e) => setPep(e.target.checked)} />} />
+            </Stack>
+          )}
+
           {cfCheck && !cfCheck.consistent && cfCheck.warnings.length > 0 && (
             <MuiAlert severity="warning" variant="outlined">
               {cfCheck.warnings.map((w, i) => <div key={i}>{w}</div>)}
@@ -318,7 +343,7 @@ export default function Soggetti() {
               <TableCell>CF/P.IVA</TableCell>
               <TableCell>Data nascita</TableCell>
               <TableCell>CUP</TableCell>
-              <TableCell>Ruolo</TableCell>
+              <TableCell>Ruolo · cariche</TableCell>
               <TableCell>Notizie</TableCell>
               <TableCell>Attivo</TableCell>
               <TableCell align="right">Azioni</TableCell>
@@ -355,8 +380,18 @@ export default function Soggetti() {
                           onChange={(e) => setE({ cup: e.target.value })} placeholder="CUP1, CUP2" />
                       </TableCell>
                       <TableCell>
-                        <TextField size="small" variant="standard" value={edit!.ruolo}
-                          onChange={(e) => setE({ ruolo: e.target.value })} />
+                        <TextField size="small" variant="standard" value={edit!.ruolo} placeholder="ruolo"
+                          onChange={(e) => setE({ ruolo: e.target.value })} inputProps={{ "aria-label": "ruolo" }} />
+                        {s.tipo_soggetto === "persona_fisica" && (
+                          <>
+                            <TextField size="small" variant="standard" fullWidth value={edit!.cariche} sx={{ mt: 0.5 }}
+                              onChange={(e) => setE({ cariche: e.target.value })} placeholder="cariche: carica 1; carica 2"
+                              inputProps={{ "aria-label": "cariche" }} />
+                            <FormControlLabel label={<Typography variant="caption">PEP</Typography>}
+                              control={<Checkbox size="small" color="secondary" checked={edit!.pep}
+                                onChange={(e) => setE({ pep: e.target.checked })} />} />
+                          </>
+                        )}
                       </TableCell>
                       <TableCell>{s.articoli_confermati || "—"}</TableCell>
                       <TableCell>
@@ -377,6 +412,7 @@ export default function Soggetti() {
                     <>
                       <TableCell>
                         {s.denominazione}
+                        {s.pep && <PepChip small />}
                         {!!s.alias?.length && (
                           <Typography variant="caption" color="text.secondary" component="div"
                             title="Varianti confermate dai revisori: l'Entity Resolution le riconosce come questo soggetto">
@@ -393,7 +429,15 @@ export default function Soggetti() {
                       <TableCell>{s.cf_piva ?? "—"}</TableCell>
                       <TableCell>{s.data_nascita ?? "—"}</TableCell>
                       <TableCell>{s.cup.join(", ") || "—"}</TableCell>
-                      <TableCell>{s.ruolo ?? "—"}</TableCell>
+                      <TableCell>
+                        {s.ruolo ?? (s.cariche?.length ? "" : "—")}
+                        {!!s.cariche?.length && (
+                          <Typography variant="caption" color="text.secondary" component="div"
+                            title="Cariche negli articoli, confermate dai revisori">
+                            cariche: {s.cariche.join("; ")}
+                          </Typography>
+                        )}
+                      </TableCell>
                       <TableCell>
                         {s.articoli_confermati ? (
                           <Button size="small" sx={{ whiteSpace: "nowrap" }}

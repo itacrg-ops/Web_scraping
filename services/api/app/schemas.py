@@ -79,6 +79,8 @@ class SubjectCreate(BaseModel):
     cup: list[str] = []
     ruolo: str | None = None
     attivo: bool = True
+    pep: bool = False                    # persona politicamente esposta (confermata)
+    cariche: list[str] = []              # ruoli dagli articoli (sindaco di X, AD di Y…)
 
     @model_validator(mode="after")
     def _compose_denominazione(self) -> "SubjectCreate":
@@ -102,6 +104,8 @@ class SubjectUpdate(BaseModel):
     cup: list[str] | None = None
     ruolo: str | None = None
     attivo: bool | None = None
+    pep: bool | None = None
+    cariche: list[str] | None = None
 
 
 class SubjectOut(BaseModel):
@@ -117,6 +121,8 @@ class SubjectOut(BaseModel):
     ruolo: str | None = None
     attivo: bool = True
     created_at: datetime
+    pep: bool = False
+    cariche: list[str] = []
     alias: list[str] = []                # varianti confermate («stesso soggetto»)
     distinti: list[str] = []             # nomi simili confermati come ALTRI soggetti
     articoli_confermati: int = 0         # notizie verificate dai revisori
@@ -158,7 +164,8 @@ class SimilarCandidate(BaseModel):
 
 class SimilarOut(BaseModel):
     nome: str
-    registro_esatto: SimilarCandidate | None = None   # stesso nome (o alias confermato) a registro
+    registro_esatto: SimilarCandidate | None = None   # già inserito: stesso nome (o alias confermato),
+                                                      # o stesso CF/P.IVA se indicato
     alert_esistenti: int = 0                          # alert già presenti con lo stesso nome
     simili: list[SimilarCandidate] = []
 
@@ -260,6 +267,8 @@ class AlertCreate(BaseModel):
     entity_resolution: dict | None = None
     classification: dict | None = None   # metodo llm/keyword, severità, ruolo… (valutazione)
     name_variants: list[str] = []        # varianti del nome citate al posto del nome esatto
+    roles: list[dict] = []               # persona fisica: ruoli accanto al nome negli articoli
+    pep: bool | None = None              # persona fisica: possibile PEP (D.Lgs. 231/2007)
     evidence: list[EvidenceCreate] = []
 
 
@@ -291,10 +300,12 @@ class Alert(BaseModel):
     entity_resolution: dict | None = None
     classification: dict | None = None
     name_variants: list[str] = []
+    roles: list[dict] = []
+    pep: bool | None = None
     evidence: list[EvidenceItem] = []
     created_at: datetime
 
-    @field_validator("name_variants", mode="before")
+    @field_validator("name_variants", "roles", mode="before")
     @classmethod
     def _none_as_empty(cls, v):
         return v or []
@@ -367,6 +378,8 @@ class ConfirmIn(BaseModel):
 
     subject_id: str | None = None
     nuovo: SubjectCreate | None = None
+    cariche: list[str] = []              # ruoli dagli articoli da registrare sul soggetto
+    pep: bool | None = None              # True: il revisore conferma che è una PEP
 
     @model_validator(mode="after")
     def _one_target(self) -> "ConfirmIn":
@@ -377,6 +390,7 @@ class ConfirmIn(BaseModel):
 
 class ConfirmOut(BaseModel):
     subject: SubjectOut
+    nuovo_soggetto: bool = False        # creato ora (altrimenti era già nel registro)
     confermati: int                     # articoli confermati (nuovi o aggiornati)
     saltati: int                        # articoli senza giudizio certo
     alias_aggiunto: str | None = None   # il nome usato nell'alert, registrato come variante

@@ -59,6 +59,7 @@ def test_entity_common_word_needs_capital_letter() -> None:
 
 def test_entity_full_name_with_legal_form() -> None:
     assert _m(ACME, "Perquisizioni alla Acme Costruzioni S.r.l. di Roma.")
+    assert _m(ACME, "Perquisizioni alla ACME Costruzioni Srl di Roma.")     # forma senza punti
     assert _m(BETA, "Beta Infrastrutture S.p.A. ha vinto la gara.")
     assert not _m(ACME, "Sanzionata la ACMEX Spa.")
 
@@ -68,6 +69,25 @@ def test_entity_longer_company_name_is_another_company() -> None:
     assert not _m(ACME, "Indagata la ACME Costruzioni Generali S.r.l.")
     gen = {"tipo_soggetto": "persona_giuridica", "denominazione": "ACME Costruzioni Generali S.r.l."}
     assert _m(gen, "Indagata la ACME Costruzioni Generali S.r.l.")
+
+
+def test_one_word_company_needs_company_usage() -> None:
+    # "Vita S.r.l.": la parola da sola è quasi sempre la parola comune
+    vita = {"tipo_soggetto": "persona_giuridica", "denominazione": "Vita S.r.l."}
+    assert not _m(vita, "La vita in città è cambiata dopo la pandemia.")
+    assert not _m(vita, "Vita e lavoro: un convegno a Roma.")            # maiuscola solo a inizio frase
+    assert mention.check(vita, "Perquisizioni alla Vita Srl di Bologna.")["matched"] == ["denominazione"]
+    assert _m(vita, "Indagati i vertici della Vita S.r.l.; per i soci la vita cambia.")
+    assert _m(vita, "Sequestro ai danni della società Vita, attiva nella logistica.")
+    # nome proprio a metà frase, mai in minuscolo → nome breve
+    assert mention.check(vita, "Il contratto con la Vita è stato annullato.")["matched"] == ["denominazione_breve"]
+    assert not _m(vita, "Il contratto con la Vita è stato annullato: una vita di attese.")
+
+
+def test_multi_word_company_is_a_proper_name() -> None:
+    nv = {"tipo_soggetto": "persona_giuridica", "denominazione": "Nuova Vita S.r.l."}
+    assert not _m(nv, "Dopo il trasferimento è iniziata una nuova vita.")
+    assert _m(nv, "La Nuova Vita ha ottenuto l'appalto.")
 
 
 def test_context_uses_whole_words() -> None:

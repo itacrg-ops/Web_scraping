@@ -87,6 +87,9 @@ export interface Alert {
   classification?: { method?: string | null; [k: string]: unknown } | null;
   // Nomi simili citati negli articoli al posto del nome esatto (possibile refuso).
   name_variants?: string[];
+  // Persona fisica: ruoli scritti accanto al nome negli articoli e possibile PEP.
+  roles?: RoleFound[];
+  pep?: boolean | null;
   // Stesso soggetto scritto in modi diversi (duplicati): calcolata dall'API.
   subject_key: string;
   evidence?: EvidenceItem[];
@@ -100,6 +103,16 @@ async function getJSON<T>(path: string): Promise<T> {
 }
 
 export type TipoSoggetto = "persona_giuridica" | "persona_fisica";
+
+// Ruolo della persona trovato negli articoli (worker, roles.py).
+export interface RoleFound {
+  ruolo: string;                              // come scritto: "sindaco di Roma", "AD di Acme"
+  tipo: string;                               // tipo: "sindaco", "amministratore delegato"…
+  categoria: "pep" | "politico" | "aziendale" | "pubblico";
+  pep: "si" | "verifica" | null;              // carica dell'elenco PEP (D.Lgs. 231/2007)
+  ex: boolean;                                // carica cessata
+  articoli?: number;
+}
 
 export interface ScreeningRequest {
   tipo_soggetto?: TipoSoggetto;
@@ -179,6 +192,8 @@ export interface Subject {
   ruolo?: string | null;
   attivo: boolean;
   created_at: string;
+  pep?: boolean;                  // persona politicamente esposta (confermata)
+  cariche?: string[];             // ruoli dagli articoli, confermati
   alias?: string[];               // varianti confermate dello stesso soggetto
   distinti?: string[];            // nomi simili confermati come ALTRI soggetti
   articoli_confermati?: number;   // notizie verificate dai revisori
@@ -194,6 +209,8 @@ export interface SubjectCreate {
   cf_piva?: string;
   cup: string[];
   ruolo?: string;
+  pep?: boolean;
+  cariche?: string[];
 }
 
 // Modifica parziale: solo i campi inviati vengono applicati.
@@ -205,6 +222,8 @@ export interface SubjectUpdate {
   cup?: string[];
   ruolo?: string;
   attivo?: boolean;
+  pep?: boolean;
+  cariche?: string[];
 }
 
 export interface SubjectImportResult {
@@ -333,6 +352,7 @@ export async function downloadDataset(soloAffidabili = true): Promise<void> {
 export const listSources = () => getJSON<Source[]>("/api/sources");
 export const getSearchProviders = () => getJSON<SearchProvidersStatus>("/api/search/providers");
 export const listAlerts = () => getJSON<Alert[]>("/api/alerts");
+export const getAlert = (id: string) => getJSON<Alert>(`/api/alerts/${id}`);
 export const startScreening = (body: ScreeningRequest) =>
   postJSON<Screening>("/api/screening", body);
 export const getScreening = (id: string) => getJSON<Screening>(`/api/screening/${id}`);
@@ -417,8 +437,11 @@ export interface SimilarOut {
   simili: SimilarCandidate[];
 }
 
+// Con cf_piva e data_nascita, «registro_esatto» è il soggetto già inserito secondo la
+// regola dell'API (stesso CF/P.IVA; stesso nome senza CF/P.IVA o data di nascita diversi).
 export function similarSubjects(q: { tipo_soggetto: TipoSoggetto; denominazione?: string;
-                                     nome?: string; cognome?: string }) {
+                                     nome?: string; cognome?: string; cf_piva?: string;
+                                     data_nascita?: string }) {
   const params = new URLSearchParams();
   Object.entries(q).forEach(([k, v]) => { if (v) params.set(k, v); });
   return getJSON<SimilarOut>(`/api/subjects/similar?${params}`);
@@ -446,13 +469,15 @@ export interface SubjectArticle {
 
 export interface ConfirmOut {
   subject: Subject;
+  nuovo_soggetto: boolean;              // creato ora (altrimenti era già nel registro)
   confermati: number;
   saltati: number;
   alias_aggiunto?: string | null;
 }
 
 export const confirmInRegistry = (alertId: string,
-                                  target: { subject_id: string } | { nuovo: SubjectCreate }) =>
+                                  target: ({ subject_id: string } | { nuovo: SubjectCreate })
+                                    & { cariche?: string[]; pep?: boolean }) =>
   postJSON<ConfirmOut>(`/api/alerts/${alertId}/confirm`, target);
 export const listSubjectArticles = (subjectId: string) =>
   getJSON<SubjectArticle[]>(`/api/subjects/${subjectId}/articles`);

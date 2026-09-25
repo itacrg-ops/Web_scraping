@@ -100,11 +100,11 @@ services:
     ports: ["8095:8095"]
 
   # ---- SearXNG: meta-search self-hosted (provider "searxng", keyless) ----
-  # API JSON abilitata via services/search-gateway/searxng/settings.yml.
+  # API JSON abilitata da services/search-gateway/searxng/settings.yml, COPIATO
+  # nell'immagine (niente volume: se arrivasse vuoto, SearXNG userebbe la propria
+  # configurazione di default senza JSON e risponderebbe 403 al search-gateway).
   searxng:
-    image: searxng/searxng:latest
-    volumes:
-      - ./services/search-gateway/searxng:/etc/searxng:rw
+    build: ./services/search-gateway/searxng
     environment:
       SEARXNG_BASE_URL: "http://localhost:8888/"
     ports: ["8888:8080"]

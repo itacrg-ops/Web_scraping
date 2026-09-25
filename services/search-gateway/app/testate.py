@@ -70,9 +70,12 @@ def credibility_of(domain: str) -> str:
 
 
 def postprocess(results: list[dict], *, dedup_by_domain: bool, max_per_domain: int,
-                min_credibility: str, max_results: int) -> tuple[list[dict], int]:
+                min_credibility: str, max_results: int,
+                first=None) -> tuple[list[dict], int]:
     """Annota (dominio + credibilità), filtra sotto soglia, ordina per
     credibilità (poi per ordine originale), deduplica per dominio e tronca.
+    `first(r)`: se vero il risultato va prima degli altri (es. cita la ragione
+    sociale completa), a parità di credibilità e ordine.
     Ritorna (risultati, quanti rimossi tra filtro e dedup)."""
     for i, r in enumerate(results):
         d = domain_of(r.get("url", ""))
@@ -85,8 +88,10 @@ def postprocess(results: list[dict], *, dedup_by_domain: bool, max_per_domain: i
         floor = CRED_RANK.get(min_credibility, 0)
         kept = [r for r in kept if CRED_RANK.get(r["testata_credibilita"], 0) >= floor]
 
-    # Credibilità decrescente, poi ordine originale (stabile: recenza nel tier).
-    kept = sorted(kept, key=lambda r: (-CRED_RANK.get(r["testata_credibilita"], 0), r["_idx"]))
+    # Prima i risultati `first`, poi credibilità decrescente, poi ordine originale
+    # (stabile: recenza nel tier).
+    kept = sorted(kept, key=lambda r: (0 if first and first(r) else 1,
+                                       -CRED_RANK.get(r["testata_credibilita"], 0), r["_idx"]))
 
     if dedup_by_domain:
         seen: dict[str, int] = {}

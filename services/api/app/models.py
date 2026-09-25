@@ -45,8 +45,12 @@ class Subject(Base):
     data_nascita: Mapped[str | None] = mapped_column(String, nullable=True)
     luogo_nascita: Mapped[str | None] = mapped_column(String, nullable=True)
     cup: Mapped[list] = mapped_column(JSON, default=list)
-    ruolo: Mapped[str | None] = mapped_column(String, nullable=True)
+    ruolo: Mapped[str | None] = mapped_column(String, nullable=True)   # nell'intervento (RUP, beneficiario…)
     attivo: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Dagli articoli, confermati dai revisori: persona politicamente esposta e ruoli
+    # (sindaco di X, amministratore delegato di Y…).
+    pep: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    cariche: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     # Nomi simili già decisi da un revisore (alias / soggetti diversi): Entity Resolution.
@@ -160,6 +164,9 @@ class Alert(Base):
     # Varianti vicine al nome citate negli articoli che NON citano il nome esatto
     # («Andrea Stroppa» per «Stropp Andrea»): possibile refuso nel nome del soggetto.
     name_variants: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Persona fisica: ruoli scritti accanto al nome negli articoli e possibile PEP.
+    roles: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    pep: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     # Ordine stabile (di inserimento, id a parità): la numerazione in console

@@ -150,6 +150,7 @@ def _export_record(label: CaseLabel, alert: AlertModel, internal: bool = False) 
             "ami_score": alert.ami_score, "risk_level": alert.risk_level,
             "disposition": alert.disposition, "fatf_categories": alert.fatf_categories or [],
             "classification": alert.classification, "drivers": alert.drivers or [],
+            "roles": alert.roles or [], "pep": alert.pep,
             "created_at": alert.created_at,
         },
         "evidence": [

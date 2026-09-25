@@ -127,7 +127,7 @@ prima dell'egress verso Azure.
 | 2 | **Feed di rischio** (B9, opz.) | Indicatori AML/CFT + connessioni sul soggetto risolto. |
 | 3 | **Web search** (B8) | Fan-out su più motori, merge/dedup per URL, boost di corroborazione. |
 | 4 | **Fetch + Render** (B6) | Fetch conforme (robots/crawl-delay), snapshot WARC su MinIO, fallback headless Playwright per pagine JS. |
-| 5 | **Estrazione + Menzione + NER** | Testo (trafilatura), verifica che il soggetto sia citato (a **parole intere**: nome e cognome adiacenti; denominazione senza forma giuridica; nome breve solo con iniziale maiuscola), corroborazione anagrafica e NER. |
+| 5 | **Estrazione + Menzione + NER** | Testo (trafilatura), verifica che il soggetto sia citato (a **parole intere**: nome e cognome adiacenti; denominazione senza forma giuridica, usata come nome proprio o in contesto societario — «Vita Srl» sì, «la vita» no), corroborazione anagrafica e NER. Per la persona fisica: **ruoli** scritti accanto al nome (AD, DG, sindaco…) e possibile **PEP**. |
 | 6 | **PII → FATF** (B1/B1.1) | Redazione PII e pseudonimizzazione nomi, poi classificazione FATF dual-LLM. |
 | 7 | **AMI → SVI** (B2) | Punteggio pesato, persistenza dell'alert con evidenze (sistema di record), poi pubblicazione in SVI con esito registrato sull'alert (`svi_status`). |
 
@@ -179,11 +179,13 @@ tabella `audit_log`.
 orchestrate dal workflow durevole. Contiene la logica di dominio (fetcher
 conforme, snapshot WARC, corroborazione, AMI).
 *Tecnologia:* Python, temporalio; httpx, trafilatura, Playwright/Chromium,
-boto3/warcio (MinIO). Moduli: `fetcher` `render` `extract` `mention`
+boto3/warcio (MinIO). Moduli: `fetcher` `render` `extract` `mention` `roles`
 `anagraphics` `classifier` `snapshot` `analysis` (logica pura condivisa dal workflow e
 dalla rivalutazione). `replay.py` ripassa gli articoli dei casi etichettati nella versione
 attuale (vedi `docs/DATASET_VALUTAZIONE.md`). `mention` segnala anche le **varianti vicine**
-del nome quando il nome esatto manca (probabile refuso: `alerts.name_variants`).
+del nome quando il nome esatto manca (probabile refuso: `alerts.name_variants`). `roles`
+estrae i ruoli scritti accanto al nome della persona e il possibile PEP (`alerts.roles`,
+`alerts.pep`; vedi [§7](#7-ruoli)).
 *Activities:* `resolve_entity` · `assess_risk_feed` · `search_articles` ·
 `fetch_source` · `render_source` · `verify_subject_mention` · `classify_fatf` ·
 `compute_ami` · `publish_svi` · `persist_alert`.
@@ -215,7 +217,10 @@ worker ed ER.
 *sintassi per provider* (boolean per GDELT, plain per Brave/SearXNG), interroga
 più motori in parallelo (B8), fonde e deduplica per URL con boost di
 corroborazione, annota la credibilità della testata e applica dedup per dominio e
-filtro. Cache in-memory per non ribattere sui rate-limit.
+filtro. Cache in-memory per non ribattere sui rate-limit. Una persona giuridica con un
+nome comune di una parola («Vita Srl») si cerca con la forma giuridica («"Vita Srl" OR
+"Vita S.r.l."…», mai la parola da sola) e i risultati che citano la denominazione
+completa vengono prima.
 *Tecnologia:* FastAPI, httpx (asyncio.gather); provider mock/GDELT/Brave/SearXNG;
 throttle in-process per i limiti upstream.
 *Endpoint:* `POST /v1/search` · `POST /v1/credibility` · `GET /v1/providers`.
@@ -251,7 +256,7 @@ oggetto/alert/coda) da `.env`.
 | **postgres** (pgvector) | 5432 | Sistema di record: alert, evidenze, registro soggetti, fonti. Vettori per gli embedding. |
 | **redis** | 6379 | Cache / rate-limit (base per il rate limiter distribuito, B4). |
 | **minio** | 9000 · 9001 | Object store S3-compatibile: snapshot immutabili delle pagine (WARC + HTML) e provenance. |
-| **searxng** | 8888→8080 | Meta-motore self-hosted keyless (API JSON abilitata): provider di ricerca primario. |
+| **searxng** | 8888→8080 | Meta-motore self-hosted keyless: provider di ricerca primario. La configurazione con l'API JSON abilitata è inclusa nell'immagine (`services/search-gateway/searxng/`), non montata. |
 | **sas-mcp-server** | 8134 | Ponte verso SAS Viya (profilo `sas`): scoring/decisioning quando disponibile un ambiente Viya. |
 
 ---
@@ -308,6 +313,28 @@ ruolo sull'intervento — determinante per la **materialità** dell'alert:
 > generico, farebbe rumore): è usato a valle nella corroborazione. Analogamente il
 > **CUP** non è un termine di ricerca ma un *disambiguatore* nel gate e un
 > ancoraggio di materialità.
+
+### Ruoli negli articoli e PEP (persona fisica)
+
+Il worker (`roles.py`) legge il ruolo scritto **accanto al nome**, nella stessa frase
+(«il sindaco di Latina Mario Rossi», «Mario Rossi, AD di Acme», «Mario Rossi è l'ex
+ministro…»): un ruolo altrove nell'articolo può essere di un'altra persona. I ruoli
+trovati (con il numero di articoli) sono nei driver e nell'alert (`roles`).
+
+- **PEP** (D.Lgs. 231/2007, art. 1 c. 2 lett. dd): ministri e sottosegretari,
+  parlamentari, presidenti, assessori e consiglieri regionali, vertici nazionali di
+  partito, giudici delle giurisdizioni superiori, ambasciatori, vertici delle autorità
+  indipendenti, direttori generali di aziende sanitarie… → `pep = true` e driver
+  «⚠ Possibile PEP … da verificare». Alcune cariche dipendono da ciò che l'articolo non
+  dice: il **sindaco** (capoluogo o comune con almeno 15.000 abitanti), il grado
+  militare apicale; una carica **cessata** vale per un anno.
+- **Ruolo politico** non PEP: assessore o consigliere comunale, vicesindaco…
+- **Ruoli aziendali**: AD/CEO, DG, amministratore unico, presidente, consigliere di
+  amministrazione, legale rappresentante, titolare, socio, dirigente…
+
+Il flag PEP **non cambia l'AMI**: è un'informazione per l'analista. Il revisore lo
+conferma, con le cariche, nel registro del soggetto (`subjects.pep`, `subjects.cariche`:
+vedi `docs/REGISTRO_SOGGETTI.md`).
 
 ### Ruoli di sistema (RBAC)
 

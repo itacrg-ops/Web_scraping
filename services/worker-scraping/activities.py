@@ -19,6 +19,7 @@ import classifier
 import extract as extractor
 import fetcher
 import mention
+import roles
 import snapshot
 
 LLM_GATEWAY_URL = os.getenv("LLM_GATEWAY_URL", "http://llm-gateway:8080")
@@ -143,6 +144,8 @@ async def verify_subject_mention(subject: dict, text: str) -> dict:
     res = mention.check(subject, text)
     res["anagraphics"] = anagraphics.corroborate(subject, text)
     res["ner"] = await _ner_corroborate(subject, text)
+    # Ruoli scritti accanto al nome (persona fisica): cariche PEP, politiche, aziendali.
+    res["roles"] = roles.extract(subject, text)
     activity.logger.info("verify_subject_mention: mentioned=%s matched=%s anagrafica=%s ner=%s",
                          res["mentioned"], res["matched"], res["anagraphics"]["status"],
                          (res["ner"] or {}).get("available"))

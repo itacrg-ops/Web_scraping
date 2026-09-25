@@ -8,8 +8,11 @@ Il soggetto è "citato" solo se compare come **parole intere**, mai come sottost
   non bastano;
 - persona giuridica: la denominazione senza forma giuridica (S.r.l., S.p.A., …) come
   sequenza di parole, oppure il nome distintivo (senza parole generiche) se di 2+
-  parole; se il nome distintivo è una parola sola (es. "Acme", "Tron") vale solo se
-  nel testo compare con l'iniziale maiuscola (nome proprio, non "l'acme della crisi").
+  parole, scritti come nome proprio (iniziale maiuscola: "Nuova Vita", non "una nuova
+  vita"). Se il nome è di UNA parola ("Vita S.r.l.", "Tron") vale se è usato come nome
+  d'impresa — seguito dalla forma giuridica ("Vita Srl") o preceduto da "società",
+  "ditta", "gruppo"… — oppure se compare come nome proprio a metà frase e mai in
+  minuscolo nel testo ("La Tron ha vinto", non "l'acme della crisi" né "la vita…").
   Un'occorrenza seguita da una parola generica che nel nostro nome non c'è (es.
   "ACME Costruzioni **Generali**" per "ACME Costruzioni S.r.l.") è un'ALTRA società.
 
@@ -76,9 +79,19 @@ def strip_legal_form(toks: list[str]) -> list[str]:
     return out
 
 
-def _capitalized_in(text: str, token: str) -> bool:
-    """`token` (normalizzato) compare nel testo ORIGINALE con l'iniziale maiuscola."""
-    return any(w[0].isupper() and _norm(w) == token for w in re.findall(r"\w+", text or ""))
+# Parole che, subito prima del nome, dicono che si parla di un'impresa ("società Vita").
+_COMPANY_WORDS = {"SOCIETA", "DITTA", "AZIENDA", "IMPRESA", "GRUPPO", "CONSORZIO", "COOPERATIVA"}
+
+
+def _word_spans(text: str) -> list[tuple[str, str, bool]]:
+    """Parole del testo: (originale, normalizzata, a inizio frase)."""
+    out = []
+    for m in re.finditer(r"\w+", text or ""):
+        n = _norm(m.group())
+        if n:
+            before = text[:m.start()].rstrip(" \t\"'«“‘(")
+            out.append((m.group(), n, not before or before[-1] in ".!?:;\n"))
+    return out
 
 
 def _person_names(subject: dict) -> tuple[list[str], list[str]]:
@@ -114,30 +127,52 @@ def _check_person(subject: dict, ttoks: list[str], matched: list[str]) -> list[s
     return [t for t in nome + cognome if len(t) >= 3]
 
 
-def _entity_occurs(ttoks: list[str], phrase: list[str], full: list[str]) -> bool:
-    """`phrase` compare come parole intere e, saltate le parole del nostro stesso nome,
-    NON prosegue con una parola generica che nel nostro nome non c'è (altrimenti è
-    un'altra società: "ACME [Costruzioni] Generali" non è "ACME Costruzioni")."""
+def _entity_hits(norm: list[str], phrase: list[str], full: list[str]) -> list[int]:
+    """Occorrenze di `phrase` come parole intere che, saltate le parole del nostro stesso
+    nome, NON proseguono con una parola generica che nel nostro nome non c'è (altrimenti
+    è un'altra società: "ACME [Costruzioni] Generali" non è "ACME Costruzioni")."""
     own, other_generic = set(full), GENERIC - set(full)
-    for i in occurrences(ttoks, phrase):
+    hits = []
+    for i in occurrences(norm, phrase):
         j = i + len(phrase)
-        while j < len(ttoks) and ttoks[j] in own:
+        while j < len(norm) and norm[j] in own:
             j += 1
-        if j >= len(ttoks) or ttoks[j] not in other_generic:
-            return True
-    return False
+        legal_form = any(norm[j:j + len(lf)] == lf for lf in _LEGAL_FORMS)   # "… Srl": è la nostra
+        if j >= len(norm) or legal_form or norm[j] not in other_generic:
+            hits.append(i)
+    return hits
+
+
+def _as_company(norm: list[str], i: int, n: int) -> bool:
+    """L'occorrenza norm[i:i+n] è usata come nome d'impresa: seguita dalla forma
+    giuridica ("Vita Srl", "Vita S.r.l.") o preceduta da "società", "ditta", "gruppo"…"""
+    after = norm[i + n:i + n + 5]
+    return any(after[:len(lf)] == lf for lf in _LEGAL_FORMS) or (i > 0 and norm[i - 1] in _COMPANY_WORDS)
 
 
 def _check_entity(subject: dict, text: str, ttoks: list[str], matched: list[str]) -> list[str]:
     full = strip_legal_form(tokens(subject.get("denominazione", "")))
     core = [t for t in full if t not in GENERIC]
-    if full and _entity_occurs(ttoks, full, full):
-        matched.append("denominazione")
-    elif len(core) >= 2 and _entity_occurs(ttoks, core, full):
-        matched.append("denominazione")
-    elif (len(core) == 1 and len(core[0]) >= 3 and _entity_occurs(ttoks, core, full)
-          and _capitalized_in(text, core[0])):
-        matched.append("denominazione_breve")
+    words = _word_spans(text)
+    norm = [n for _, n, _ in words]
+    proper = lambda i: words[i][0][:1].isupper()   # noqa: E731 — iniziale maiuscola
+
+    # Nome di più parole: come sequenza, scritto da nome proprio (o come impresa).
+    for phrase in (full, core):
+        if len(phrase) >= 2 and any(proper(i) or _as_company(norm, i, len(phrase))
+                                    for i in _entity_hits(norm, phrase, full)):
+            matched.append("denominazione")
+            return core
+    # Nome di una parola: usato come impresa, oppure nome proprio a metà frase e mai
+    # in minuscolo nel testo (altrimenti è la parola comune: "la vita", "l'acme").
+    single = full if len(full) == 1 else core if len(core) == 1 else []
+    if single and len(single[0]) >= 3:
+        hits = _entity_hits(norm, single, full)
+        if any(_as_company(norm, i, 1) for i in hits):
+            matched.append("denominazione")
+        elif (any(proper(i) and not words[i][2] for i in hits)
+              and not any(not proper(i) for i in hits)):
+            matched.append("denominazione_breve")
     return core
 
 

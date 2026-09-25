@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from app import providers
+from app import query as qb
 from app import testate
 from app.config import settings
 
@@ -180,12 +181,16 @@ async def search(req: SearchRequest) -> dict:
         if note is None:  # cache solo risposte pulite (non 429/errori)
             _cache_put(cache_key, raw, query_used)
 
+    # Impresa con nome di una parola: prima gli articoli che citano la ragione sociale
+    # completa ("Vita Srl"), gli altri potrebbero parlare della parola comune.
+    first = (lambda r: qb.cites_full_name(r, subject)) if qb.single_word_entity(subject) else None
     results, removed = testate.postprocess(
         raw,
         dedup_by_domain=settings.dedup_by_domain,
         max_per_domain=settings.max_per_domain,
         min_credibility=min_cred,
         max_results=max_results,
+        first=first,
     )
     return {
         "provider": settings.search_provider,

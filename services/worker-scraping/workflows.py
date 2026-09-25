@@ -40,6 +40,7 @@ with workflow.unsafe.imports_passed_through():
     )
     from analysis import ami_signals, classification_text, merge_risk_feed, saved_classification
     from outcome import apply_incomplete, incomplete_reasons
+    from roles import is_pep, summarize as summarize_roles
 
 _RETRY = RetryPolicy(maximum_attempts=3)
 _TIMEOUT = timedelta(seconds=60)
@@ -202,6 +203,7 @@ class ScreeningWorkflow:
             doc["_context"] = men.get("context", [])
             doc["_anagraphics"] = men.get("anagraphics") or {"status": "n/a"}
             doc["_variants"] = men.get("variants") or []
+            doc["_roles"] = men.get("roles") or []
             doc["_ner"] = men.get("ner")
             doc["_credibilita"] = info.get("credibilita")
             doc["_domain"] = info.get("domain")
@@ -260,6 +262,25 @@ class ScreeningWorkflow:
             drivers.insert(0, "⚠ Negli articoli compare un nome simile: "
                            + ", ".join(f"«{v}»" for v in name_variants)
                            + " — il nome del soggetto potrebbe contenere un refuso: verificarlo")
+
+        # Ruoli della persona scritti accanto al nome negli articoli che la citano:
+        # cariche pubbliche/politiche (possibile PEP) e ruoli aziendali (AD, DG, CEO…).
+        # Il flag PEP non cambia l'AMI: è un'informazione per l'analista.
+        found_roles = summarize_roles([d.get("_roles") or [] for d in docs if d.get("_mentioned")])
+        pep = is_pep(found_roles)
+        if found_roles:
+            drivers.append("Ruoli negli articoli: " + "; ".join(
+                r["ruolo"] + (f" ({r['articoli']} articoli)" if r["articoli"] > 1 else "") for r in found_roles))
+        if pep:
+            peps = [r for r in found_roles if r.get("pep")]
+            notes = []
+            if any(r["tipo"] == "sindaco" for r in peps):
+                notes.append("per il sindaco: capoluogo o comune con almeno 15.000 abitanti")
+            if any(r["ex"] for r in peps):
+                notes.append("carica cessata: PEP fino a un anno dalla cessazione")
+            drivers.insert(0, "⚠ Possibile PEP (persona politicamente esposta, D.Lgs. 231/2007): "
+                           + ", ".join(r["ruolo"] for r in peps) + " — da verificare"
+                           + (f" ({'; '.join(notes)})" if notes else ""))
 
         # Corroborazione del contesto (persona fisica): azienda/località/ruolo
         # riscontrati negli articoli che citano il soggetto → riduce l'omonimia;
@@ -336,6 +357,8 @@ class ScreeningWorkflow:
             "drivers": outcome["drivers"],
             "disposition": outcome["disposition"],
             "name_variants": name_variants,
+            "roles": found_roles,
+            "pep": pep if subject["tipo_soggetto"] == "persona_fisica" else None,
         }
 
         # Evidenze ancorate all'alert (una per articolo effettivamente recuperato

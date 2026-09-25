@@ -7,6 +7,11 @@ Due modalità:
 Le varianti del nome coprono l'ordine "Nome Cognome" e "Cognome Nome" per le
 persone fisiche; per le persone giuridiche si usa la denominazione. La sintassi
 booleana (frasi tra virgolette, OR, parentesi) è compatibile con GDELT DOC 2.0.
+
+Impresa con nome di UNA parola ("Vita S.r.l."): la parola da sola è spesso una parola
+comune e i motori restituirebbero articoli su tutt'altro ("la vita…"). Si cerca allora
+la ragione sociale con la forma giuridica ("Vita Srl", "Vita S.r.l."), come farebbe
+una persona; la parola da sola solo se lunga (probabile nome di fantasia: "Italware").
 """
 from __future__ import annotations
 
@@ -58,10 +63,47 @@ def _person_names(subject: dict) -> list[str]:
     return list(dict.fromkeys(variants))  # dedup preservando l'ordine
 
 
+# Forma giuridica nella denominazione → come la scrivono gli articoli (senza e con punti).
+_LEGAL_WRITINGS: list[tuple[re.Pattern, list[str]]] = [
+    (re.compile(r"\bs\.?\s*r\.?\s*l\.?\s*s\.?$", re.I), ["Srls", "S.r.l.s."]),
+    (re.compile(r"\bs\.?\s*r\.?\s*l\.?$", re.I), ["Srl", "S.r.l."]),
+    (re.compile(r"\bs\.?\s*p\.?\s*a\.?$", re.I), ["SpA", "S.p.A."]),
+    (re.compile(r"\bs\.?\s*n\.?\s*c\.?$", re.I), ["Snc", "S.n.c."]),
+    (re.compile(r"\bs\.?\s*a\.?\s*s\.?$", re.I), ["Sas", "S.a.s."]),
+]
+# Forma giuridica non indicata: le più comuni.
+_DEFAULT_WRITINGS = ["Srl", "SpA"]
+# Nome di una parola sola abbastanza lungo da essere quasi certamente un nome di
+# fantasia (Italware), cercabile anche da solo.
+_DISTINCTIVE_LEN = 8
+
+
+def _legal_writings(denominazione: str) -> list[str]:
+    d = denominazione.strip()
+    for rx, writings in _LEGAL_WRITINGS:
+        if rx.search(d):
+            return writings
+    return _DEFAULT_WRITINGS
+
+
+def single_word_entity(subject: dict) -> str | None:
+    """La parola del nome d'impresa se è UNA sola ("Vita S.r.l." → "Vita"), altrimenti None."""
+    if _is_person(subject):
+        return None
+    d = (subject.get("denominazione") or "").strip()
+    cleaned = _clean_entity_name(d) if d else ""
+    return cleaned if cleaned and len(cleaned.split()) == 1 else None
+
+
 def _entity_names(subject: dict) -> list[str]:
     d = (subject.get("denominazione") or "").strip()
     if not d:
         return []
+    word = single_word_entity(subject)
+    if word:
+        # Ragione sociale completa, nelle scritture usate dagli articoli.
+        names = [f"{word} {w}" for w in _legal_writings(d)]
+        return names + ([word] if len(word) >= _DISTINCTIVE_LEN else [])
     cleaned = _clean_entity_name(d)
     # Usa il nome senza forma societaria (match più probabile negli articoli).
     return [cleaned] if cleaned else [d]
@@ -140,6 +182,14 @@ def _boolean_variants(subject: dict, names: list[str], mode: str) -> list[str]:
     """GDELT: `("A" OR "B")` + termini avversi in OR (una query per entrambi gli
     ordini del nome). Togliendo un qualificatore alla volta partendo dall'ultimo
     (località): l'azienda, più distintiva, resta fino all'ultimo prima del nome."""
+    if single_word_entity(subject):
+        # Prima la ragione sociale (con forma giuridica), poi — se il nome è distintivo —
+        # la parola da sola. Mai la parola comune da sola.
+        full = [n for n in names if len(n.split()) > 1]
+        clauses = [_name_clause(full)] + ([f'"{names[-1]}"'] if len(names) > len(full) else [])
+        if mode == "broad":
+            return clauses
+        return [x for c in clauses for x in (f"{c} {_adverse_clause()}", c)]
     nc = _name_clause(names)
     if mode == "broad":
         return [nc]
@@ -168,8 +218,19 @@ def _plain_variants(subject: dict, names: list[str], mode: str) -> list[str]:
             return out + q_names
         adverse = " ".join(ADVERSE_TERMS)
         return [f"{qn} {adverse}" for qn in q_names] + q_names
-    # entità: la denominazione ripulita è già l'unico nome
-    qn = q_names[0]
+    # entità: una query per scrittura del nome (ragione sociale completa per prima)
     if mode == "broad":
-        return [qn]
-    return [f"{qn} " + " ".join(ADVERSE_TERMS), qn]
+        return q_names
+    adverse = " ".join(ADVERSE_TERMS)
+    return [f"{qn} {adverse}" for qn in q_names] + q_names
+
+
+def _squash(text: str | None) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).split())
+
+
+def cites_full_name(result: dict, subject: dict) -> bool:
+    """Titolo o estratto citano la ragione sociale completa ("Vita Srl"/"Vita S.r.l."):
+    per un'impresa con nome di una parola è il segnale che parla proprio di lei."""
+    hay = f" {_squash(result.get('title'))} {_squash(result.get('snippet'))} "
+    return any(f" {_squash(n)} " in hay for n in name_variants(subject) if len(n.split()) > 1)

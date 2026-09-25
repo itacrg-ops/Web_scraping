@@ -328,8 +328,14 @@ async def _searxng_call(query_str: str, max_results: int) -> tuple[str, object]:
             r = await c.get(f"{settings.searxng_url.rstrip('/')}/search", params=params)
         if r.status_code != 200:
             note = f"SearXNG ha risposto {r.status_code}."
-            if r.status_code in (403, 429):
-                note += " Abilita il formato JSON in searxng/settings.yml (formats: [html, json])."
+            if r.status_code == 403:
+                # La configurazione del repository abilita il JSON: se arriva un 403,
+                # SearXNG ne sta usando un'altra (di solito il volume arrivato vuoto).
+                note += (" La configurazione in uso non abilita il formato JSON: ricostruisci il "
+                         "servizio (docker compose -f docker-compose.dev.yml up -d --build searxng), "
+                         "che include services/search-gateway/searxng/settings.yml.")
+            elif r.status_code == 429:
+                note += " Troppe richieste: riprova tra poco."
             return "error", note
         data = r.json()
     except Exception as exc:  # noqa: BLE001 — rete non fatale

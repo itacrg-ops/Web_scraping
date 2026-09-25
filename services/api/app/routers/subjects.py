@@ -29,8 +29,8 @@ from app.db import get_session
 from app.models import Alert as AlertModel
 from app.models import Subject as SubjectModel
 from app.models import SubjectArticle, SubjectName
-from app.names import SIMILAR_MIN, similarity, subject_key
-from app.registry_lookup import confirmed_counts, subject_out
+from app.names import SIMILAR_MIN, clean_id, similarity, subject_key
+from app.registry_lookup import confirmed_counts, find_duplicate, homonym, merge_roles, subject_out
 from app.schemas import (
     NameDecisionIn,
     SimilarCandidate,
@@ -83,15 +83,21 @@ async def list_subjects(session: AsyncSession = Depends(get_session)) -> list[di
 @router.get("/similar", response_model=SimilarOut, dependencies=[Depends(require_user)])
 async def similar_subjects(
     tipo_soggetto: str = Query("persona_giuridica"), denominazione: str | None = None,
-    nome: str | None = None, cognome: str | None = None, session: AsyncSession = Depends(get_session),
+    nome: str | None = None, cognome: str | None = None, cf_piva: str | None = None,
+    data_nascita: str | None = None, session: AsyncSession = Depends(get_session),
 ) -> SimilarOut:
     """Prima di uno screening (o di aggiungere un soggetto): c'è già lo stesso nome, o un
     nome SIMILE («Stropp» / «Stroppa»), nel registro o tra i soggetti già screenati? I
-    nomi che un revisore ha già dichiarato «altro soggetto» non vengono riproposti."""
+    nomi che un revisore ha già dichiarato «altro soggetto» non vengono riproposti.
+
+    Con `cf_piva` e `data_nascita` il soggetto «già inserito» segue la regola di
+    find_duplicate: stesso CF/P.IVA (anche con un altro nome); lo stesso nome con un
+    CF/P.IVA o una data di nascita diversi è un omonimo e compare tra i simili."""
     name = (denominazione or " ".join(p for p in (cognome, nome) if p) or "").strip()
     if not name:
         raise HTTPException(status_code=422, detail="indicare la denominazione oppure nome e cognome")
     key = subject_key(name, tipo_soggetto)
+    cf = clean_id(cf_piva)
 
     screened: dict[str, list] = defaultdict(list)   # chiave → nomi degli alert
     for subj_name, in (await session.execute(
@@ -99,7 +105,7 @@ async def similar_subjects(
     )).all():
         screened[subject_key(subj_name, tipo_soggetto)].append(subj_name)
 
-    exact, similar, registry_keys = None, [], set()
+    exact, exact_cf, similar, registry_keys = None, None, [], set()
     rows = (await session.execute(
         select(SubjectModel).where(SubjectModel.tipo_soggetto == tipo_soggetto))).scalars().all()
     for r in rows:
@@ -111,8 +117,14 @@ async def similar_subjects(
         cand = dict(fonte="registro", subject_id=r.id, denominazione=r.denominazione,
                     tipo_soggetto=r.tipo_soggetto, cf_piva=r.cf_piva, data_nascita=r.data_nascita,
                     luogo_nascita=r.luogo_nascita, alert=sum(len(screened.get(k, [])) for k in keys))
+        if cf and clean_id(r.cf_piva) == cf:
+            exact_cf = exact_cf or SimilarCandidate(**cand, score=1.0)
+            continue
         if rkey == key or any(n.name_key == key for n in aliases):
-            exact = exact or SimilarCandidate(**cand, score=1.0)
+            if homonym(r, cf, data_nascita):       # stesso nome, identificativo diverso: omonimo
+                similar.append(SimilarCandidate(**cand, score=1.0))
+            else:
+                exact = exact or SimilarCandidate(**cand, score=1.0)
             continue
         if any(n.decision == "diverso" and n.name_key == key for n in r.names):
             continue
@@ -129,7 +141,7 @@ async def similar_subjects(
                                             tipo_soggetto=tipo_soggetto, score=round(score, 3),
                                             alert=len(names_)))
     similar.sort(key=lambda c: (-c.score, c.fonte != "registro"))
-    return SimilarOut(nome=name, registro_esatto=exact, alert_esistenti=len(screened.get(key, [])),
+    return SimilarOut(nome=name, registro_esatto=exact_cf or exact, alert_esistenti=len(screened.get(key, [])),
                       simili=similar[:5])
 
 
@@ -137,6 +149,14 @@ async def similar_subjects(
 async def create_subject(
     payload: SubjectCreate, user: User = Depends(require_user), session: AsyncSession = Depends(get_session)
 ) -> dict:
+    """Aggiunge un soggetto; 409 «soggetto già inserito» se c'è già (stesso CF/P.IVA, o
+    stesso nome senza un CF/P.IVA o una data di nascita diversi che lo distinguano da un
+    omonimo)."""
+    dup = await find_duplicate(session, payload.tipo_soggetto, payload.denominazione, payload.cf_piva,
+                               payload.data_nascita)
+    if dup is not None:
+        raise HTTPException(status_code=409, detail=f"Soggetto già inserito nel registro: «{dup.denominazione}»"
+                            + (f" (CF/P.IVA {dup.cf_piva})" if dup.cf_piva else ""))
     row = SubjectModel(
         tipo_soggetto=payload.tipo_soggetto,
         denominazione=payload.denominazione,
@@ -146,6 +166,8 @@ async def create_subject(
         cup=payload.cup,
         ruolo=payload.ruolo or None,
         attivo=payload.attivo,
+        pep=payload.pep,
+        cariche=merge_roles([], payload.cariche),
         names=[],
     )
     session.add(row)
@@ -174,7 +196,9 @@ async def update_subject(
             row.denominazione = value.strip()
         elif key in ("cf_piva", "data_nascita", "luogo_nascita", "ruolo", "tipo_soggetto"):
             setattr(row, key, (value or None))
-        else:  # cup, attivo
+        elif key == "cariche":
+            row.cariche = merge_roles([], value or [])
+        elif value is not None:  # cup, attivo, pep
             setattr(row, key, value)
     old_key, new_key = subject_key(old_name, row.tipo_soggetto), subject_key(row.denominazione, row.tipo_soggetto)
     if old_key != new_key:
@@ -256,11 +280,35 @@ async def remove_confirmed_article(subject_id: str, article_id: str, user: User 
 async def import_subjects(
     payload: SubjectImportRequest, session: AsyncSession = Depends(get_session)
 ) -> SubjectImportResult:
-    """Import massivo da CSV (upsert per CF/P.IVA). Non fatale sulle righe
-    invalide: le salta e le riporta nel risultato."""
+    """Import massivo da CSV. Un soggetto già inserito (stessa regola di find_duplicate)
+    viene aggiornato: le celle vuote non cancellano i dati presenti. Non fatale sulle
+    righe invalide: le salta e le riporta nel risultato."""
     reader = csv.DictReader(io.StringIO(payload.csv))
     created = updated = 0
     errors: list[str] = []
+    # Indice del registro (stessa regola di find_duplicate) costruito una volta: con
+    # migliaia di righe non si rilegge il registro a ogni riga.
+    by_cf: dict[str, SubjectModel] = {}
+    by_key: dict[tuple, list[SubjectModel]] = defaultdict(list)   # nome o variante → soggetti
+
+    def index(r: SubjectModel) -> None:
+        if clean_id(r.cf_piva):
+            by_cf.setdefault(clean_id(r.cf_piva), r)
+        keys = {subject_key(r.denominazione, r.tipo_soggetto)} | {n.name_key for n in r.names
+                                                                  if n.decision == "stesso"}
+        for k in keys:
+            if r not in by_key[(r.tipo_soggetto, k)]:
+                by_key[(r.tipo_soggetto, k)].append(r)
+
+    def duplicate_of(sc: SubjectCreate) -> SubjectModel | None:
+        cf = clean_id(sc.cf_piva)
+        if cf and cf in by_cf:
+            return by_cf[cf]
+        named = by_key.get((sc.tipo_soggetto, subject_key(sc.denominazione, sc.tipo_soggetto)), [])
+        return next((r for r in named if not homonym(r, cf, sc.data_nascita)), None)
+
+    for r in (await session.execute(select(SubjectModel))).scalars().all():
+        index(r)
     for i, raw in enumerate(reader, start=2):  # riga 1 = header
         if i - 1 > _MAX_IMPORT_ROWS:
             errors.append(f"troppe righe (max {_MAX_IMPORT_ROWS}): resto ignorato")
@@ -277,32 +325,42 @@ async def import_subjects(
                 cf_piva=row.get("cf_piva") or None,
                 cup=[c.strip() for c in (row.get("cup") or "").split(";") if c.strip()],
                 ruolo=row.get("ruolo") or None,
+                pep=(row.get("pep") or "").lower() in ("si", "sì", "s", "true", "1", "x"),
+                cariche=[c.strip() for c in (row.get("cariche") or "").split(";") if c.strip()],
             )
         except Exception as exc:  # noqa: BLE001 — riga invalida, non fatale
             errors.append(f"riga {i}: {exc}")
             continue
 
-        existing = None
-        if sc.cf_piva:
-            existing = (
-                await session.execute(select(SubjectModel).where(SubjectModel.cf_piva == sc.cf_piva))
-            ).scalars().first()
+        # stesso CF/P.IVA, o stesso nome senza CF diverso: si aggiorna, niente doppioni
+        existing = duplicate_of(sc)
         if existing is not None:
             existing.tipo_soggetto = sc.tipo_soggetto
-            existing.denominazione = sc.denominazione
-            existing.data_nascita = sc.data_nascita
-            existing.luogo_nascita = sc.luogo_nascita
-            existing.cup = sc.cup
-            existing.ruolo = sc.ruolo
+            # una riga scritta con una variante confermata non rinomina il soggetto
+            row_key = subject_key(sc.denominazione, sc.tipo_soggetto)
+            if not any(n.decision == "stesso" and n.name_key == row_key for n in existing.names):
+                existing.denominazione = sc.denominazione
+            # le celle vuote non cancellano i dati già presenti
+            existing.cf_piva = sc.cf_piva or existing.cf_piva
+            existing.data_nascita = sc.data_nascita or existing.data_nascita
+            existing.luogo_nascita = sc.luogo_nascita or existing.luogo_nascita
+            existing.cup = sc.cup or existing.cup
+            existing.ruolo = sc.ruolo or existing.ruolo
+            existing.pep = existing.pep or sc.pep
+            existing.cariche = merge_roles(existing.cariche, sc.cariche)
             existing.attivo = True
+            index(existing)  # CF o nome nuovi: le righe successive lo trovano
             updated += 1
         else:
-            session.add(SubjectModel(
+            new_row = SubjectModel(
                 tipo_soggetto=sc.tipo_soggetto, denominazione=sc.denominazione,
                 cf_piva=sc.cf_piva or None, data_nascita=sc.data_nascita,
                 luogo_nascita=sc.luogo_nascita,
-                cup=sc.cup, ruolo=sc.ruolo, attivo=True, names=[],
-            ))
+                cup=sc.cup, ruolo=sc.ruolo, attivo=True, pep=sc.pep,
+                cariche=merge_roles([], sc.cariche), names=[],
+            )
+            session.add(new_row)
+            index(new_row)   # le righe successive lo vedono (niente doppioni nel file)
             created += 1
     await session.commit()
     return SubjectImportResult(created=created, updated=updated, errors=errors[:50])

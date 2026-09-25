@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import {
   Alert as MuiAlert, Box, Button, Checkbox, Chip, CircularProgress, Divider,
   FormControlLabel, Link, List, ListItem, ListItemButton, ListItemIcon, ListItemText,
@@ -7,11 +7,14 @@ import {
 } from "@mui/material";
 import SearchIcon from "@mui/icons-material/Search";
 import {
-  decideName, getScreening, searchPreview, similarSubjects, startScreening, updateSubject,
-  type Credibilita, type Screening, type SearchResult, type SimilarCandidate, type SimilarOut, type TipoSoggetto,
+  decideName, getAlert, getScreening, searchPreview, similarSubjects, startScreening, updateSubject,
+  type Alert, type Credibilita, type Screening, type SearchResult, type SimilarCandidate, type SimilarOut,
+  type TipoSoggetto,
 } from "../api";
 import { checkCf } from "../codiceFiscale";
+import RoleChips from "../components/RoleChips";
 import SimilarNamesDialog, { type NameChoice } from "../components/SimilarNamesDialog";
+import { ESITO } from "../esito";
 import { splitPerson } from "../personName";
 
 // Campi del soggetto che la conferma di un nome simile può sostituire.
@@ -55,6 +58,7 @@ export default function ScreeningPage() {
 
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Screening | null>(null);
+  const [outcome, setOutcome] = useState<Alert | null>(null);   // alert generato dallo screening
   const [error, setError] = useState<string | null>(null);
 
   // Nomi simili a soggetti noti: dialogo di conferma (promessa risolta dalla scelta).
@@ -204,6 +208,7 @@ export default function ScreeningPage() {
     setBusy(true);
     setError(null);
     setResult(null);
+    setOutcome(null);
     try {
       const urls = Array.from(selected);
       const s = await startScreening({
@@ -218,12 +223,14 @@ export default function ScreeningPage() {
         seed_url: urls.length === 0 && seedUrl ? seedUrl : undefined,
       });
       setResult(s);
-      for (let i = 0; i < 12; i++) {
-        await new Promise((r) => setTimeout(r, 1000));
-        const cur = await getScreening(s.id);
+      // Ricerca, articoli e classificazione possono richiedere un paio di minuti.
+      let cur = s;
+      for (let i = 0; i < 80 && cur.status === "running"; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        cur = await getScreening(s.id);
         setResult(cur);
-        if (cur.status !== "running") break;
       }
+      if (cur.alert_id) setOutcome(await getAlert(cur.alert_id).catch(() => null));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -423,11 +430,48 @@ export default function ScreeningPage() {
       {nameNote && <MuiAlert severity="info" sx={{ mt: 2 }} onClose={() => setNameNote(null)}>{nameNote}</MuiAlert>}
       {error && <MuiAlert severity="error" sx={{ mt: 2 }}>{error}</MuiAlert>}
       {result && (
-        <MuiAlert severity={result.status === "completed" ? "success" : "info"} sx={{ mt: 2 }}>
+        <MuiAlert severity={result.status === "completed" ? "success" : result.status === "failed" ? "error" : "info"}
+          sx={{ mt: 2 }}>
           Screening <code>{result.id}</code> — stato: <strong>{result.status}</strong>
           {result.alert_id && <> · alert generato: <code>{result.alert_id}</code></>}
+          {result.status === "running" && !busy && " — ancora in corso: l'esito comparirà nella pagina Alert."}
         </MuiAlert>
       )}
+      {outcome && <Outcome a={outcome} />}
     </div>
+  );
+}
+
+// Esito dello screening: giudizio del sistema, ruoli negli articoli e possibile PEP.
+function Outcome({ a }: { a: Alert }) {
+  const [esito, color] = ESITO[a.disposition] ?? [a.disposition, "default"];
+  const isPerson = a.tipo_soggetto === "persona_fisica";
+  // i ruoli sono già mostrati come chip
+  const drivers = (a.drivers ?? []).filter((d) => !d.startsWith("Ruoli negli articoli:"));
+  return (
+    <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+        <Typography variant="subtitle1" sx={{ mr: 0.5 }}>{a.subject}</Typography>
+        <Chip size="small" color={color} label={esito} title={a.disposition} />
+        <Chip size="small" variant="outlined" label={`AMI ${a.ami_score} · ${a.risk_level}`} />
+        <Box sx={{ flex: 1 }} />
+        <Button size="small" component={RouterLink} to={`/alerts?caso=${a.id}`}>Apri il caso</Button>
+      </Box>
+      {isPerson && (
+        <Box sx={{ mt: 1 }}>
+          <Typography variant="body2" color="text.secondary">
+            {a.roles?.length ? "Ruoli negli articoli:" : "Nessun ruolo indicato accanto al nome negli articoli."}
+          </Typography>
+          <RoleChips roles={a.roles} pep={a.pep} />
+        </Box>
+      )}
+      {drivers.length > 0 && (
+        <Box component="ul" sx={{ m: 0, mt: 1, pl: 2.5 }}>
+          {drivers.slice(0, 6).map((d) => (
+            <li key={d}><Typography variant="body2">{d}</Typography></li>
+          ))}
+        </Box>
+      )}
+    </Paper>
   );
 }

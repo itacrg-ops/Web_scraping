@@ -69,7 +69,49 @@ def subject_out(row: SubjectModel, confirmed: int = 0) -> dict:
         "id": row.id, "tipo_soggetto": row.tipo_soggetto, "denominazione": row.denominazione,
         "cf_piva": row.cf_piva, "data_nascita": row.data_nascita, "luogo_nascita": row.luogo_nascita,
         "cup": row.cup or [], "ruolo": row.ruolo, "attivo": row.attivo, "created_at": row.created_at,
+        "pep": bool(row.pep), "cariche": row.cariche or [],
         "alias": [n.name for n in row.names if n.decision == "stesso"],
         "distinti": [n.name for n in row.names if n.decision == "diverso"],
         "articoli_confermati": confirmed,
     }
+
+
+def homonym(row: SubjectModel, cf: str | None, data_nascita: str | None) -> bool:
+    """Stesso nome ma un identificativo presente su entrambi è diverso (CF/P.IVA o data
+    di nascita): è un omonimo, non lo stesso soggetto."""
+    other = clean_id(row.cf_piva)
+    if cf and other and cf != other:
+        return True
+    dob, other_dob = (data_nascita or "").strip(), (row.data_nascita or "").strip()
+    return bool(dob and other_dob and dob != other_dob)
+
+
+async def find_duplicate(session: AsyncSession, tipo: str | None, name: str,
+                         cf_piva: str | None, data_nascita: str | None = None) -> SubjectModel | None:
+    """Il soggetto è GIÀ nel registro? Stesso CF/P.IVA; oppure stesso tipo e stesso nome
+    (o variante confermata) senza un identificativo che lo distingua (vedi `homonym`):
+    un omonimo va registrato a parte."""
+    cf = clean_id(cf_piva)
+    if cf:
+        stmt = select(SubjectModel).where(func.upper(func.replace(SubjectModel.cf_piva, " ", "")) == cf)
+        row = (await session.execute(stmt)).scalars().first()
+        if row is not None:
+            return row
+    key = subject_key(name, tipo)
+    rows = (await session.execute(select(SubjectModel).where(
+        SubjectModel.tipo_soggetto == (tipo or "persona_giuridica")))).scalars().all()
+    named = [r for r in rows if subject_key(r.denominazione, r.tipo_soggetto) == key] \
+        + [r for r in rows if any(n.decision == "stesso" and n.name_key == key for n in r.names)]
+    return next((r for r in named if not homonym(r, cf, data_nascita)), None)
+
+
+def merge_roles(existing: list | None, new: list[str]) -> list[str]:
+    """Ruoli del registro più quelli nuovi, senza duplicati (maiuscole/spazi ignorati)."""
+    out = list(existing or [])
+    seen = {" ".join(x.lower().split()) for x in out}
+    for r in new:
+        key = " ".join((r or "").lower().split())
+        if key and key not in seen:
+            out.append(" ".join(r.split()))
+            seen.add(key)
+    return out

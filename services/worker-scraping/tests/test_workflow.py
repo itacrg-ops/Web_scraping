@@ -79,6 +79,13 @@ def _fakes(cfg: dict) -> tuple[list, list, dict]:
         if cfg.get("mention") == "variant":   # nome esatto assente, uno simile sì
             return {"mentioned": False, "matched": [], "context": [], "variants": ["ACME Costruzzioni"],
                     "anagraphics": {"status": "n/a"}, "ner": None}
+        if cfg.get("mention") == "pep":       # persona citata con una carica accanto al nome
+            return {"mentioned": True, "matched": ["nome_cognome"], "context": [],
+                    "anagraphics": {"status": "n/a"}, "ner": None,
+                    "roles": [{"ruolo": "sindaco di Roma", "tipo": "sindaco", "categoria": "pep",
+                               "pep": "verifica", "ex": False},
+                              {"ruolo": "imprenditore", "tipo": "imprenditore", "categoria": "aziendale",
+                               "pep": None, "ex": False}]}
         return {"mentioned": True, "matched": ["denominazione"], "context": [],
                 "anagraphics": {"status": "n/a"}, "ner": None}
 
@@ -124,11 +131,11 @@ def _fakes(cfg: dict) -> tuple[list, list, dict]:
     return acts, log, st
 
 
-async def _screen(env: WorkflowEnvironment, cfg: dict) -> tuple[dict | Exception, list, dict]:
+async def _screen(env: WorkflowEnvironment, cfg: dict, **subject) -> tuple[dict | Exception, list, dict]:
     acts, log, st = _fakes(cfg)
     queue, sid = f"q-{uuid.uuid4().hex[:8]}", f"S-{uuid.uuid4().hex[:8]}"
     req = {"screening_id": sid, "denominazione": "ACME Costruzioni S.r.l.",
-           "tipo_soggetto": "persona_giuridica", "cf_piva": "00743110157"}
+           "tipo_soggetto": "persona_giuridica", "cf_piva": "00743110157", **subject}
     async with Worker(env.client, task_queue=queue, workflows=[workflows.ScreeningWorkflow],
                       activities=acts):
         try:
@@ -201,6 +208,19 @@ async def test_similar_name_in_articles_is_flagged(env) -> None:
     assert a["drivers"][0].startswith("⚠ Negli articoli compare un nome simile: «ACME Costruzzioni»")
     ok, _, st2 = await _screen(env, {})
     assert _alert(st2)["name_variants"] == []                   # nome esatto trovato: nessun avviso
+
+
+async def test_roles_and_pep_flag_for_a_person(env) -> None:
+    res, log, st = await _screen(env, {"mention": "pep"}, denominazione="Rossi Mario",
+                                 tipo_soggetto="persona_fisica", cf_piva=None)
+    a = _alert(st)
+    assert a["pep"] is True and [r["ruolo"] for r in a["roles"]] == ["sindaco di Roma", "imprenditore"]
+    assert a["drivers"][0].startswith("⚠ Possibile PEP (persona politicamente esposta, D.Lgs. 231/2007): "
+                                      "sindaco di Roma — da verificare (per il sindaco:")
+    assert any(d.startswith("Ruoli negli articoli: sindaco di Roma; imprenditore") for d in a["drivers"])
+    assert a["disposition"] == "ESCALATION_I_LIVELLO"               # il PEP non cambia l'esito
+    _, _, st2 = await _screen(env, {})
+    assert _alert(st2)["pep"] is None and _alert(st2)["roles"] == []  # impresa: nessun flag
 
 
 async def test_unresolved_entity_is_skipped_not_published(env) -> None:

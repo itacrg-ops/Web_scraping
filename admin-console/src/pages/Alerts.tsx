@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Alert as MuiAlert, Box, Button, Checkbox, Chip, FormControlLabel, IconButton, Paper, Switch, Table,
   TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip, Typography,
@@ -11,20 +12,14 @@ import {
 } from "../api";
 import CaseDrawer from "../components/CaseDrawer";
 import DeleteAlertsDialog from "../components/DeleteAlertsDialog";
-
-type ChipColor = "default" | "success" | "warning" | "error" | "info";
+import { PepChip } from "../components/RoleChips";
+import { ESITO, type ChipColor } from "../esito";
 
 const erColor = (s?: string): ChipColor =>
   s === "resolved" ? "success" : s === "unresolved" ? "default" : "warning";
 
 // Etichette brevi (il valore completo è nel tooltip): la tabella deve entrare nella
 // pagina anche su un portatile, senza scroll orizzontale.
-const ESITO: Record<string, [string, ChipColor]> = {
-  ESCALATION_I_LIVELLO: ["Escalation", "error"],
-  AUTO_CHIUSO: ["Chiuso", "success"],
-  ESITO_INCOMPLETO: ["Incompleto", "warning"],
-  HITL_ENTITY_RESOLUTION: ["Da disambiguare", "info"],
-};
 const SVI: Record<string, [string, ChipColor]> = {
   published: ["pubblicato", "success"],
   failed: ["fallita", "error"],
@@ -110,6 +105,7 @@ function AlertRow({ a, label, dup, selected, onOpen, onSelect }: RowProps) {
           <Box>
             <Typography variant="body2">
               {a.subject}
+              {a.pep && <PepChip small />}
               {dup > 1 && (
                 <Tooltip describeChild title={`${dup} alert per questo soggetto: possibili duplicati`}>
                   <Chip size="small" color="warning" variant="outlined" label={`×${dup}`}
@@ -161,6 +157,7 @@ export default function Alerts() {
   const [onlyDup, setOnlyDup] = useState(false);
   const [toDelete, setToDelete] = useState<Alert[]>([]);
   const [deleted, setDeleted] = useState<AlertDeleteResult | null>(null);
+  const [params, setParams] = useSearchParams();
 
   const refreshStats = useCallback(() => {
     getLabelStats().then(setStats).catch(() => setStats(null));
@@ -173,6 +170,16 @@ export default function Alerts() {
       .catch(() => setLabels({}));
     refreshStats();
   }, [refreshStats]);
+
+  // /alerts?caso=<id> (es. dalla pagina Screening): apre subito la scheda di quel caso.
+  useEffect(() => {
+    const id = params.get("caso");
+    if (!id || !rows.length) return;
+    const i = rows.findIndex((a) => a.id === id);
+    if (i >= 0) setOpen(i);
+    params.delete("caso");
+    setParams(params, { replace: true });
+  }, [rows]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const onLabelSaved = (s: CaseLabelSummary) => {
     setLabels((prev) => ({ ...prev, [s.alert_id]: s }));

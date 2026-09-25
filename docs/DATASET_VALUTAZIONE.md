@@ -114,8 +114,9 @@ diversi restano distinti.
 
 Console → **Esporta dataset (NDJSON)** (solo casi affidabili), oppure
 `GET /api/labels/export?solo_affidabili=true`. Una riga per etichetta: giudizio del
-revisore + predizione del sistema (esito, categorie, metodo di classificazione, e per ogni
-articolo `mentioned` / `mention_match`).
+revisore + predizione del sistema (esito, categorie, metodo di classificazione, ruoli
+negli articoli e flag PEP per la persona fisica, e per ogni articolo `mentioned` /
+`mention_match`).
 
 ```bash
 python scripts/evaluate_labels.py dataset-casi-AAAAMMGG.ndjson          # report leggibile
