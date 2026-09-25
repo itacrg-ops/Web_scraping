@@ -260,7 +260,7 @@ oggetto/alert/coda) da `.env`.
 | **postgres** (pgvector) | 5432 | Sistema di record: alert, evidenze, registro soggetti, fonti. Vettori per gli embedding. |
 | **redis** | 6379 | Cache / rate-limit (base per il rate limiter distribuito, B4). |
 | **minio** | 9000 · 9001 | Object store S3-compatibile: snapshot immutabili delle pagine (WARC + HTML) e provenance. |
-| **searxng** | 8888→8080 | Meta-motore self-hosted keyless: provider di ricerca primario. La configurazione con l'API JSON abilitata è inclusa nell'immagine (`services/search-gateway/searxng/`), non montata. |
+| **searxng** | 8888→8080 | Meta-motore self-hosted keyless: provider di ricerca primario. La configurazione (API JSON, motori) è inclusa nell'immagine (`services/search-gateway/searxng/`) e letta da `SEARXNG_SETTINGS_PATH`, fuori dal volume `/etc/searxng`. |
 | **sas-mcp-server** | 8134 | Ponte verso SAS Viya (profilo `sas`): scoring/decisioning quando disponibile un ambiente Viya. |
 
 ---

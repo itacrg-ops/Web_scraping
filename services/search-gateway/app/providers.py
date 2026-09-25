@@ -400,10 +400,11 @@ async def _searxng_call(query_str: str, max_results: int,
             note = f"SearXNG ha risposto {r.status_code}."
             if r.status_code == 403:
                 # La configurazione del repository abilita il JSON: se arriva un 403,
-                # SearXNG ne sta usando un'altra (di solito il volume arrivato vuoto).
+                # SearXNG ne sta usando un'altra (immagine non ricostruita dopo un pull).
                 note += (" La configurazione in uso non abilita il formato JSON: ricostruisci il "
-                         "servizio (docker compose -f docker-compose.dev.yml up -d --build searxng), "
-                         "che include services/search-gateway/searxng/settings.yml.")
+                         "servizio (docker compose -f docker-compose.dev.yml up -d --build searxng); "
+                         "se resta 403, ricrealo da zero (docker compose -f docker-compose.dev.yml "
+                         "rm -sf searxng, poi di nuovo up -d --build searxng).")
             elif r.status_code == 429:
                 note += " Troppe richieste: riprova tra poco."
             return "error", note, []

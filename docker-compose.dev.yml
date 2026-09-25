@@ -100,9 +100,10 @@ services:
     ports: ["8095:8095"]
 
   # ---- SearXNG: meta-search self-hosted (provider "searxng", keyless) ----
-  # API JSON abilitata da services/search-gateway/searxng/settings.yml, COPIATO
-  # nell'immagine (niente volume: se arrivasse vuoto, SearXNG userebbe la propria
-  # configurazione di default senza JSON e risponderebbe 403 al search-gateway).
+  # API JSON e motori da services/search-gateway/searxng/settings.yml, COPIATO
+  # nell'immagine e letto da SEARXNG_SETTINGS_PATH (vedi il Dockerfile): non dipende
+  # da volumi, nemmeno da quello che Compose rimonta su /etc/searxng ricreando il
+  # container (una vecchia configurazione di default, senza JSON → 403).
   searxng:
     build: ./services/search-gateway/searxng
     environment:

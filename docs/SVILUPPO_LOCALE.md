@@ -243,8 +243,8 @@ Provider (`SEARCH_PROVIDER` nel `.env`):
   (`news`: Google/Bing/DuckDuckGo/Brave News e le testate italiane ANSA e Il Post, che
   cercano nel proprio archivio). Gira come servizio nel compose; la configurazione (API
   JSON abilitata, motori, `search-gateway/searxng/settings.yml`) è **inclusa
-  nell'immagine**, non montata: dopo una modifica al file,
-  `docker compose -f docker-compose.dev.yml up -d --build searxng`.
+  nell'immagine** e letta da `SEARXNG_SETTINGS_PATH`, non montata: dopo una modifica al
+  file, `docker compose -f docker-compose.dev.yml up -d --build searxng`.
 - **Persone giuridiche con nomi comuni** («Vita Srl», «Nuova Vita S.p.A.»): la ricerca
   usa la denominazione con la forma giuridica (mai la sola parola «vita») e mette prima
   i risultati che la citano per intero; nell'articolo il nome conta solo se usato come
@@ -372,13 +372,18 @@ immagini buildate: dopo un pull rigenera con `--build`
 (`docker compose -f docker-compose.dev.yml up --build`).
 
 **«searxng: SearXNG ha risposto 403»** nella pagina Screening. SearXNG sta usando la sua
-configurazione di default, che non abilita il formato JSON: succedeva quando il file
-`settings.yml` era montato come volume e il volume arrivava vuoto (come per la console).
-Ora la configurazione è nell'immagine: ricostruisci il servizio.
+configurazione di default, che non abilita il formato JSON. Succedeva quando `settings.yml`
+era montato come volume e il volume arrivava vuoto (come per la console); e anche dopo
+averla inclusa nell'immagine in `/etc/searxng`, perché l'immagine dichiara quella
+cartella come volume e Compose, ricreando il container, vi rimontava la vecchia
+configurazione. Ora SearXNG legge la configurazione da un altro percorso dell'immagine
+(`SEARXNG_SETTINGS_PATH`): basta ricostruire il servizio.
 ```bash
 docker compose -f docker-compose.dev.yml up -d --build searxng
 curl -s "http://localhost:8888/search?q=test&format=json" | head -c 200   # JSON, non 403
 ```
+Se resta 403, il servizio è di una versione precedente: ricrealo da zero con
+`docker compose -f docker-compose.dev.yml rm -sf searxng` e poi di nuovo `up -d --build searxng`.
 Un **429** invece è il limite di richieste dei motori a monte: riprova più tardi o
 aggiungi un altro provider (`SEARCH_PROVIDER=searxng,gdelt`).
 
