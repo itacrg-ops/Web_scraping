@@ -5,7 +5,9 @@ Il soggetto è "citato" solo se compare come **parole intere**, mai come sottost
 - persona fisica: nome e cognome **adiacenti**, in qualunque ordine ("Mario Rossi",
   "Rossi Mario"). "Rossi" non vale dentro "Rossini", "Anna" non vale dentro
   "Giovanna", e un "Mario" e un "Rossi" sparsi nell'articolo (due persone diverse)
-  non bastano;
+  non bastano. Con il solo nome completo ("Messina Denaro Matteo": dove finisce il
+  cognome non si sa) valgono tutte le divisioni ("Matteo Messina Denaro"); le
+  particelle possono essere unite o staccate ("Di Meglio" = "DiMeglio");
 - persona giuridica: la denominazione senza forma giuridica (S.r.l., S.p.A., …) come
   sequenza di parole, oppure il nome distintivo (senza parole generiche) se di 2+
   parole, scritti come nome proprio (iniziale maiuscola: "Nuova Vita", non "una nuova
@@ -94,21 +96,42 @@ def _word_spans(text: str) -> list[tuple[str, str, bool]]:
     return out
 
 
-def _person_names(subject: dict) -> tuple[list[str], list[str]]:
+def _person_splits(subject: dict) -> list[tuple[list[str], list[str]]]:
+    """(nome, cognome) possibili. Con nome e cognome separati, quelli. Con la sola
+    denominazione "Cognome Nome" (screening passati, rivalutazione) il punto di divisione
+    non si conosce: "Messina Denaro Matteo" è Messina + Denaro Matteo oppure Messina
+    Denaro + Matteo — valgono tutte le divisioni."""
     nome, cognome = tokens(subject.get("nome", "")), tokens(subject.get("cognome", ""))
-    if not (nome or cognome):  # in mancanza: denominazione "Cognome Nome"
-        toks = tokens(subject.get("denominazione", ""))
-        cognome, nome = toks[:1], toks[1:]
-    return nome, cognome
+    if nome and cognome:
+        return [(nome, cognome)]
+    if nome or cognome:
+        return []
+    toks = tokens(subject.get("denominazione", ""))
+    return [(toks[k:], toks[:k]) for k in range(1, len(toks))]
+
+
+def _person_names(subject: dict) -> tuple[list[str], list[str]]:
+    """Una divisione (nome, cognome) — la prima: parole significative del nome."""
+    splits = _person_splits(subject)
+    return splits[0] if splits else ([], [])
+
+
+def contains_joined(hay: list[str], needle: list[str]) -> bool:
+    """`needle` compare come parole intere contigue, anche con parole unite o staccate
+    in modo diverso ("DI MEGLIO" in "CIRO DIMEGLIO", "DIMEGLIO" in "CIRO DI MEGLIO")."""
+    target, n = "".join(needle), len(needle)
+    for size in range(max(1, n - 1), n + 2):
+        for i in range(len(hay) - size + 1):
+            if hay[i][:1] == target[:1] and "".join(hay[i:i + size]) == target:
+                return True
+    return False
 
 
 def person_in(name_tokens: list[str], subject: dict) -> bool:
     """Il nome (es. un'entità PERSONA della NER) contiene nome e cognome del soggetto
     ADIACENTI, in qualunque ordine, come parole intere."""
-    nome, cognome = _person_names(subject)
-    if not (nome and cognome):
-        return False
-    return contains(name_tokens, nome + cognome) or contains(name_tokens, cognome + nome)
+    return any(contains_joined(name_tokens, nome + cognome) or contains_joined(name_tokens, cognome + nome)
+               for nome, cognome in _person_splits(subject))
 
 
 def org_matches(a: str, b: str) -> bool:
@@ -122,7 +145,7 @@ def org_matches(a: str, b: str) -> bool:
 
 def _check_person(subject: dict, ttoks: list[str], matched: list[str]) -> list[str]:
     nome, cognome = _person_names(subject)
-    if nome and cognome and person_in(ttoks, subject):
+    if person_in(ttoks, subject):
         matched.append("nome_cognome")
     return [t for t in nome + cognome if len(t) >= 3]
 
@@ -165,12 +188,13 @@ def _check_entity(subject: dict, text: str, ttoks: list[str], matched: list[str]
             return core
     # Nome di una parola: usato come impresa, oppure nome proprio a metà frase e mai
     # in minuscolo nel testo (altrimenti è la parola comune: "la vita", "l'acme").
+    # Un nome corto ("Qè S.r.l.") vale solo usato come impresa: da solo è ambiguo.
     single = full if len(full) == 1 else core if len(core) == 1 else []
-    if single and len(single[0]) >= 3:
+    if single:
         hits = _entity_hits(norm, single, full)
         if any(_as_company(norm, i, 1) for i in hits):
             matched.append("denominazione")
-        elif (any(proper(i) and not words[i][2] for i in hits)
+        elif (len(single[0]) >= 3 and any(proper(i) and not words[i][2] for i in hits)
               and not any(not proper(i) for i in hits)):
             matched.append("denominazione_breve")
     return core
@@ -214,15 +238,20 @@ def name_variants(subject: dict, text: str) -> list[str]:
             found.append(v)
 
     if (subject.get("tipo_soggetto") or "persona_giuridica") == "persona_fisica":
-        nome, cognome = _person_names(subject)
-        if len(nome) != 1 or len(cognome) != 1:
-            return []
-        first, last = nome[0], cognome[0]
-        for i in range(len(norm) - 1):
-            a, b = norm[i], norm[i + 1]
-            if (a == first and _near(b, last)) or (b == first and _near(a, last)) \
-                    or (a == last and _near(b, first)) or (b == last and _near(a, first)):
-                add(i, i + 1)
+        # Una parte del nome esatta e l'altra simile, nei due ordini, con le parti unite
+        # o staccate: «Ciro Di Meglio» per «DeMeglio Ciro», «Andrea Stroppa» per «Stropp Andrea».
+        for nome, cognome in _person_splits(subject):
+            first, last = "".join(nome), "".join(cognome)
+            longest = min(len(nome) + len(cognome) + 1, 5)
+            for i in range(len(norm) - 1):
+                for size in range(2, longest + 1):
+                    if i + size > len(norm):
+                        break
+                    for cut in range(1, size):
+                        a, b = "".join(norm[i:i + cut]), "".join(norm[i + cut:i + size])
+                        if (a == first and _near(b, last)) or (b == first and _near(a, last)) \
+                                or (a == last and _near(b, first)) or (b == last and _near(a, first)):
+                            add(i, i + size - 1)
     else:
         core = [t for t in strip_legal_form(tokens(subject.get("denominazione", ""))) if t not in GENERIC]
         n = len(core)

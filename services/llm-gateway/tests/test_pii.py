@@ -101,6 +101,63 @@ def test_nome_con_refuso_non_viene_indovinato() -> None:
     assert out == "Perquisito [PERSONA]." and c["soggetto"] == 0, out
 
 
+def test_varianti_del_nome_in_ogni_ordine() -> None:
+    # "Cognome Nome" con cognome di due parole: anche "Matteo Messina Denaro"
+    assert "Matteo Messina Denaro" in pii._name_variants("Messina Denaro Matteo")
+    out, c = pii.redact_persons("Il tesoro di Matteo Messina Denaro.", subject_name="Messina Denaro Matteo")
+    assert out == "Il tesoro di [SOGGETTO]." and c["soggetto"] == 1, out
+
+
+def test_impresa_marcata_come_soggetto() -> None:
+    # l'impresa non è un dato personale, ma il modello deve sapere chi è il soggetto
+    out, n = pii.mark_entity("Sequestro a Mario Bianchi, cliente della Fami Srl. La FAMI collabora.",
+                             "Fami Srl")
+    assert out == "Sequestro a Mario Bianchi, cliente della [SOGGETTO]. La [SOGGETTO] collabora." and n == 2, out
+    out, _ = pii.mark_entity("La Fami S.r.l. di Bari e la Fami S.r.l.", "Fami Srl")
+    assert out == "La [SOGGETTO] di Bari e la [SOGGETTO].", out
+    out, _ = pii.mark_entity("Indagata la Fami Holding, non la Fami di Bari.", "Fami Srl")
+    assert out == "Indagata la Fami Holding, non la [SOGGETTO] di Bari.", out
+    out, _ = pii.mark_entity("Indagati i vertici della Fratelli Vitali spa.", "Fratelli Vitali S.P.A")
+    assert out == "Indagati i vertici della [SOGGETTO].", out
+    # nome che finisce con parole comuni: vale la parte distintiva, non un'altra società
+    out, _ = pii.mark_entity("Perquisita la Tron Group. Indagato il manager di Tron. La Tron Energia no.",
+                             "Tron Group Holding S.r.l.")
+    assert out == "Perquisita la [SOGGETTO]. Indagato il manager di [SOGGETTO]. La Tron Energia no.", out
+    # nome di una parola comune: non la parola minuscola né a inizio frase senza forma giuridica
+    out, _ = pii.mark_entity("La vita della Vita Srl. Vita e morte. Poi la Vita ha smentito.", "Vita S.r.l.")
+    assert out == "La vita della [SOGGETTO]. Vita e morte. Poi la [SOGGETTO] ha smentito.", out
+    out, _ = pii.mark_entity("Sequestro alla Qè S.r.l. di Milano.", "Qè S.r.l.")
+    assert out == "Sequestro alla [SOGGETTO] di Milano.", out
+
+
+def test_i_marcatori_non_sono_nomi() -> None:
+    out, c = pii.redact_persons("La [SOGGETTO] ha pagato Luca Bianchi.", ner_persons=["SOGGETTO", "Luca Bianchi"])
+    assert out == "La [SOGGETTO] ha pagato [PERSONA]." and c["persona"] == 1, out
+
+
+def test_il_modello_sa_chi_e_il_soggetto_impresa() -> None:
+    try:
+        from app import foundry
+    except ModuleNotFoundError as exc:   # es. senza il client openai installato
+        print(f"  (saltato: {exc})")
+        return
+    from app.config import settings
+    sent: list[str] = []
+    saved = (foundry._client, foundry._classify_one, settings.pii_redaction, settings.redact_person_names)
+    foundry._client = lambda: None
+    foundry._classify_one = lambda client, model, text: (sent.append(text) or {
+        "fatf_categories": [], "ruolo_processuale": None, "role_analysis": "menzionato",
+        "severity": "bassa", "confidence": 0.9, "rationale": None})
+    settings.pii_redaction, settings.redact_person_names = True, False
+    try:
+        foundry.classify("La procura indaga su Mario Bianchi, cliente della Fami Srl.",
+                         subject_name="Fami Srl", subject_person=False, dual=False)
+    finally:
+        foundry._client, foundry._classify_one, settings.pii_redaction, settings.redact_person_names = saved
+    assert sent and sent[0].startswith("Nota: il soggetto in esame è indicato nel testo come [SOGGETTO]."), sent
+    assert "cliente della [SOGGETTO]." in sent[0], sent
+
+
 def _run() -> int:
     fails = 0
     for name, fn in sorted(globals().items()):

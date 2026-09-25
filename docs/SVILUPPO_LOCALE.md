@@ -199,7 +199,9 @@ compare senza alcun contesto, l'alert è marcato "⚠ possibile omonimo".
 
 **Deduplica per dominio e credibilità delle testate** (§5.1). I risultati sono:
 - **ripuliti dai siti che non sono notizie**: schede e bilanci d'impresa, elenchi,
-  social, annunci di lavoro (`testate.NON_NOTIZIE`; altri con `SEARCH_EXCLUDE_DOMAINS`);
+  social, annunci di lavoro (`testate.NON_NOTIZIE`; altri con `SEARCH_EXCLUDE_DOMAINS`),
+  e dalle pagine di elenco dei giornali (tag, argomento, ricerca interna: titoli di altri
+  articoli, non un articolo);
 - **deduplicati per dominio** (`MAX_PER_DOMAIN=1`): un articolo per testata, per
   favorire la corroborazione da fonti indipendenti;
 - **annotati con la credibilità** della testata (alta | media | bassa |

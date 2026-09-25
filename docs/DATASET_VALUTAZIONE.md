@@ -158,6 +158,10 @@ creati prima del salvataggio delle predizioni ottengono così il riconoscimento 
 - Serve l'LLM: se non risponde la rivalutazione si ferma (a parole chiave non misurerebbe
   il sistema reale). A temperatura 0 le risposte possono comunque variare di poco.
 - I casi senza articoli salvati restano invariati; uno snapshot mancante viene saltato.
+- Dello screening originale la rivalutazione conosce il nome come scritto nell'alert
+  («Cognome Nome»), non nome e cognome separati né azienda/località: per la persona
+  prova tutte le divisioni del nome («Messina Denaro Matteo» trova «Matteo Messina
+  Denaro»); la corroborazione di azienda/località non si ripete.
 - Il file contiene dati personali come l'export (senza CF/P.IVA): stesse cautele.
 
 ## Limiti

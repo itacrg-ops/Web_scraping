@@ -161,6 +161,20 @@ def test_adverse_results_first_then_credibility() -> None:
     assert [r["url"] for r in out] == ["https://www.blogqualunque.it/2", "https://www.ansa.it/1"] and removed == 1
 
 
+def test_listing_pages_are_not_articles() -> None:
+    raw = [{"url": "https://ricerca.repubblica.it/repubbliche-locali/topic/persone/t/tommaso+buscetta"},
+           {"url": "https://www.ilgiorno.it/tag/only-italia-logistics"},
+           {"url": "https://www.corriere.it/argomenti/mafia/"},
+           {"url": "https://www.ansa.it/ricerca/ansait/search.shtml?any=buscetta"},
+           {"url": "https://www.ansa.it/sito/notizie/cronaca/2024/05/02/sequestro-alla-only_123.html"},
+           {"url": "https://www.rainews.it/articoli/2026/03/tag-e-intercettazioni-abc.html"},
+           # l'archivio storico è fatto di articoli veri
+           {"url": "https://ricerca.repubblica.it/repubblica/archivio/repubblica/1992/05/24/strage.html"}]
+    out, removed = testate.postprocess(raw, dedup_by_domain=False, max_per_domain=1, min_credibility="none",
+                                       max_results=10)
+    assert [r["url"] for r in out] == [r["url"] for r in raw[4:]] and removed == 4, out
+
+
 def test_extra_excluded_domains_from_config() -> None:
     saved = settings.search_exclude_domains
     settings.search_exclude_domains = "www.testata0.it, testata1.it"

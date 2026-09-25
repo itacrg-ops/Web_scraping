@@ -127,7 +127,7 @@ prima dell'egress verso Azure.
 | 2 | **Feed di rischio** (B9, opz.) | Indicatori AML/CFT + connessioni sul soggetto risolto. |
 | 3 | **Web search** (B8) | Fan-out su più motori, merge/dedup per URL, boost di corroborazione. |
 | 4 | **Fetch + Render** (B6) | Fetch conforme (robots/crawl-delay), snapshot WARC su MinIO, fallback headless Playwright per pagine JS. |
-| 5 | **Estrazione + Menzione + NER** | Testo (trafilatura), verifica che il soggetto sia citato (a **parole intere**: nome e cognome adiacenti; denominazione senza forma giuridica, usata come nome proprio o in contesto societario — «Vita Srl» sì, «la vita» no), corroborazione anagrafica e NER. Per la persona fisica: **ruoli** scritti accanto al nome (AD, DG, sindaco…) e possibile **PEP**. |
+| 5 | **Estrazione + Menzione + NER** | Testo (trafilatura), verifica che il soggetto sia citato (a **parole intere**: nome e cognome adiacenti — con il solo «Cognome Nome» tutte le divisioni, «Matteo Messina Denaro»; particelle unite o staccate, «Di Meglio»/«DiMeglio»; denominazione senza forma giuridica, usata come nome proprio o in contesto societario — «Vita Srl» sì, «la vita» no), corroborazione anagrafica e NER. Per la persona fisica: **ruoli** scritti accanto al nome (AD, DG, sindaco…) e possibile **PEP**. |
 | 6 | **PII → FATF** (B1/B1.1) | Redazione PII e pseudonimizzazione nomi, poi classificazione FATF dual-LLM. |
 | 7 | **AMI → SVI** (B2) | Punteggio pesato, persistenza dell'alert con evidenze (sistema di record), poi pubblicazione in SVI con esito registrato sull'alert (`svi_status`). |
 
@@ -205,7 +205,10 @@ registro dall'API (nessun egress esterno).
 **Redige le PII** prima dell'invio (B1: CF, P.IVA, email, IBAN, telefoni; B1.1:
 pseudonimizzazione dei nomi via NER → `[SOGGETTO]`/`[PERSONA]`: un nome è il soggetto
 solo se è parte del suo nome o lo contiene, mai per una sola parola in comune come il
-nome di battesimo). Classificazione
+nome di battesimo). Se il soggetto è un'**impresa** il suo nome è marcato `[SOGGETTO]`
+(non è un dato personale, ma il modello deve sapere chi è il soggetto): categorie e
+ruolo — autore, vittima, solo menzionato — sono quelli attribuiti a lui, non agli altri
+citati nell'articolo. Classificazione
 FATF *dual-LLM*, embedding per l'anti-omonimia, NER italiana (spaCy) riusata da
 worker ed ER.
 *Tecnologia:* FastAPI; Azure AI Foundry (DefaultAzureCredential o API key); spaCy
@@ -223,7 +226,8 @@ nome comune di una parola («Vita Srl») si cerca con la forma giuridica («"Vit
 completa vengono prima. Con Brave e SearXNG la scala di query è **cumulativa** («nome +
 termini avversi», poi il solo nome: i risultati si sommano, prima quelli avversi; entro
 `SEARCH_LADDER_BUDGET`); SearXNG interroga **web e news**; i siti che non sono notizie
-(schede d'impresa, social, annunci) sono esclusi. La risposta riporta per ogni motore
+(schede d'impresa, social, annunci) e le pagine di elenco (tag, argomento, ricerca
+interna) sono esclusi. La risposta riporta per ogni motore
 query eseguite, risultati ed errori (`engines`), mostrati in console.
 *Tecnologia:* FastAPI, httpx (asyncio.gather); provider mock/GDELT/Brave/SearXNG;
 throttle in-process per i limiti upstream.

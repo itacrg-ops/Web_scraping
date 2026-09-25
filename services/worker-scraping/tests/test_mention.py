@@ -39,6 +39,30 @@ def test_person_compound_names_and_denominazione_fallback() -> None:
     assert _m(rossi, "Mario Rossi è il RUP dell'intervento.")
 
 
+def test_full_name_only_tries_every_split() -> None:
+    # solo "Cognome Nome" (screening passati, rivalutazione): dove finisce il cognome?
+    md = {"tipo_soggetto": "persona_fisica", "denominazione": "Messina Denaro Matteo"}
+    assert _m(md, "Sequestro al tesoro di Matteo Messina Denaro.")
+    assert _m(md, "MESSINA DENARO Matteo, latitante.")
+    ep = {"tipo_soggetto": "persona_fisica", "denominazione": "Errante Parrino Paolo Aurelio"}
+    assert _m(ep, "Arrestato Paolo Aurelio Errante Parrino, ex dirigente.")
+    assert not _m(md, "Matteo Messina, assessore, e il signor Denaro.")   # parole sparse
+
+
+def test_surname_particles_joined_or_separated() -> None:
+    joined = {"tipo_soggetto": "persona_fisica", "nome": "Ciro", "cognome": "DiMeglio"}
+    assert _m(joined, "Arrestato l'ex ad Ciro Di Meglio.")
+    apart = {"tipo_soggetto": "persona_fisica", "nome": "Ciro", "cognome": "Di Meglio"}
+    assert _m(apart, "Arrestato l'ex ad Ciro DiMeglio.")
+
+
+def test_two_letter_company_needs_company_usage() -> None:
+    qe = {"tipo_soggetto": "persona_giuridica", "denominazione": "Qè S.r.l."}
+    assert _m(qe, "Sequestro alla Qè S.r.l. di Milano.")
+    assert _m(qe, "Indagati i vertici della società Qè.")
+    assert not _m(qe, "Il Qè dei vertici.")                              # da solo è ambiguo
+
+
 def test_tax_id_is_enough() -> None:
     cf = {**ANNA, "cf_piva": "RSSNNA80A41H501X"}
     assert mention.check(cf, "Codice fiscale RSSNNA80A41H501X")["matched"] == ["cf_piva"]
@@ -128,6 +152,14 @@ def test_near_variants_only_when_exact_name_missing() -> None:
     common = mention.check({"tipo_soggetto": "persona_fisica", "denominazione": "Rossi Mario"},
                            "Mario Rosso e Maria Rossi")
     assert common["variants"] == [], common
+    # cognome con particella scritto diverso: «DeMeglio» ≈ «Di Meglio» (nome in qualsiasi ordine)
+    for name in ("Ciro DeMeglio", "DeMeglio Ciro"):
+        dm = mention.check({"tipo_soggetto": "persona_fisica", "denominazione": name},
+                           "Arrestati l'ex ad Ciro Di Meglio e l'ex dg Carleo.")
+        assert dm["mentioned"] is False and dm["variants"] == ["Ciro Di Meglio"], dm
+    near = mention.check({"tipo_soggetto": "persona_fisica", "denominazione": "Rossi Mario"},
+                         "Il sindaco Mario Rossini e Luca Rossi.")
+    assert near["variants"] == [], near
     # impresa: nome distintivo con una lettera diversa, maiuscolo come nome proprio
     pg = mention.check({"tipo_soggetto": "persona_giuridica", "denominazione": "Italware S.r.l."},
                        "La Italwere ha vinto; l'italwere minuscolo no")

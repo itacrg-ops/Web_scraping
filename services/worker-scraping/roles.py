@@ -122,16 +122,22 @@ _GAP = r"[^.;!?\n]{0,40}?"   # inciso breve nella stessa frase ("58 anni,")
 
 
 def _name_rx(subject: dict) -> str | None:
+    """Il nome della persona nei due ordini. Con la sola denominazione "Cognome Nome"
+    (divisione ignota: "Messina Denaro Matteo") tutte le rotazioni ("Matteo Messina
+    Denaro"). Spazi facoltativi tra le parole: "Di Meglio" vale anche "DiMeglio"."""
     nome = (subject.get("nome") or "").split()
     cognome = (subject.get("cognome") or "").split()
-    if not (nome and cognome):
+    if nome and cognome:
+        orders = [nome + cognome, cognome + nome]
+    elif not (nome or cognome):
         toks = (subject.get("denominazione") or "").split()
-        cognome, nome = toks[:1], toks[1:]
-    if not (nome and cognome):
+        orders = [toks[k:] + toks[:k] for k in range(len(toks))] if len(toks) >= 2 else []
+    else:
+        orders = []
+    if not orders:
         return None
-    a = r"\s+".join(map(re.escape, nome + cognome))
-    b = r"\s+".join(map(re.escape, cognome + nome))
-    return rf"(?:{a}|{b})\b"
+    alts = sorted({r"\s*".join(map(re.escape, o)) for o in orders}, key=len, reverse=True)
+    return rf"\b(?:{'|'.join(alts)})\b"
 
 
 def classify(role: str, org: str = "") -> tuple[str, str, str | None]:

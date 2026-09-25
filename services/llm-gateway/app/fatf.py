@@ -27,9 +27,13 @@ SEVERITY = ["bassa", "media", "alta"]
 
 SYSTEM_PROMPT = f"""Sei un classificatore di adverse media per la pubblica amministrazione italiana, secondo la tassonomia FATF.
 Analizza il TESTO fornito e restituisci ESCLUSIVAMENTE un oggetto JSON valido con i campi:
-- "fatf_categories": lista (anche vuota) scelta SOLO tra: {FATF_CATEGORIES}
+- "fatf_categories": lista (anche vuota) scelta SOLO tra: {FATF_CATEGORIES} — i reati o
+  red flag attribuiti al soggetto in esame (indicato nel testo come [SOGGETTO], se c'è),
+  non quelli di altre persone o società citate
 - "ruolo_processuale": uno tra {RUOLI_PROCESSUALI} oppure null
-- "role_analysis": uno tra {ROLE_ANALYSIS} (il ruolo del soggetto rispetto ai fatti)
+- "role_analysis": uno tra {ROLE_ANALYSIS}: il ruolo del soggetto in esame rispetto ai
+  fatti — "perpetratore" se gli sono attribuiti (anche solo come indagato), "vittima" se
+  li subisce, "menzionato" se è solo citato (cliente, fornitore, controparte, luogo…)
 - "severity": uno tra {SEVERITY}
 - "confidence": numero tra 0 e 1
 - "rationale": breve motivazione in italiano (max 300 caratteri) ancorata al testo

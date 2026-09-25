@@ -84,15 +84,13 @@ def _norm(s: str) -> str:
 
 
 def _name_variants(name: str) -> list[str]:
-    """Il nome così com'è e — se due token — nell'ordine invertito
-    (Cognome Nome ↔ Nome Cognome)."""
-    n = " ".join((name or "").split())
-    if not n:
+    """Il nome così com'è e in tutti gli ordini «Nome Cognome» possibili: con "Cognome
+    Nome" non si sa dove finisce il cognome ("Messina Denaro Matteo" → "Matteo Messina
+    Denaro", "Denaro Matteo Messina")."""
+    parts = (name or "").split()
+    if not parts:
         return []
-    out = {n}
-    parts = n.split()
-    if len(parts) == 2:
-        out.add(f"{parts[1]} {parts[0]}")
+    out = {" ".join(parts[k:] + parts[:k]) for k in range(len(parts))}
     return sorted(out, key=len, reverse=True)
 
 
@@ -114,6 +112,79 @@ def _names_same_person(person: str, subject_tokens: set[str]) -> bool:
     part_of_subject = initials_ok and all(w in subject_tokens for w in words)
     contains_subject = subject_tokens <= set(words)
     return part_of_subject or contains_subject
+
+
+# --- Soggetto IMPRESA nel testo (marcatore per il modello, non una redazione) ------
+# Forme giuridiche scritte in coda al nome ("S.r.l.", "Srl", "S.p.A.", "soc. coop."…).
+_LEGAL = (r"(?:s\.?\s?r\.?\s?l\.?(?:\s?s\.?)?|s\.?\s?p\.?\s?a\.?|s\.?\s?n\.?\s?c\.?|s\.?\s?a\.?\s?s\.?"
+          r"|s\.?\s?c\.?\s?a\.?\s?r\.?\s?l\.?|soc(?:ietà|ieta)?\.?\s+coop(?:erativa)?\.?|coop\.?|onlus)")
+_LEGAL_TAIL = re.compile(rf"(?:[\s,]+{_LEGAL})+\s*$", re.IGNORECASE)
+# Parole comuni nelle denominazioni (stesse del worker, mention.GENERIC): "Tron Group
+# Holding" negli articoli è spesso solo "Tron".
+_GENERIC = {"GRUPPO", "GROUP", "HOLDING", "IMPRESA", "IMPRESE", "COSTRUZIONI", "INFRASTRUTTURE",
+            "SERVIZI", "ITALIA", "ITALIANA", "GENERALE", "GENERALI", "LAVORI", "EDILE", "EDILIZIA",
+            "IMPIANTI", "GESTIONE", "GESTIONI", "CONSORZIO", "ENERGIA", "AMBIENTE", "GLOBAL",
+            "INTERNATIONAL"}
+
+
+def _proper_forms(word: str) -> str:
+    """La parola scritta da nome proprio: com'è, Maiuscola iniziale, TUTTA MAIUSCOLA."""
+    forms = {word, word.upper(), word[:1].upper() + word[1:]}
+    return "(?:" + "|".join(map(re.escape, sorted(forms, key=len, reverse=True))) + ")"
+
+
+def mark_entity(text: str, name: str | None) -> tuple[str, int]:
+    """Il soggetto IMPRESA nel testo → `[SOGGETTO]` (con la forma giuridica che segue).
+    Non è una redazione — una denominazione non è un dato personale — ma dice al
+    modello di chi valutare ruolo e fatti: senza, per un'impresa il modello non sa chi
+    è il soggetto e giudica i protagonisti dell'articolo.
+
+    Il nome senza forma giuridica: di più parole senza distinzione di maiuscole. Di una
+    parola, scritto da nome proprio e — se non lo segue la forma giuridica — a metà
+    frase ("la Vita Srl", "la Tron ha vinto"; non "la vita", né "Vita e morte" a inizio
+    frase). Se il nome finisce con parole comuni ("Tron Group Holding") vale anche la
+    parte distintiva ("Tron"), con le stesse regole e non seguita da un altro nome
+    ("Tron Energia" è un'altra società)."""
+    words = _LEGAL_TAIL.sub("", " ".join((name or "").split())).strip(" ,").split()
+    out, count = text or "", 0
+    if not words:
+        return out, 0
+    legal = rf"(?P<legal>,?\s+(?i:{_LEGAL})(?!\w))?"
+
+    def mark(rx: re.Pattern, s: str, anywhere: bool) -> tuple[str, int]:
+        hits = 0
+
+        def repl(m: re.Match) -> str:
+            nonlocal hits
+            before = s[:m.start()].rstrip(" \t\"'«“‘(")
+            mid_sentence = bool(before) and before[-1] not in ".!?:;\n"
+            if not (anywhere or m.group("legal") or m.groupdict().get("own") or mid_sentence):
+                return m.group(0)
+            hits += 1
+            # "… della Fami Srl. La procura": il punto di "Srl." chiude anche la frase
+            after = s[m.end():].lstrip(" \t")
+            ends = m.group(0).endswith(".") and (not after or after[0].isupper() or after[0] == "\n")
+            return "[SOGGETTO]." if ends else "[SOGGETTO]"
+        return rx.sub(repl, s), hits
+
+    if len(words) > 1:
+        full = re.compile(r"(?<!\w)" + r"\s+".join(map(re.escape, words)) + legal + r"(?!\w)", re.IGNORECASE)
+        out, n = mark(full, out, anywhere=True)
+    else:
+        # non seguito da un altro nome ("la Fami Holding" è probabilmente un'altra società)
+        out, n = mark(re.compile(r"(?<!\w)" + _proper_forms(words[0]) + legal + r"(?!\w)(?!\s+[A-ZÀ-Ý])"),
+                      out, anywhere=False)
+    count += n
+    lead = list(words)
+    while len(lead) > 1 and _norm(lead[-1]) in _GENERIC:
+        lead.pop()
+    if len(lead) < len(words) and len("".join(lead)) >= 3:
+        tail = "|".join(_proper_forms(w) for w in words[len(lead):])
+        short = re.compile(r"(?<!\w)" + r"\s+".join(_proper_forms(w) for w in lead)
+                           + rf"(?P<own>(?:\s+(?:{tail}))+)?" + legal + r"(?!\w)(?!\s+[A-ZÀ-Ý])")
+        out, n = mark(short, out, anywhere=False)
+        count += n
+    return out, count
 
 
 def redact_persons(text: str, subject_name: str | None = None,
@@ -139,8 +210,8 @@ def redact_persons(text: str, subject_name: str | None = None,
         counts["soggetto"] += n
     # 2) Persone dalla NER: soggetto (per token) → [SOGGETTO], altri → [PERSONA].
     for p in sorted(set(ner_persons or []), key=len, reverse=True):
-        if not p.strip():
-            continue
+        if not p.strip() or _norm(p).strip("[] ") in ("SOGGETTO", "PERSONA"):
+            continue   # i marcatori stessi non sono nomi
         repl, key = ("[SOGGETTO]", "soggetto") if _is_subject(p) else ("[PERSONA]", "persona")
         out, n = re.subn(rf"\b{re.escape(p)}\b", repl, out)
         counts[key] += n

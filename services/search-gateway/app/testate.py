@@ -13,6 +13,7 @@ editoriale: è una base per pesare/filtrare l'affidabilità in fase di triage.
 """
 from __future__ import annotations
 
+import re
 from urllib.parse import urlparse
 
 # Ordinamento dei livelli (per sort e soglia di filtro). "sconosciuta" (testata
@@ -67,6 +68,17 @@ NON_NOTIZIE: frozenset[str] = frozenset({
 })
 
 
+# Pagine di ELENCO (tag, argomento, ricerca interna): titoli di altri articoli, non un
+# articolo — es. ricerca.repubblica.it/.../topic/persone/t/tommaso+buscetta. L'archivio
+# storico invece sì (ricerca.repubblica.it/repubblica/archivio/…): resta.
+_LISTING_PATH = re.compile(r"/(?:topic|topics|tag|tags|argomenti|argomento|search|ricerca|cerca)(?:/|$)",
+                           re.IGNORECASE)
+
+
+def is_listing(url: str) -> bool:
+    return bool(_LISTING_PATH.search(urlparse(url or "").path or ""))
+
+
 def domain_of(url: str) -> str:
     """Dominio registrabile (minuscolo), senza `www.` e senza sottodomini.
     Es. https://roma.repubblica.it/... → repubblica.it."""
@@ -92,7 +104,8 @@ def postprocess(results: list[dict], *, dedup_by_domain: bool, max_per_domain: i
                 min_credibility: str, max_results: int,
                 first=None, exclude: frozenset[str] | set[str] = frozenset()) -> tuple[list[dict], int]:
     """Annota (dominio + credibilità), toglie i domini esclusi (siti che non sono
-    notizie) e quelli sotto soglia, ordina, deduplica per dominio e tronca.
+    notizie), le pagine di elenco (tag, argomento, ricerca) e quelli sotto soglia,
+    ordina, deduplica per dominio e tronca.
     Ordine: prima i risultati `first(r)` (es. citano la ragione sociale completa), poi
     quelli trovati con i termini avversi (`adverse_query`), poi per credibilità della
     testata e ordine originale.
@@ -103,7 +116,7 @@ def postprocess(results: list[dict], *, dedup_by_domain: bool, max_per_domain: i
         r["testata_credibilita"] = credibility_of(d) if d else "sconosciuta"
         r["_idx"] = i
 
-    kept = [r for r in results if not (r["domain"] and r["domain"] in exclude)]
+    kept = [r for r in results if not ((r["domain"] and r["domain"] in exclude) or is_listing(r.get("url", "")))]
     if min_credibility and min_credibility != "none":
         floor = CRED_RANK.get(min_credibility, 0)
         kept = [r for r in kept if CRED_RANK.get(r["testata_credibilita"], 0) >= floor]

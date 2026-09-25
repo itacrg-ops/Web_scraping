@@ -97,7 +97,8 @@ def classify(text: str, *, subject_name: str | None = None,
     """Classifica il testo con il modello primario e (se dual) lo valida col
     secondario, riconciliando le categorie e segnalando l'eventuale disaccordo.
     `subject_name`/`subject_person`: se il soggetto è una persona, il suo nome è
-    pseudonimizzato in `[SOGGETTO]` (B1.1)."""
+    pseudonimizzato in `[SOGGETTO]` (B1.1); se è un'impresa, il suo nome è marcato come
+    `[SOGGETTO]` (non è un dato personale, ma il modello deve sapere chi è il soggetto)."""
     client = _client()
 
     # Redazione PII PRIMA di qualunque invio ad Azure (unico chokepoint di egress).
@@ -106,18 +107,28 @@ def classify(text: str, *, subject_name: str | None = None,
     redaction = {"total": 0, "by_category": {}}
     names = {"soggetto": 0, "persona": 0}
     raw = text or ""
+    persons: list[str] = []
     if settings.pii_redaction:
         raw, redaction = pii.redact(raw)
+        if settings.redact_person_names:
+            persons = ner.extract(raw).get("persons", [])
+    # Impresa: marcata dopo la NER (che legge il testo originale) e prima di sostituire le
+    # persone, così un nome d'impresa scambiato per una persona ("Fratelli Vitali") resta
+    # [SOGGETTO] e non diventa [PERSONA].
+    entity_marks = 0
+    if subject_name and not subject_person:
+        raw, entity_marks = pii.mark_entity(raw, subject_name)
+    if settings.pii_redaction:
         # B1.1: redazione dei NOMI di persona (soggetto → [SOGGETTO], terzi → [PERSONA])
         # via NER; il nome del soggetto (noto) è redatto anche senza NER.
         if settings.redact_person_names:
-            persons = ner.extract(raw).get("persons", [])
             raw, names = pii.redact_persons(
                 raw, subject_name if subject_person else None, persons
             )
         if redaction["total"] or names["soggetto"] or names["persona"]:
             logger.info("PII redatte prima dell'LLM: strutturate=%s, nomi=%s",
                         redaction["by_category"], names)
+    names = {**names, "soggetto": names["soggetto"] + entity_marks}
     text = raw[: settings.max_input_chars]
     # Marcatore per l'analisi del ruolo (Victim-Bystander): il soggetto è [SOGGETTO].
     if names["soggetto"]:
