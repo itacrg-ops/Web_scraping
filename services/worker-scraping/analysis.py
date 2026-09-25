@@ -10,15 +10,21 @@ MAX_CLASSIFY_CHARS = 12000    # cap del testo aggregato inviato alla classificaz
 _SEV_ORDER = {"bassa": 1, "media": 2, "alta": 3}
 # Predizione del classificatore salvata sull'alert (valutazione vs etichette dei revisori).
 CLASSIFICATION_KEYS = ("method", "severity", "ruolo_processuale", "role_analysis",
-                       "secondary_agreement", "confidence", "fallback_reason")
+                       "secondary_agreement", "confidence", "fallback_reason",
+                       "soggetto_deceduto", "anno_ultimo_fatto")
 
 
 def classification_text(docs: list[dict]) -> str:
     """Testo per la classificazione: gli articoli che citano il soggetto; se nessuno
-    lo cita, tutti quelli con contenuto (il workflow lo segnala nei driver)."""
+    lo cita, tutti quelli con contenuto (il workflow lo segnala nei driver). Ogni
+    articolo porta la sua data di pubblicazione: serve a datare i fatti («ieri», «il
+    processo è in corso») per l'anno dell'ultimo fatto avverso."""
     with_text = [d for d in docs if d.get("text")]
     chosen = [d for d in with_text if d.get("_mentioned")] or with_text
-    return "\n\n".join(d["text"] for d in chosen)[:MAX_CLASSIFY_CHARS]
+    parts = [f"[Articolo {i}, " + (f"pubblicato il {d['date']}]" if d.get("date")
+                                   else "data di pubblicazione non nota]") + "\n" + d["text"]
+             for i, d in enumerate(chosen, 1)]
+    return "\n\n".join(parts)[:MAX_CLASSIFY_CHARS]
 
 
 def ami_signals(docs: list[dict]) -> list[dict]:

@@ -426,6 +426,17 @@ AMI = base(severità FATF) × credibilità della fonte × corroborazione
 con **cap Victim-Bystander** (se il soggetto è vittima/menzionato, l'AMI si
 abbatte).
 
+**Nessun rischio attuale → chiusura.** Anche con notizie avverse l'AMI ha lo stesso tetto
+(25 → BASSO → AUTO_CHIUSO) se, secondo gli articoli, il soggetto persona fisica è
+**deceduto**, o se l'**ultimo fatto avverso** che gli è attribuito (reato, indagine,
+condanna, sequestro…) è più vecchio di `AMI_FATTI_VECCHI_ANNI` (default 10; 0 = regola
+spenta; `AMI_CHIUDI_DECEDUTI=false` spegne l'altra). Li indica la classificazione LLM
+(`soggetto_deceduto`, `anno_ultimo_fatto`: anno del fatto, non dell'articolo; ogni
+articolo le arriva con la sua data di pubblicazione, per datare «ieri» o un processo in
+corso); con due modelli valgono solo se concordano (morte affermata da entrambi, anno noto
+a entrambi, il più recente). Il motivo è il primo driver («Chiuso: …») e i due campi
+restano nella classificazione salvata sull'alert.
+
 | Livello di rischio | Soglia AMI | Disposition |
 |---|---|---|
 | **ALTO** | ≥ 75 | ESCALATION_I_LIVELLO |

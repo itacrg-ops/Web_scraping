@@ -31,6 +31,8 @@ class ClassifyResponse(BaseModel):
     severity: str | None = None
     confidence: float = 0.0
     rationale: str | None = None
+    soggetto_deceduto: bool = False          # persona che il testo dice morta
+    anno_ultimo_fatto: int | None = None     # anno del fatto avverso più recente
     secondary_agreement: bool | None = None
     method: str
     models: dict

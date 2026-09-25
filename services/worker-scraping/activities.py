@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import httpx
@@ -42,6 +43,11 @@ HEADLESS_FALLBACK = os.getenv("HEADLESS_FALLBACK", "true").lower() == "true"
 # non fatale — se il modello NER non è installato, il gateway risponde
 # available:false e si resta sulla corroborazione a stringhe.
 NER_CORROBORATION = os.getenv("NER_CORROBORATION", "true").lower() == "true"
+# Chiusura del caso anche con notizie avverse (regola dei revisori): la persona è morta,
+# o l'ultimo fatto avverso attribuito al soggetto è più vecchio di N anni (0 = regola
+# disattivata). Dati forniti dalla classificazione LLM (dual: solo se i modelli concordano).
+AMI_CHIUDI_DECEDUTI = os.getenv("AMI_CHIUDI_DECEDUTI", "true").lower() == "true"
+AMI_FATTI_VECCHI_ANNI = int(os.getenv("AMI_FATTI_VECCHI_ANNI", "10") or 0)
 
 
 @activity.defn
@@ -352,10 +358,14 @@ async def compute_ami(subject: dict, classification: dict, evidence_signals: lis
 
     f_cred = _CRED_WEIGHT.get(best_cred, 0.75)
     f_corrob = _corroboration_factor(n_sources)
-    ami = int(round(base * f_cred * f_corrob))
+    weighted = ami = int(round(base * f_cred * f_corrob))
 
     # Victim-Bystander Analysis: se il soggetto non è il perpetratore, l'AMI cala.
-    if role_analysis in ("vittima", "menzionato"):
+    # Nessun rischio attuale (persona morta, fatti non recenti): stesso tetto → chiusura.
+    closure = _closure(subject, classification)
+    caps = ([f"soggetto {role_analysis}"] if role_analysis in ("vittima", "menzionato") else []) + (
+        ["nessun rischio attuale"] if closure else [])
+    if caps:
         ami = min(ami, 25)
     ami = max(0, min(100, ami))
 
@@ -383,9 +393,26 @@ async def compute_ami(subject: dict, classification: dict, evidence_signals: lis
         else:
             drivers.append(f"Corroborazione: {n_sources} fonti indipendenti → ×{f_corrob:.2f}")
     drivers.append(f"AMI = base {base} (severità {severity}) × {f_cred:.2f} (credibilità) "
-                   f"× {f_corrob:.2f} (corroborazione) = {ami}")
+                   f"× {f_corrob:.2f} (corroborazione) = {weighted}"
+                   + (f" → {ami} (tetto: {', '.join(caps)})" if ami < weighted else ""))
     drivers.append("Materialità da valutare rispetto al CUP dell'intervento")
+    if closure:
+        drivers.insert(0, closure)
     return {"ami_score": ami, "risk_level": risk, "disposition": disposition, "drivers": drivers}
+
+
+def _closure(subject: dict, classification: dict) -> str | None:
+    """Motivo di chiusura per assenza di rischio attuale (driver), o None."""
+    if (AMI_CHIUDI_DECEDUTI and classification.get("soggetto_deceduto") is True
+            and (subject.get("tipo_soggetto") or "persona_giuridica") == "persona_fisica"):
+        return "Chiuso: secondo gli articoli il soggetto è deceduto — nessun rischio attuale"
+    year = classification.get("anno_ultimo_fatto")
+    if AMI_FATTI_VECCHI_ANNI > 0 and isinstance(year, int):
+        age = datetime.now(timezone.utc).year - year
+        if age > AMI_FATTI_VECCHI_ANNI:
+            return (f"Chiuso: fatti non recenti — l'ultimo fatto avverso attribuito al soggetto è del "
+                    f"{year}, oltre {AMI_FATTI_VECCHI_ANNI} anni fa")
+    return None
 
 
 def _detail(resp: httpx.Response) -> str:

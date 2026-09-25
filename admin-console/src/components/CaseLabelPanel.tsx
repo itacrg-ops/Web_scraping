@@ -103,7 +103,7 @@ function consistencyHints(label: CaseLabelIn, evidence: Ev[]): string[] {
   const n = labels.findIndex((v) => v.pertinenza === "si" && v.avversa === "si");
   if (label.disposition_attesa === "AUTO_CHIUSO" && n >= 0) {
     hints.push(`Esito «Chiusura» ma l'articolo ${n + 1} riguarda il soggetto ed è una notizia avversa: `
-      + "verifica l'esito.");
+      + "verifica l'esito (è giusto se il soggetto è deceduto o i fatti sono vecchi: indicalo nelle note).");
   }
   return hints;
 }

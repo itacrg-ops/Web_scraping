@@ -71,6 +71,11 @@ riportano queste definizioni:
 - *Esempio:* giornalista o imprenditore **vittima** di intimidazioni → «Riguarda il
   soggetto?» **Sì**, «Notizia avversa?» **No**, ruolo **Vittima**; di norma l'esito corretto è
   **Chiusura**.
+- *Persona deceduta o fatti vecchi* (ultimo fatto avverso oltre 10 anni fa): gli articoli
+  restano **avversi** (le domande per articolo non cambiano), ma l'esito corretto è
+  **Chiusura** — è la regola del sistema (`AMI_CHIUDI_DECEDUTI`, `AMI_FATTI_VECCHI_ANNI`).
+  Se in un caso ritieni che vada comunque in escalation, indica «Escalation» e spiega
+  perché nelle note: il report lo conterà come falso negativo della regola.
 
 Alcune combinazioni sospette mostrano un **suggerimento** (non blocca il salvataggio): ruolo
 Vittima o Solo menzionato con esito Escalation; Escalation senza alcun articolo avverso;

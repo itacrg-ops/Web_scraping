@@ -155,8 +155,15 @@ def classify(text: str, *, subject_name: str | None = None,
         # severità: prendi la più alta tra i due
         order = {"bassa": 0, "media": 1, "alta": 2}
         out["severity"] = max(primary["severity"], secondary["severity"], key=lambda s: order.get(s, 0))
+        # Chiusura del caso solo se i due modelli concordano: morte affermata da
+        # entrambi; anno dell'ultimo fatto noto a entrambi (vale il più recente).
+        out["soggetto_deceduto"] = primary["soggetto_deceduto"] and secondary["soggetto_deceduto"]
+        years = (primary["anno_ultimo_fatto"], secondary["anno_ultimo_fatto"])
+        out["anno_ultimo_fatto"] = max(years) if None not in years else None
         out["secondary_agreement"] = agreement
         out["method"] = "llm_dual"
         out["models"]["secondary"] = settings.llm_model_secondary
 
+    if not subject_person:
+        out["soggetto_deceduto"] = False   # solo le persone muoiono (un'impresa cessa)
     return out
