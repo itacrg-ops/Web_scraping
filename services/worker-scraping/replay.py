@@ -21,6 +21,10 @@ Il file contiene dati personali come l'export (senza CF/P.IVA): stesse cautele.
 Si ferma se l'LLM non risponde: una rivalutazione a parole chiave non misurerebbe il
 sistema reale. La classificazione LLM (temperatura 0) può variare di poco tra due
 esecuzioni.
+
+La stessa rivalutazione si avvia dalla console (pagina Observability): l'API avvia il
+workflow `ReplayWorkflow`, che esegue l'activity `replay_dataset` qui sotto; il report
+prima/dopo lo calcola l'API.
 """
 from __future__ import annotations
 
@@ -28,9 +32,13 @@ import argparse
 import asyncio
 import json
 import sys
+from collections import Counter
 from datetime import datetime, timezone
+from typing import Awaitable, Callable
 
 import httpx
+from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 import snapshot
 from activities import (
@@ -54,6 +62,10 @@ class LlmUnavailable(RuntimeError):
     """La classificazione è ripiegata sulle parole chiave: rivalutazione non significativa."""
 
 
+class ReplayError(RuntimeError):
+    """Casi da rivalutare non disponibili (API)."""
+
+
 def _log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
@@ -64,8 +76,9 @@ async def load_cases(solo_affidabili: bool) -> list[dict]:
         r = await client.get(f"{API_BASE}/api/labels/replay",
                              params={"solo_affidabili": str(solo_affidabili).lower()}, headers=headers)
     if r.status_code in (401, 503):
-        raise SystemExit(f"API {r.status_code}: INTERNAL_API_TOKEN del worker mancante o diverso da quello dell'API")
-    r.raise_for_status()
+        raise ReplayError(f"API {r.status_code}: INTERNAL_API_TOKEN del worker mancante o diverso da quello dell'API")
+    if r.status_code != 200:
+        raise ReplayError(f"API {r.status_code}: casi etichettati non disponibili")
     return r.json()["records"]
 
 
@@ -147,10 +160,12 @@ def _public(record: dict) -> dict:
     return {**record, "alert": alert, "evidence": evidence}
 
 
-async def run(records: list[dict], out=None) -> dict:
-    """Rivaluta ogni alert una volta (più revisori = più righe, stessa predizione)."""
-    out = out or sys.stdout
-    started = datetime.now(timezone.utc).isoformat(timespec="seconds")
+Progress = Callable[[int, int], Awaitable[None]]
+
+
+async def replay_all(records: list[dict], progress: Progress | None = None) -> dict[str, dict]:
+    """Rivaluta ogni alert una volta (più revisori = più righe, stessa predizione):
+    alert_id → nuova predizione. `progress(fatti, totale)` dopo ogni caso."""
     by_alert: dict[str, dict] = {}
     alert_ids = list(dict.fromkeys(r["alert"]["id"] for r in records))
     for i, aid in enumerate(alert_ids, 1):
@@ -164,6 +179,16 @@ async def run(records: list[dict], out=None) -> dict:
             by_alert[aid] = {"status": "errore", "motivo": f"{type(exc).__name__}: {exc}"[:300]}
         if by_alert[aid]["status"] != "ok":
             _log(f"    {by_alert[aid]['status']}: {by_alert[aid]['motivo']}")
+        if progress:
+            await progress(i, len(alert_ids))
+    return by_alert
+
+
+async def run(records: list[dict], out=None) -> dict:
+    """Riga di comando: NDJSON dell'export + sezione `replay`. Ritorna i conteggi."""
+    out = out or sys.stdout
+    started = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    by_alert = await replay_all(records)
     for r in records:
         out.write(json.dumps({**_public(r), "replay": {**by_alert[r["alert"]["id"]], "eseguita": started}},
                              ensure_ascii=False, default=str) + "\n")
@@ -178,7 +203,11 @@ async def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tutti", action="store_true", help="anche i casi in bozza")
     ap.add_argument("--limite", type=int, default=0, help="solo i primi N casi")
     args = ap.parse_args(argv)
-    records = await load_cases(solo_affidabili=not args.tutti)
+    try:
+        records = await load_cases(solo_affidabili=not args.tutti)
+    except ReplayError as exc:
+        _log(f"ERRORE: {exc}")
+        return 2
     if args.limite:
         keep = list(dict.fromkeys(r["alert"]["id"] for r in records))[: args.limite]
         records = [r for r in records if r["alert"]["id"] in keep]
@@ -194,6 +223,58 @@ async def main(argv: list[str] | None = None) -> int:
     _log("Fatto: " + ", ".join(f"{n} {s}" for s, n in sorted(counts.items()))
          + ". Ora: python scripts/evaluate_labels.py <file>")
     return 0
+
+
+# --- On demand dalla console (pagina Observability) -------------------------------------
+def _headers() -> dict | None:
+    return {"X-Internal-Token": INTERNAL_API_TOKEN} if INTERNAL_API_TOKEN else None
+
+
+async def _post(path: str, body: dict, attempts: int = 1) -> None:
+    for attempt in range(1, attempts + 1):
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                r = await client.post(f"{API_BASE}{path}", json=body, headers=_headers())
+            r.raise_for_status()
+            return
+        except Exception:  # noqa: BLE001 — si riprova, poi l'errore sale
+            if attempt == attempts:
+                raise
+            await asyncio.sleep(2 * attempt)
+
+
+@activity.defn
+async def replay_dataset(run_id: str, solo_affidabili: bool = True) -> dict:
+    """Rivaluta i casi etichettati e consegna all'API la nuova predizione per caso (che
+    ne calcola il report). Avanzamento all'API e heartbeat a Temporal dopo ogni caso."""
+    try:
+        records = await load_cases(solo_affidabili)
+    except ReplayError as exc:
+        raise ApplicationError(str(exc), type="ReplayError", non_retryable=True) from exc
+
+    async def progress(done: int, total: int) -> None:
+        activity.heartbeat(done)
+        try:
+            await _post(f"/api/replay/{run_id}/progress", {"done": done, "total": total})
+        except Exception as exc:  # noqa: BLE001 — l'avanzamento è informativo
+            _log(f"avanzamento non registrato ({type(exc).__name__}): si prosegue")
+
+    await progress(0, len({r["alert"]["id"] for r in records}))
+    try:
+        by_alert = await replay_all(records, progress)
+    except LlmUnavailable as exc:
+        raise ApplicationError(
+            f"classificazione LLM non disponibile ({exc}): rivalutazione interrotta, a parole chiave "
+            "non misurerebbe il sistema reale. Controlla llm-gateway e riprova.",
+            type="LlmUnavailable", non_retryable=True) from exc
+    await _post(f"/api/replay/{run_id}/result", {"status": "completed", "results": by_alert}, attempts=3)
+    return dict(Counter(res["status"] for res in by_alert.values()))
+
+
+@activity.defn
+async def replay_failed(run_id: str, error: str) -> None:
+    """Registra sulla rivalutazione il motivo per cui si è fermata."""
+    await _post(f"/api/replay/{run_id}/result", {"status": "failed", "error": error[:2000]}, attempts=3)
 
 
 if __name__ == "__main__":

@@ -515,3 +515,63 @@ export const listSubjectArticles = (subjectId: string) =>
 export const removeSubjectArticle = (subjectId: string, articleId: string) =>
   deleteReq(`/api/subjects/${subjectId}/articles/${articleId}`);
 
+
+// --- Rivalutazione del dataset on demand (pagina Observability) ----------------------
+// Report calcolato dall'API con la logica di scripts/evaluate_labels.py (app/evaluation.py).
+export interface Rate { k: number; n: number; rate: number | null; ci95: [number, number] | null }
+export interface Prf { tp: number; fp: number; fn: number; precisione: Rate; richiamo: Rate }
+export type EsitoValutato = "ESCALATION" | "CHIUSURA" | "ALTRO";
+
+export interface EvalReport {
+  casi: number;
+  soggetti: number;
+  menzione: Prf & {
+    errori: { alert_id?: string | null; subject: string; url?: string | null; sistema: boolean;
+              revisore: string }[];
+  };
+  categorie: { micro: Prf; per_caso: { sistema: number; revisore: number }; per_categoria: Record<string, Prf> };
+  esito: {
+    accordo: Rate; falsi_negativi: Rate; falsi_positivi: Rate; non_decisi_dal_sistema: number;
+    errori: { alert_id?: string | null; subject: string; sistema: EsitoValutato; revisore: EsitoValutato;
+              ruolo?: string | null; categorie: string[] }[];
+  };
+}
+
+export interface EsitoCambiato {
+  alert_id?: string | null;
+  subject: string;
+  prima: EsitoValutato;
+  dopo: EsitoValutato;
+  revisore: EsitoValutato;
+  motivo?: string | null;          // primo punto della nuova motivazione
+}
+
+export interface ReplayReport {
+  rivalutazione: Record<string, number>;   // ok / non_rivalutabile / errore
+  prima: EvalReport;
+  dopo: EvalReport;
+  cambiamenti: { corretti: EsitoCambiato[]; peggiorati: EsitoCambiato[]; altri: EsitoCambiato[] };
+}
+
+export interface ReplayRun {
+  id: string;
+  status: "running" | "completed" | "failed";
+  solo_affidabili: boolean;
+  started_by_name?: string | null;
+  total: number;
+  done: number;
+  counts?: Record<string, number> | null;
+  error?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+  finished_at?: string | null;
+  // esito dei casi [prima, dopo] (tassi 0..1) e quanti casi sono cambiati
+  sintesi?: { casi: number; accordo: (number | null)[]; falsi_negativi: (number | null)[];
+              falsi_positivi: (number | null)[]; corretti: number; peggiorati: number } | null;
+  report?: ReplayReport | null;
+}
+
+export const listReplays = () => getJSON<ReplayRun[]>("/api/replay");
+export const getReplay = (id: string) => getJSON<ReplayRun>(`/api/replay/${id}`);
+export const startReplay = (soloAffidabili: boolean) =>
+  postJSON<ReplayRun>("/api/replay", { solo_affidabili: soloAffidabili });

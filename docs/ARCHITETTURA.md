@@ -158,7 +158,8 @@ alert con evidenze, **etichettatura** per il dataset di valutazione, cancellazio
 alert **duplicati o errati**, observability.
 *Tecnologia:* React + TypeScript + Vite, Material UI; auth MSAL/Entra
 (disattivabile in dev). Parla *solo* con l'API.
-*Pagine:* `Screening` · `Soggetti` · `Sources` · `Alerts` · `Observability`.
+*Pagine:* `Screening` · `Soggetti` · `Sources` · `Alerts` · `Observability` (anche la
+rivalutazione del dataset con il report prima/dopo).
 
 ### api — FastAPI · `:8000`
 **Back-end edge · confine di fiducia.** Unico punto di ingresso: autentica
@@ -170,6 +171,8 @@ ricerca. È il **sistema di record** (Postgres) per alert ed evidenze.
 `POST /api/subjects/{id}/names` · `GET /api/subjects/{id}/articles` ·
 `POST /api/subjects/import` · `GET /api/alerts` · `POST /api/alerts/delete` ·
 `GET /api/alerts/{id}/related` · `POST /api/alerts/{id}/confirm` · `/api/labels…` ·
+`/api/replay…` (rivalutazione del dataset on demand: avvia `ReplayWorkflow`, calcola il
+report con `app/evaluation.py`) ·
 `POST /api/search/preview` · `GET /api/search/providers` · `GET /api/sources`.
 Le operazioni sensibili (cancellazioni, correzioni del registro, conferme) vanno nella
 tabella `audit_log`.
@@ -182,13 +185,14 @@ conforme, snapshot WARC, corroborazione, AMI).
 boto3/warcio (MinIO). Moduli: `fetcher` `render` `extract` `mention` `roles`
 `anagraphics` `classifier` `snapshot` `analysis` (logica pura condivisa dal workflow e
 dalla rivalutazione). `replay.py` ripassa gli articoli dei casi etichettati nella versione
-attuale (vedi `docs/DATASET_VALUTAZIONE.md`). `mention` segnala anche le **varianti vicine**
+attuale, da riga di comando o dalla console (workflow `ReplayWorkflow`, activity
+`replay_dataset`: l'API ne calcola il report; vedi `docs/DATASET_VALUTAZIONE.md`). `mention` segnala anche le **varianti vicine**
 del nome quando il nome esatto manca (probabile refuso: `alerts.name_variants`). `roles`
 estrae i ruoli scritti accanto al nome della persona e il possibile PEP (`alerts.roles`,
 `alerts.pep`; vedi [§7](#7-ruoli)).
 *Activities:* `resolve_entity` · `assess_risk_feed` · `search_articles` ·
 `fetch_source` · `render_source` · `verify_subject_mention` · `classify_fatf` ·
-`compute_ami` · `publish_svi` · `persist_alert`.
+`compute_ami` · `publish_svi` · `persist_alert` · `replay_dataset` · `replay_failed`.
 
 ### entity-resolution — FastAPI · `:8070`
 **Gate anti-omonimia.** Risolve il soggetto contro il registro: match

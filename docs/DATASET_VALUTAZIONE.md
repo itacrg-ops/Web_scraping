@@ -149,6 +149,26 @@ versione di oggi sugli stessi casi — e misurare ogni correzione prima di mette
 si ripassano gli articoli già salvati (snapshot, nessuna nuova ricerca) nella pipeline
 attuale: riconoscimento del soggetto, classificazione LLM, AMI, esito.
 
+**Dalla console** — pagina **Observability** → *Rivalutazione del dataset* → **Avvia
+rivalutazione** (con «Includi i casi in bozza» anche quelli non affidabili). L'avanzamento
+compare nella scheda («12 di 40 casi»); alla fine il report:
+
+- tabella **prima → dopo**: esito (accordo con i revisori, falsi negativi, falsi positivi,
+  non decisi), riconoscimento del soggetto e categorie FATF (precisione, richiamo), in
+  verde ciò che migliora e in rosso ciò che peggiora;
+- **casi che hanno cambiato esito**: *ora corretti*, *ora sbagliati*, altri — con il primo
+  punto della nuova motivazione (es. «Chiuso: secondo gli articoli il soggetto è deceduto»)
+  e il link alla scheda del caso;
+- errori di esito e di riconoscimento della versione attuale, categorie cambiate;
+- «Scarica JSON»: lo stesso report dello script (`--json`).
+
+Una rivalutazione alla volta; restano le ultime 20 (con chi le ha avviate). Riservata ai
+ruoli di `DATASET_EXPORT_ROLES`, perché il report contiene i nomi dei soggetti. Gira nel
+worker (workflow Temporal `ReplayWorkflow`): dopo un aggiornamento ricostruisci anche il
+worker. Una rivalutazione ferma da 30 minuti senza avanzamento risulta interrotta.
+
+**Da riga di comando** (stesso risultato, file NDJSON):
+
 ```bash
 docker compose -f docker-compose.dev.yml up -d --build worker-scraping   # dopo un aggiornamento
 docker compose -f docker-compose.dev.yml exec -T worker-scraping \
@@ -157,8 +177,10 @@ python scripts/evaluate_labels.py rivalutazione.ndjson
 ```
 
 Il report mette a confronto **prima** e **dopo** (riconoscimento, categorie, categorie per
-caso, esito, categorie cambiate) e poi il dettaglio della versione attuale. Anche gli alert
-creati prima del salvataggio delle predizioni ottengono così il riconoscimento per articolo.
+caso, esito, categorie cambiate), elenca i casi che hanno cambiato esito e poi il dettaglio
+della versione attuale. Anche gli alert creati prima del salvataggio delle predizioni
+ottengono così il riconoscimento per articolo. La logica del report è una sola
+(`services/api/app/evaluation.py`), per la console e per lo script.
 
 - Serve l'LLM: se non risponde la rivalutazione si ferma (a parole chiave non misurerebbe
   il sistema reale). A temperatura 0 le risposte possono comunque variare di poco.
@@ -189,3 +211,6 @@ creati prima del salvataggio delle predizioni ottengono così il riconoscimento 
 | GET | `/api/alerts/{id}/related` | stesso soggetto in altri casi, miei giudizi sugli stessi articoli, registro |
 | POST | `/api/alerts/delete` | elimina alert duplicati/errati; ruoli `ALERT_DELETE_ROLES` |
 | GET | `/api/labels/replay` | interno (token di servizio): input della rivalutazione |
+| POST | `/api/replay` | avvia la rivalutazione (`solo_affidabili`); 409 se ce n'è già una in corso; ruoli `DATASET_EXPORT_ROLES` |
+| GET | `/api/replay` · `/api/replay/{id}` | ultime rivalutazioni (con la sintesi) · una, con il report; stessi ruoli |
+| POST | `/api/replay/{id}/progress` · `/result` | interni (worker): avanzamento; nuova predizione per caso → report |

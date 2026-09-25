@@ -224,3 +224,26 @@ class CaseLabel(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class ReplayRun(Base):
+    """Rivalutazione del dataset etichettato avviata dalla console (pagina Observability):
+    il worker ripassa i casi nella versione attuale del sistema, l'API ne calcola il
+    report (prima/dopo). Il report contiene i nomi dei soggetti dei casi sbagliati: si
+    tengono solo le ultime rivalutazioni ed è visibile ai ruoli dell'export del dataset."""
+
+    __tablename__ = "replay_runs"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    status: Mapped[str] = mapped_column(String, default="running")    # running | completed | failed
+    solo_affidabili: Mapped[bool] = mapped_column(Boolean, default=True)
+    started_by: Mapped[str] = mapped_column(String)
+    started_by_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    total: Mapped[int] = mapped_column(Integer, default=0)            # casi (alert) da rivalutare
+    done: Mapped[int] = mapped_column(Integer, default=0)
+    counts: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # ok / non_rivalutabile / errore
+    report: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

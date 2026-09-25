@@ -28,7 +28,8 @@ from activities import (
     update_alert_svi,
     verify_subject_mention,
 )
-from workflows import ScreeningWorkflow
+from replay import replay_dataset, replay_failed
+from workflows import ReplayWorkflow, ScreeningWorkflow
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("worker-scraping")
@@ -54,7 +55,7 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[ScreeningWorkflow],
+        workflows=[ScreeningWorkflow, ReplayWorkflow],
         activities=[
             search_articles,
             annotate_credibility,
@@ -70,6 +71,8 @@ async def main() -> None:
             persist_alert,
             update_alert_svi,
             mark_screening_failed,
+            replay_dataset,
+            replay_failed,
         ],
     )
     await worker.run()

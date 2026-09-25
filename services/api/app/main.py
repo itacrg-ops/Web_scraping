@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.auth import require_user
 from app.config import settings
 from app.db import init_db
-from app.routers import alerts, health, labels, screening, search, sources, subjects
+from app.routers import alerts, health, labels, replay, screening, search, sources, subjects
 
 
 @asynccontextmanager
@@ -44,6 +44,7 @@ app.include_router(subjects.router)  # auth per-route (CRUD: utente; /registry: 
 app.include_router(alerts.router)  # auth per-route (GET: utente; POST/PATCH …/svi: interno)
 app.include_router(screening.router)  # auth per-route (POST/GET: utente; …/failed: interno)
 app.include_router(labels.router)  # auth per-route (utente; export del dataset: ruolo)
+app.include_router(replay.router)  # auth per-route (ruolo dell'export; avanzamento/esito: interno)
 app.include_router(search.router, dependencies=[Depends(require_user)])
 
 

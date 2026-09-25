@@ -1,7 +1,9 @@
 import { Box, Card, CardContent, Link, Typography } from "@mui/material";
+import ReplayPanel from "../components/ReplayPanel";
 
-// Observability di piattaforma: viste di dominio + pannelli embeddati
-// (Grafana / Azure Monitor). Scaffold: placeholder con i KPI previsti.
+// Observability: qualità del sistema sul dataset etichettato (rivalutazione on demand)
+// e piattaforma — viste di dominio + pannelli embeddati (Grafana / Azure Monitor),
+// qui ancora placeholder con i KPI previsti.
 const KPI = [
   { label: "Profondità code", hint: "task queue Temporal per tipo di worker" },
   { label: "Throughput per fonte", hint: "documenti/ora per dominio" },
@@ -15,6 +17,8 @@ export default function Observability() {
   return (
     <div>
       <Typography variant="h5" gutterBottom>Observability</Typography>
+      <ReplayPanel />
+      <Typography variant="subtitle1" gutterBottom>Piattaforma</Typography>
       <Typography variant="body2" color="text.secondary" gutterBottom>
         In produzione i pannelli sono alimentati da OpenTelemetry →{" "}
         <Link href="#">Azure Monitor / Grafana</Link>. Qui i KPI previsti.

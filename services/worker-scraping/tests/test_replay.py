@@ -107,6 +107,52 @@ def test_run_one_line_per_label_without_internal_fields() -> None:
         assert all("raw_key" not in e and "bucket" not in e for e in x["evidence"])
 
 
+def test_replay_all_reports_progress() -> None:
+    seen: list[tuple[int, int]] = []
+
+    async def progress(done: int, total: int) -> None:
+        seen.append((done, total))
+
+    records = [{"alert": _alert(id=aid), "evidence": [_ev(f"{aid}-e", "a.html")]} for aid in ("X1", "X2", "X1")]
+    by_alert = asyncio.run(replay.replay_all(records, progress))
+    assert set(by_alert) == {"X1", "X2"} and seen == [(1, 2), (2, 2)]
+
+
+def test_activity_delivers_results_to_the_api() -> None:
+    from temporalio.testing import ActivityEnvironment
+    posted: list[tuple[str, dict]] = []
+    beats: list = []
+
+    async def load(solo_affidabili: bool) -> list[dict]:
+        assert solo_affidabili is False
+        return [{"alert": _alert(id="Y1"), "evidence": [_ev("y", "a.html")]}]
+
+    async def post(path: str, body: dict, attempts: int = 1) -> None:
+        posted.append((path, body))
+
+    saved = (replay.load_cases, replay._post)
+    replay.load_cases, replay._post = load, post
+    env = ActivityEnvironment()
+    env.on_heartbeat = lambda *d: beats.append(d)
+    try:
+        counts = asyncio.run(env.run(replay.replay_dataset, "R9", False))
+        replay.classify_fatf = _llm_down                     # LLM giù: errore non ritentabile
+        try:
+            asyncio.run(env.run(replay.replay_dataset, "R9", False))
+            raise AssertionError("doveva fermarsi")
+        except replay.ApplicationError as exc:
+            assert exc.non_retryable and "LLM non disponibile" in str(exc)
+    finally:
+        replay.load_cases, replay._post = saved
+        replay.classify_fatf = _llm
+    assert counts == {"ok": 1}
+    assert [p for p, _ in posted[:3]] == ["/api/replay/R9/progress", "/api/replay/R9/progress",
+                                          "/api/replay/R9/result"], posted
+    assert posted[1][1] == {"done": 1, "total": 1} and posted[2][1]["status"] == "completed"
+    assert posted[2][1]["results"]["Y1"]["status"] == "ok" and len(beats) >= 2
+    json.dumps(posted[2][1])                                 # consegnabile così com'è
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

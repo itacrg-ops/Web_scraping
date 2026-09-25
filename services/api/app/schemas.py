@@ -484,3 +484,42 @@ class LabelStats(BaseModel):
     # (se si etichettano solo le escalation si misura la precisione ma non i falsi negativi).
     per_disposition: dict[str, int] = {}
     affidabili_per_disposition: dict[str, int] = {}
+
+
+# --- Rivalutazione del dataset on demand (pagina Observability) ----------------------
+class ReplayStart(BaseModel):
+    solo_affidabili: bool = True         # False: anche i casi in bozza
+
+
+class ReplayProgress(BaseModel):
+    done: int = Field(ge=0)
+    total: int = Field(ge=0)
+
+
+class ReplayResultIn(BaseModel):
+    """Dal worker: la nuova predizione per alert (come `replay.py`), o l'errore."""
+    status: Literal["completed", "failed"]
+    results: dict[str, dict] | None = None
+    error: str | None = None
+
+
+class ReplayRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    status: Literal["running", "completed", "failed"]
+    solo_affidabili: bool
+    started_by_name: str | None = None
+    total: int = 0
+    done: int = 0
+    counts: dict[str, int] | None = None
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime | None = None
+    finished_at: datetime | None = None
+    # esito dei casi prima → dopo (per l'elenco), dal report
+    sintesi: dict | None = None
+
+
+class ReplayRunDetail(ReplayRunOut):
+    report: dict | None = None

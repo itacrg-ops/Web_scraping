@@ -229,6 +229,41 @@ async def test_unresolved_entity_is_skipped_not_published(env) -> None:
     assert log == [("persist", "skipped")], log
 
 
+async def _replay(env: WorkflowEnvironment, fail: bool) -> tuple[dict | Exception, list]:
+    log: list = []
+
+    @activity.defn(name="replay_dataset")
+    async def replay_dataset(run_id: str, solo_affidabili: bool) -> dict:
+        log.append(("replay", run_id, solo_affidabili))
+        if fail:
+            raise ApplicationError("classificazione LLM non disponibile", type="LlmUnavailable",
+                                   non_retryable=True)
+        return {"ok": 3}
+
+    @activity.defn(name="replay_failed")
+    async def replay_failed(run_id: str, error: str) -> None:
+        log.append(("failed", run_id, error))
+
+    queue = f"q-{uuid.uuid4().hex[:8]}"
+    async with Worker(env.client, task_queue=queue, workflows=[workflows.ReplayWorkflow],
+                      activities=[replay_dataset, replay_failed]):
+        try:
+            res = await env.client.execute_workflow(
+                workflows.ReplayWorkflow.run, {"run_id": "R1", "solo_affidabili": False},
+                id=f"replay-{uuid.uuid4().hex[:8]}", task_queue=queue)
+        except WorkflowFailureError as exc:
+            res = exc
+    return res, log
+
+
+async def test_replay_runs_once_and_reports_failure(env) -> None:
+    res, log = await _replay(env, fail=False)
+    assert res == {"ok": 3} and log == [("replay", "R1", False)], (res, log)
+    res, log = await _replay(env, fail=True)
+    assert isinstance(res, WorkflowFailureError), res
+    assert log == [("replay", "R1", False), ("failed", "R1", "classificazione LLM non disponibile")], log
+
+
 async def _main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     fails = 0

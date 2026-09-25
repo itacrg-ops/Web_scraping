@@ -145,6 +145,19 @@ def test_main_prints_comparison() -> None:
     assert "falsi positivi  100% (1/1)        0% (0/1)" in out, out
     assert "per caso        0,7               0,3" in out, out
     assert "Dettaglio con la versione attuale" in out
+    assert "Ora corretti:\n  · Soggetto A: escalation → chiusura (revisore: chiusura)" in out, out
+
+
+def test_changes_and_case_ids() -> None:
+    records = _load(_with_replay(RECORDS))
+    rep = ev.replay_report(records)
+    # A: escalato ma da chiudere → ora chiuso (corretto); B in errore e C senza articoli: invariati
+    assert [(c["alert_id"], c["prima"], c["dopo"], c["revisore"]) for c in rep["cambiamenti"]["corretti"]] == [
+        ("A", ev.ESCALATION, ev.CHIUSURA, ev.CHIUSURA)], rep["cambiamenti"]
+    assert rep["cambiamenti"]["peggiorati"] == [] and rep["rivalutazione"] == {"ok": 1, "errore": 1,
+                                                                             "non_rivalutabile": 1}
+    assert all(e["alert_id"] for e in rep["prima"]["esito"]["errori"] + rep["prima"]["menzione"]["errori"])
+    json.dumps(rep)                                    # serializzabile così com'è (API, console)
 
 
 def test_wilson_interval() -> None:

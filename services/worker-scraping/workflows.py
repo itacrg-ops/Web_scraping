@@ -40,6 +40,7 @@ with workflow.unsafe.imports_passed_through():
     )
     from analysis import ami_signals, classification_text, merge_risk_feed, saved_classification
     from outcome import apply_incomplete, incomplete_reasons
+    from replay import replay_dataset, replay_failed
     from roles import is_pep, summarize as summarize_roles
 
 _RETRY = RetryPolicy(maximum_attempts=3)
@@ -53,6 +54,10 @@ _DEFAULT_MAX_ARTICLES = 3      # quanti articoli screenare al massimo in modalit
 _HEADLESS_TIMEOUT = timedelta(seconds=90)  # il render JS è più lento del fetch HTTP
 _HEADLESS_MIN_CHARS = 400      # sotto questa soglia l'estrazione è "povera" → prova headless
 _RENDER_RETRY = RetryPolicy(maximum_attempts=2)  # render costoso: meno tentativi
+# Rivalutazione del dataset: un'unica activity lunga (decine di casi, LLM per ognuno),
+# viva finché segnala l'avanzamento; non si ripete da sola (costi LLM, report doppio).
+_REPLAY_TIMEOUT = timedelta(hours=6)
+_REPLAY_HEARTBEAT = timedelta(minutes=10)
 
 
 def _cause(exc: BaseException) -> str:
@@ -426,3 +431,25 @@ class ScreeningWorkflow:
             "articles": len(docs),
             "resolved": True,
         }
+
+
+@workflow.defn
+class ReplayWorkflow:
+    """Rivalutazione del dataset etichettato avviata dalla console (pagina
+    Observability): i casi ripassati nella versione attuale del sistema; il report lo
+    calcola l'API. Se si ferma, il motivo resta sulla rivalutazione."""
+
+    @workflow.run
+    async def run(self, req: dict) -> dict:
+        try:
+            return await workflow.execute_activity(
+                replay_dataset, args=[req["run_id"], req.get("solo_affidabili", True)],
+                start_to_close_timeout=_REPLAY_TIMEOUT, heartbeat_timeout=_REPLAY_HEARTBEAT,
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+        except ActivityError as err:
+            await workflow.execute_activity(
+                replay_failed, args=[req["run_id"], _cause(err)],
+                start_to_close_timeout=_TIMEOUT, retry_policy=_RETRY,
+            )
+            raise
