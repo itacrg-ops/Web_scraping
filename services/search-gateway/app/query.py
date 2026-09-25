@@ -142,6 +142,19 @@ def _adverse_clause() -> str:
     return "(" + " OR ".join(ADVERSE_TERMS) + ")"
 
 
+def has_qualifiers(subject: dict) -> bool:
+    """Persona fisica con azienda/località: i qualificatori la distinguono dagli omonimi."""
+    return bool(_qualifiers(subject))
+
+
+_ADVERSE_RX = re.compile(r"\b(?:" + "|".join(map(re.escape, ADVERSE_TERMS)) + r")\b", re.IGNORECASE)
+
+
+def has_adverse_terms(query_str: str) -> bool:
+    """La query contiene i termini avversi (gradino "targeted" della scala)."""
+    return bool(_ADVERSE_RX.search(query_str or ""))
+
+
 def build_query(subject: dict, mode: str = "targeted") -> str:
     """Query singola: la PIÙ PRECISA per la modalità. Per la scala completa di
     fallback (usata dai provider) vedi `build_query_variants`."""
@@ -151,8 +164,10 @@ def build_query(subject: dict, mode: str = "targeted") -> str:
 
 def build_query_variants(subject: dict, mode: str = "targeted",
                          syntax: str = "boolean") -> list[str]:
-    """Query in ordine dalla PIÙ PRECISA alla PIÙ LARGA (fallback ladder). I
-    provider le provano in sequenza e si fermano alla prima con articoli.
+    """Query in ordine dalla PIÙ PRECISA alla PIÙ LARGA (scala). GDELT le prova in
+    sequenza e si ferma alla prima con articoli; Brave e SearXNG sommano i risultati
+    delle varie query (prima quelli delle più precise) finché non bastano — tranne per
+    la persona con azienda/località, dove ci si allarga solo se non si trova nulla.
 
     `syntax` adatta la sintassi al provider:
       - "boolean" (GDELT): supporta i gruppi `("A" OR "B")` e l'OR — un'unica

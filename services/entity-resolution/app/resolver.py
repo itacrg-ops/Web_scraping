@@ -18,6 +18,7 @@ from app.normalize import (
     clean_id,
     name_similarity,
     person_name_similarity,
+    share_distinctive_word,
     valid_identifier,
 )
 from app.registry import PERSONA_FISICA, PERSONA_GIURIDICA, get_registry
@@ -114,6 +115,26 @@ def resolve(subject: dict) -> dict:
                             f"Incoerenza CF/data di nascita: il CF corrisponde a "
                             f"{r['denominazione']} (nato/a {rec_dob}), ma è stata indicata "
                             f"la data {dob}. Verifica manuale richiesta."
+                        ],
+                    }
+                # Persona giuridica: la P.IVA non contiene il nome. Se il nome indicato
+                # non ha nessuna parola distintiva in comune con quello del registro (o
+                # con una sua variante), il CF/P.IVA è probabilmente sbagliato (es. un
+                # valore rimasto nel modulo): revisione umana, non attribuzione.
+                names = [r["denominazione"], *(r.get("alias") or [])]
+                if not is_person and name and not any(share_distinctive_word(name, n) for n in names):
+                    return {
+                        "resolved": False,
+                        "status": "needs_review",
+                        "method": "conflitto_CF_nome",
+                        "confidence": 0.5,
+                        "identifier_valid": id_ok,
+                        "matched": None,
+                        "candidates": [{**_match_record(r), "score": None}],
+                        "warnings": warnings + [
+                            f"Il CF/P.IVA corrisponde a «{r['denominazione']}» nel registro, ma il "
+                            f"nome indicato è «{name}». CF/P.IVA errato o soggetto che ha cambiato "
+                            "nome: verifica manuale richiesta."
                         ],
                     }
                 return {

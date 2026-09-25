@@ -3,7 +3,11 @@
 - `mock` (default): risultati deterministici, nessuna rete. Serve allo sviluppo
   locale e all'anteprima in console senza dipendenze esterne.
 - `gdelt`: GDELT DOC 2.0 API (news globale, **keyless**), ma rate-limited/instabile.
-- `brave`: Brave Search API (news, **a chiave**), affidabile per il pilota.
+- `brave`: Brave Search API (web, **a chiave**), affidabile per il pilota.
+- `searxng`: meta-motore self-hosted (web + news, **keyless**).
+
+Ogni provider ritorna (risultati, query, nota, info); `info` porta la diagnostica per
+la console: query eseguite e, per SearXNG, i motori che non hanno risposto.
 
 Altri provider (SerpAPI/Google CSE, o feed licenziati tipo Dow Jones/Factiva) si
 aggiungono qui implementando la stessa firma (ritorna (risultati, query, note)).
@@ -171,7 +175,7 @@ async def _gdelt_call(query_str: str, max_results: int, timespan: str) -> tuple[
 
 
 async def _gdelt(subject: dict, mode: str, max_results: int, lang: str,
-                 timespan: str) -> tuple[list[dict], str, str | None]:
+                 timespan: str) -> tuple[list[dict], str, str | None, dict]:
     """Scala di fallback (dalla query più precisa alla più larga) per non restare
     a 0: prova nome+qualificatori/avversi, poi allarga fino al solo nome, infine
     ritenta senza vincolo di lingua. Prosegue alla variante successiva SOLO se la
@@ -180,7 +184,7 @@ async def _gdelt(subject: dict, mode: str, max_results: int, lang: str,
     Ritorna (risultati, query_usata, note)."""
     qvars = qb.build_query_variants(subject, mode)
     if not qvars:
-        return [], "", None
+        return [], "", None, {}
 
     def _with_lang(q: str) -> str:
         return f"{q} sourcelang:{lang}" if lang else q
@@ -191,11 +195,18 @@ async def _gdelt(subject: dict, mode: str, max_results: int, lang: str,
     _seen: set[str] = set()
     variants = [v for v in variants if not (v in _seen or _seen.add(v))]
 
+    tried: list[str] = []
+
+    def _found(items: list[dict], vq: str) -> list[dict]:
+        adverse = qb.has_adverse_terms(vq)
+        return [{**it, "adverse_query": adverse} for it in items]
+
     for vq in variants:
+        tried.append(vq)
         status, payload = await _gdelt_call(vq, max_results, timespan)
         if status == "ok":
             if payload:
-                return payload, vq, _broadened_note(vq, subject)
+                return _found(payload, vq), vq, _broadened_note(vq, subject), {"queries": tried}
             continue  # ok ma nessun articolo → prova la variante successiva
         if status == "rate_limited":
             retry_after = payload  # secondi dal 429 (o None)
@@ -211,11 +222,12 @@ async def _gdelt(subject: dict, mode: str, max_results: int, lang: str,
                     break
                 retry_after = pl  # ancora 429: aggiorna eventuale Retry-After
             if result:
-                return result, vq, _broadened_note(vq, subject)
+                return _found(result, vq), vq, _broadened_note(vq, subject), {"queries": tried}
             return [], vq, ProviderError("GDELT ha limitato le richieste (429). Attendi qualche "
-                                         "secondo e riprova, oppure dirada le ricerche.")
-        return [], vq, ProviderError("GDELT non raggiungibile o query rifiutata. Riprova più tardi.")
-    return [], variants[-1], None
+                                         "secondo e riprova, oppure dirada le ricerche."), {"queries": tried}
+        return [], vq, ProviderError("GDELT non raggiungibile o query rifiutata. Riprova più tardi."), \
+            {"queries": tried}
+    return [], variants[-1], None, {"queries": tried}
 
 
 # --- Provider Brave Search (a chiave, affidabile) --------------------------
@@ -246,10 +258,11 @@ async def _throttle_brave() -> None:
         _brave_last = time.monotonic()
 
 
-async def _brave_call(query_str: str, max_results: int) -> tuple[str, object]:
+async def _brave_call(query_str: str, max_results: int,
+                      timeout: float | None = None) -> tuple[str, object, list[str]]:
     """Una singola chiamata Brave. Ritorna:
-      ("ok", list)     risultati (anche [] = nessun risultato);
-      ("error", note)  errore da propagare (chiave/parametri/rete)."""
+      ("ok", list, [])     risultati (anche [] = nessun risultato);
+      ("error", note, [])  errore da propagare (chiave/parametri/rete)."""
     # NB: country/search_lang vogliono CODICI (it), non nomi lingua. count web: max 20.
     params = {
         "q": query_str,
@@ -263,7 +276,7 @@ async def _brave_call(query_str: str, max_results: int) -> tuple[str, object]:
     }
     await _throttle_brave()
     try:
-        async with httpx.AsyncClient(timeout=settings.request_timeout) as c:
+        async with httpx.AsyncClient(timeout=timeout or settings.request_timeout) as c:
             r = await c.get(settings.brave_endpoint, params=params, headers=headers)
         if r.status_code != 200:
             body = r.text[:200].replace("\n", " ")
@@ -276,11 +289,11 @@ async def _brave_call(query_str: str, max_results: int) -> tuple[str, object]:
                 note = "Brave ha limitato le richieste (429). Riprova tra poco."
             else:
                 note = f"Brave ha risposto {r.status_code}. Riprova più tardi."
-            return "error", note
+            return "error", note, []
         data = r.json()
     except Exception as exc:  # noqa: BLE001 — rete non fatale
         logger.warning("Brave non raggiungibile: %s: %s", type(exc).__name__, exc)
-        return "error", f"Brave non raggiungibile ({type(exc).__name__}). Riprova più tardi."
+        return "error", f"Brave non raggiungibile ({type(exc).__name__}). Riprova più tardi.", []
 
     out: list[dict] = []
     for a in _brave_items(data):
@@ -292,39 +305,96 @@ async def _brave_call(query_str: str, max_results: int) -> tuple[str, object]:
             testata=(a.get("meta_url") or {}).get("hostname"),
             data=_brave_date(a), language=None, provider="brave", score=None,
         ))
-    return "ok", out
+    return "ok", out, []
 
 
 async def _brave(subject: dict, mode: str, max_results: int, lang: str,
-                 timespan: str) -> tuple[list[dict], str, str | None]:
-    """Scala di fallback come GDELT: prova la query più precisa (nome +
-    qualificatori), poi allarga fino al solo nome, fermandosi alla prima con
-    risultati. Su errore (chiave/parametri/rete) non insiste."""
+                 timespan: str) -> tuple[list[dict], str, str | None, dict]:
+    """Scala di query cumulativa (vedi `_plain_ladder`). Su errore (chiave/parametri/
+    rete) non insiste."""
     if not settings.brave_api_key:
-        return [], "", ProviderError("Brave non configurato: imposta BRAVE_API_KEY nel .env.")
-    # Brave/Google: sintassi "plain" (niente parentesi/OR — ogni frase quotata è AND).
+        return [], "", ProviderError("Brave non configurato: imposta BRAVE_API_KEY nel .env."), {}
+    return await _plain_ladder(subject, mode, max_results, _brave_call)
+
+
+# --- Scala di query cumulativa per i motori web (Brave, SearXNG) -------------
+# Senza almeno questi secondi rimasti non si avvia un'altra query della scala.
+_MIN_CALL_TIME = 4.0
+
+
+async def _plain_ladder(subject: dict, mode: str, max_results: int,
+                        call) -> tuple[list[dict], str, str | None, dict]:
+    """Query dalla più precisa (nome + termini avversi) alla più larga (solo nome),
+    in sintassi "plain" (Brave/Google: niente parentesi/OR, ogni frase quotata è AND).
+
+    CUMULATIVA: i risultati delle query si sommano, senza doppioni, finché non bastano
+    — prima quelli delle query più precise (`adverse_query`). Fermarsi alla prima query
+    con risultati perdeva articoli: «nome + termini avversi» (che i motori web vogliono
+    tutti presenti) ne trova spesso uno solo, e la ricerca per solo nome, quella che si
+    fa su Google, non partiva mai. Eccezione: persona con azienda/località, dove i
+    qualificatori tengono fuori gli omonimi — lì ci si allarga solo se non si trova nulla.
+
+    Dopo `search_ladder_budget` secondi non si avviano altre query: nel fan-out un
+    provider oltre il timeout verrebbe annullato perdendo anche i risultati trovati.
+    Un errore su una query successiva alla prima tiene i risultati già trovati.
+    `call(q, n, timeout)` → ("ok", risultati, motori_giù) | ("error", nota, motori_giù)."""
     qvars = qb.build_query_variants(subject, mode, syntax="plain")
     if not qvars:
-        return [], "", None
-    last_q = qvars[0]
+        return [], "", None, {}
+    cumulative = not qb.has_qualifiers(subject)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + settings.search_ladder_budget
+    out: list[dict] = []
+    seen: set[str] = set()
+    used: list[str] = []
+    down: list[str] = []          # motori che non hanno risposto (SearXNG)
+    partial: str | None = None
     for q in qvars:
-        last_q = q
-        status, payload = await _brave_call(q, max_results)
+        timeout = settings.request_timeout
+        if used:
+            remaining = deadline - loop.time()
+            if (out and not cumulative) or len(out) >= max_results or remaining < _MIN_CALL_TIME:
+                break
+            timeout = min(timeout, remaining)
+        status, payload, unresponsive = await call(q, max_results, timeout)
+        down += [e for e in unresponsive if e not in down]
         if status == "error":
-            return [], q, ProviderError(payload)  # chiave/parametri/rete: inutile allargare
-        if payload:
-            return payload, q, _broadened_note(q, subject)
-        # 200 ma nessun risultato → prova la variante più larga
-    return [], last_q, _broadened_note(last_q, subject)
+            if not out:
+                return [], q, ProviderError(payload), {"queries": used + [q], "non_disponibili": down}
+            partial = f"ricerca parziale, una query non è riuscita: {payload}"
+            break
+        used.append(q)
+        adverse = qb.has_adverse_terms(q)
+        for it in payload:
+            if it["url"] not in seen:
+                seen.add(it["url"])
+                out.append({**it, "adverse_query": adverse})
+    last = used[-1] if used else qvars[0]
+    note = partial or _broadened_note(last, subject)
+    return out, " + ".join(used) or last, note, {"queries": used, "non_disponibili": down}
 
 
 # --- Provider SearXNG (meta-search self-hosted, keyless) -------------------
-async def _searxng_call(query_str: str, max_results: int) -> tuple[str, object]:
-    """Una chiamata all'API JSON di SearXNG. ("ok", list) | ("error", note)."""
+def _engine_down(item) -> str:
+    """["google cse", "Suspended: timeout"] → "google cse: timeout"."""
+    name, reason = (list(item) + ["", ""])[:2]
+    low = str(reason).lower()
+    for key, short in (("captcha", "CAPTCHA"), ("too many", "troppe richieste"), ("429", "troppe richieste"),
+                       ("access denied", "accesso negato"), ("403", "accesso negato"),
+                       ("timeout", "timeout"), ("ssl", "errore SSL")):
+        if key in low:
+            return f"{name}: {short}"
+    return f"{name}: {str(reason)[:40]}" if reason else str(name)
+
+
+async def _searxng_call(query_str: str, max_results: int,
+                        timeout: float | None = None) -> tuple[str, object, list[str]]:
+    """Una chiamata all'API JSON di SearXNG: ("ok", risultati, motori_giù) |
+    ("error", nota, []). Interroga web e news (`searxng_categories`)."""
     params = {"q": query_str, "format": "json",
-              "language": settings.searxng_language, "categories": "news"}
+              "language": settings.searxng_language, "categories": settings.searxng_categories}
     try:
-        async with httpx.AsyncClient(timeout=settings.request_timeout) as c:
+        async with httpx.AsyncClient(timeout=timeout or settings.request_timeout) as c:
             r = await c.get(f"{settings.searxng_url.rstrip('/')}/search", params=params)
         if r.status_code != 200:
             note = f"SearXNG ha risposto {r.status_code}."
@@ -336,11 +406,11 @@ async def _searxng_call(query_str: str, max_results: int) -> tuple[str, object]:
                          "che include services/search-gateway/searxng/settings.yml.")
             elif r.status_code == 429:
                 note += " Troppe richieste: riprova tra poco."
-            return "error", note
+            return "error", note, []
         data = r.json()
     except Exception as exc:  # noqa: BLE001 — rete non fatale
         logger.warning("SearXNG non raggiungibile: %s: %s", type(exc).__name__, exc)
-        return "error", f"SearXNG non raggiungibile ({type(exc).__name__})."
+        return "error", f"SearXNG non raggiungibile ({type(exc).__name__}).", []
     out: list[dict] = []
     for a in (data.get("results") or []):
         url = a.get("url")
@@ -352,25 +422,25 @@ async def _searxng_call(query_str: str, max_results: int) -> tuple[str, object]:
                            provider="searxng", score=a.get("score")))
         if len(out) >= max_results:
             break
-    return "ok", out
+    down = [_engine_down(e) for e in (data.get("unresponsive_engines") or [])]
+    if down:
+        logger.warning("SearXNG: motori non disponibili per query=%r: %s", query_str, down)
+    return "ok", out, down
 
 
 async def _searxng(subject: dict, mode: str, max_results: int, lang: str,
-                   timespan: str) -> tuple[list[dict], str, str | None]:
-    """Scala di fallback come Brave (sintassi plain). SearXNG aggrega più motori:
-    niente chiave, niente rate-limit centralizzato."""
-    qvars = qb.build_query_variants(subject, mode, syntax="plain")
-    if not qvars:
-        return [], "", None
-    last_q = qvars[0]
-    for q in qvars:
-        last_q = q
-        status, payload = await _searxng_call(q, max_results)
-        if status == "error":
-            return [], q, ProviderError(payload)
-        if payload:
-            return payload, q, _broadened_note(q, subject)
-    return [], last_q, _broadened_note(last_q, subject)
+                   timespan: str) -> tuple[list[dict], str, str | None, dict]:
+    """Scala di query cumulativa come Brave (vedi `_plain_ladder`). SearXNG aggrega più
+    motori: niente chiave, niente rate-limit centralizzato. Nessun risultato mentre dei
+    motori non rispondevano non è «nessun articolo»: è una ricerca incompleta (errore)."""
+    results, query, note, info = await _plain_ladder(subject, mode, max_results, _searxng_call)
+    down = info.get("non_disponibili") or []
+    if not results and down and not isinstance(note, ProviderError):
+        note = ProviderError("SearXNG: nessun risultato mentre alcuni motori non rispondevano ("
+                             + "; ".join(down) + "): ricerca incompleta, riprova tra poco.")
+    elif down and not note:
+        note = "SearXNG: motori non disponibili: " + "; ".join(down)
+    return results, query, note, info
 
 
 # --- Dispatch: singolo provider o fan-out multi-provider (B8) ---------------
@@ -380,7 +450,7 @@ def _provider_list() -> list[str]:
 
 
 async def _run_one(name: str, subject: dict, mode: str, max_results: int,
-                   lang: str, timespan: str) -> tuple[list[dict], str, str | None]:
+                   lang: str, timespan: str) -> tuple[list[dict], str, str | None, dict]:
     if name == "gdelt":
         return await _gdelt(subject, mode, max_results, lang, timespan)
     if name == "brave":
@@ -388,18 +458,29 @@ async def _run_one(name: str, subject: dict, mode: str, max_results: int,
     if name == "searxng":
         return await _searxng(subject, mode, max_results, lang, timespan)
     if name == "mock":
-        return _mock(subject, mode, max_results), qb.build_query(subject, mode), None
-    return [], "", ProviderError(f"provider sconosciuto: {name}")
+        q = qb.build_query(subject, mode)
+        return _mock(subject, mode, max_results), q, None, {"queries": [q]}
+    return [], "", ProviderError(f"provider sconosciuto: {name}"), {}
+
+
+def _engine_report(name: str, items: list[dict], note, info: dict) -> dict:
+    """Riga di diagnostica per la console: cosa ha fatto e trovato ogni motore."""
+    failed = isinstance(note, ProviderError)
+    return {"provider": name, "count": len(items), "queries": info.get("queries") or [],
+            "error": str(note) if failed else None, "note": None if failed else note,
+            "non_disponibili": info.get("non_disponibili") or []}
 
 
 async def search(subject: dict, mode: str, max_results: int, lang: str,
-                 timespan: str) -> tuple[list[dict], str, str | None]:
-    """Ritorna (risultati_grezzi, query_effettiva, note). Con un solo provider si
-    comporta come prima; con più provider (lista in SEARCH_PROVIDER) fa il
-    **fan-out parallelo** con merge, dedup per URL e boost di corroborazione."""
+                 timespan: str) -> tuple[list[dict], str, str | None, list[dict]]:
+    """Ritorna (risultati_grezzi, query_effettiva, note, motori). Con un solo provider
+    si comporta come prima; con più provider (lista in SEARCH_PROVIDER) fa il
+    **fan-out parallelo** con merge, dedup per URL e boost di corroborazione.
+    `motori`: una riga di diagnostica per provider (query eseguite, risultati, errori)."""
     names = _provider_list()
     if len(names) == 1:
-        return await _run_one(names[0], subject, mode, max_results, lang, timespan)
+        items, query, note, info = await _run_one(names[0], subject, mode, max_results, lang, timespan)
+        return items, query, note, [_engine_report(names[0], items, note, info)]
 
     async def _guarded(n: str):
         try:
@@ -407,15 +488,17 @@ async def search(subject: dict, mode: str, max_results: int, lang: str,
                 _run_one(n, subject, mode, max_results, lang, timespan),
                 timeout=settings.search_fanout_timeout,
             )
+        except asyncio.TimeoutError:
+            return ([], "", ProviderError(f"nessuna risposta entro {settings.search_fanout_timeout:g} s"), {})
         except Exception as exc:  # noqa: BLE001 — un provider lento/rotto non blocca gli altri
-            return ([], "", ProviderError(f"{type(exc).__name__}"))
+            return ([], "", ProviderError(f"{type(exc).__name__}"), {})
 
     outcomes = await asyncio.gather(*[_guarded(n) for n in names])
     merged: dict[str, dict] = {}
     order: list[str] = []
     queries: list[str] = []
     notes: list[str] = []
-    for name, (items, query, note) in zip(names, outcomes):
+    for name, (items, query, note, _info) in zip(names, outcomes):
         if query:
             queries.append(f"{name}:{query}")
         if note:
@@ -427,6 +510,8 @@ async def search(subject: dict, mode: str, max_results: int, lang: str,
             if u not in merged:
                 merged[u] = {**it, "_providers": set()}
                 order.append(u)
+            elif it.get("adverse_query"):
+                merged[u]["adverse_query"] = True   # trovato anche con i termini avversi
             merged[u]["_providers"].add(name)
 
     # Corroborazione: i URL trovati da PIÙ provider vanno in cima (il postprocessing
@@ -445,4 +530,5 @@ async def search(subject: dict, mode: str, max_results: int, lang: str,
     # un guasto parziale resta un'informazione nella nota.
     if note and not results and all(isinstance(o[2], ProviderError) for o in outcomes):
         note = ProviderError(note)
-    return results, " | ".join(queries), note
+    engines = [_engine_report(n, o[0], o[2], o[3]) for n, o in zip(names, outcomes)]
+    return results, " | ".join(queries), note, engines

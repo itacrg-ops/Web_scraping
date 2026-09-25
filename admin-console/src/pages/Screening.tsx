@@ -8,8 +8,8 @@ import {
 import SearchIcon from "@mui/icons-material/Search";
 import {
   decideName, getAlert, getScreening, searchPreview, similarSubjects, startScreening, updateSubject,
-  type Alert, type Credibilita, type Screening, type SearchResult, type SimilarCandidate, type SimilarOut,
-  type TipoSoggetto,
+  type Alert, type Credibilita, type Screening, type SearchEngineReport, type SearchResult, type SimilarCandidate,
+  type SimilarOut, type TipoSoggetto,
 } from "../api";
 import { checkCf } from "../codiceFiscale";
 import RoleChips from "../components/RoleChips";
@@ -33,17 +33,19 @@ const credColor = (c?: Credibilita | null): "success" | "warning" | "default" =>
 // SVI (mock) → alert persistito. Due tipi di soggetto: giuridica / fisica.
 export default function ScreeningPage() {
   const [tipo, setTipo] = useState<TipoSoggetto>("persona_giuridica");
-  const [denominazione, setDenominazione] = useState("ACME Costruzioni S.r.l.");
-  const [cognome, setCognome] = useState("Rossi");
-  const [nome, setNome] = useState("Mario");
+  // Modulo vuoto: valori di esempio (CF/P.IVA, CUP) rimasti cambiando solo il nome
+  // attribuirebbero lo screening a un altro soggetto del registro.
+  const [denominazione, setDenominazione] = useState("");
+  const [cognome, setCognome] = useState("");
+  const [nome, setNome] = useState("");
   const [dataNascita, setDataNascita] = useState("");
   const [luogoNascita, setLuogoNascita] = useState("");
-  const [cfPiva, setCfPiva] = useState("00743110157");
+  const [cfPiva, setCfPiva] = useState("");
   // Qualificatori di ricerca (persona fisica)
   const [azienda, setAzienda] = useState("");
   const [localita, setLocalita] = useState("");
   const [ruolo, setRuolo] = useState("");
-  const [cup, setCup] = useState("E51B21000000001");
+  const [cup, setCup] = useState("");
   const [seedUrl, setSeedUrl] = useState("");
 
   // Web search
@@ -51,6 +53,7 @@ export default function ScreeningPage() {
   const [results, setResults] = useState<SearchResult[] | null>(null);
   const [provider, setProvider] = useState<string>("");
   const [queryUsed, setQueryUsed] = useState<string>("");
+  const [engines, setEngines] = useState<SearchEngineReport[]>([]);
   const [note, setNote] = useState<string | null>(null);
   const [removed, setRemoved] = useState(0);
   const [onlyReliable, setOnlyReliable] = useState(false);
@@ -91,7 +94,7 @@ export default function ScreeningPage() {
     setTipo(value);
     setResults(null);
     setSelected(new Set());
-    setCfPiva(value === "persona_fisica" ? "RSSMRA75C15H501P" : "00743110157");
+    setCfPiva("");   // il CF di una persona non vale per un'impresa (e viceversa)
   }
 
   // Campi condivisi da ricerca e screening. Il RUOLO non è qui: non entra nella
@@ -174,6 +177,7 @@ export default function ScreeningPage() {
     setError(null);
     setResults(null);
     setNote(null);
+    setEngines([]);
     setSelected(new Set());
     try {
       const r = await searchPreview({
@@ -186,6 +190,7 @@ export default function ScreeningPage() {
       setResults(r.results);
       setRemoved(r.removed);
       setQueryUsed(r.query);
+      setEngines(r.engines ?? []);
       setNote(r.note ?? null);
     } catch (e) {
       setError(String(e));
@@ -341,7 +346,7 @@ export default function ScreeningPage() {
               <Box sx={{ px: 2, py: 1, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
                 <Typography variant="body2" color="text.secondary">
                   {results.length} risultati
-                  {removed > 0 && ` · ${removed} rimossi (dedup dominio / credibilità)`}
+                  {removed > 0 && ` · ${removed} rimossi (stessa testata, credibilità, siti che non sono notizie)`}
                 </Typography>
                 <Chip size="small" label={`provider: ${provider}`} />
                 {results.length > 0 && (
@@ -354,7 +359,9 @@ export default function ScreeningPage() {
                 )}
               </Box>
               <Divider />
-              {queryUsed && (
+              {engines.length > 0 ? (
+                <EngineReports engines={engines} />
+              ) : queryUsed && (
                 <Typography variant="caption" color="text.secondary" component="div" sx={{ px: 2, pb: 1 }}>
                   query: <code>{queryUsed}</code>
                 </Typography>
@@ -363,9 +370,9 @@ export default function ScreeningPage() {
                 <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
                   Nessun articolo trovato per questa query
                   {onlyReliable && <> (con il filtro credibilità attivo)</>}.
-                  {provider === "gdelt"
-                    ? " Prova un nome più breve/senza forma societaria, disattiva il filtro, o allarga la finestra temporale (SEARCH_TIMESPAN)."
-                    : " Con il provider mock i risultati sono di esempio; per risultati reali imposta SEARCH_PROVIDER=gdelt."}
+                  {provider === "mock"
+                    ? " Con il provider mock i risultati sono di esempio: per risultati reali imposta SEARCH_PROVIDER (es. searxng,gdelt)."
+                    : " Qui sopra: cosa ha risposto ogni motore. Prova il nome senza forma societaria o togli il filtro credibilità."}
                 </Typography>
               ) : (
                 <List dense sx={{ maxHeight: 320, overflow: "auto" }}>
@@ -380,6 +387,10 @@ export default function ScreeningPage() {
                           primary={
                             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                               <span>{r.title || r.url}</span>
+                              {r.adverse_query && (
+                                <Chip size="small" variant="outlined" color="warning" label="termini avversi"
+                                  title="Trovato cercando il nome insieme ai termini avversi (indagato, inchiesta, sequestro…)" />
+                              )}
                               {r.testata_credibilita && (
                                 <Chip size="small" variant="outlined"
                                   label={r.testata_credibilita}
@@ -473,5 +484,30 @@ function Outcome({ a }: { a: Alert }) {
         </Box>
       )}
     </Paper>
+  );
+}
+
+// Cosa ha fatto ogni motore: risultati trovati (prima di esclusioni e dedup), query
+// eseguite, errori e motori che non hanno risposto. Spiega perché i risultati sono pochi.
+function EngineReports({ engines }: { engines: SearchEngineReport[] }) {
+  return (
+    <Box sx={{ px: 2, pb: 1 }}>
+      {engines.map((e) => (
+        <Typography key={e.provider} variant="caption" color="text.secondary" component="div"
+          sx={{ wordBreak: "break-word" }}>
+          <strong>{e.provider}</strong>:{" "}
+          {e.error ? (
+            <Box component="span" sx={{ color: "error.main" }}>errore — {e.error}</Box>
+          ) : (
+            `${e.count} trovati`
+          )}
+          {e.queries.length > 0 && (
+            <> · {e.queries.length === 1 ? "query" : `${e.queries.length} query`}:{" "}
+              {e.queries.map((q, i) => <code key={i} style={{ marginRight: 6 }}>{q}</code>)}</>
+          )}
+          {!!e.non_disponibili?.length && <> · non hanno risposto: {e.non_disponibili.join(", ")}</>}
+        </Typography>
+      ))}
+    </Box>
   );
 }

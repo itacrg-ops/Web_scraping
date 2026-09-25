@@ -22,22 +22,28 @@ app = FastAPI(title="Search Gateway — Adverse Media", version="0.1.0")
 # Cache in-memory dei risultati GREZZI del provider (pre-dedup/filtro), così
 # ricerche ripetute nel loop di test non ribattono su GDELT (rate-limited).
 # Chiave: parametri che determinano la risposta del provider. TTL da config.
-_cache: dict[tuple, tuple[float, list, str]] = {}
+_cache: dict[tuple, tuple[float, list, str, list]] = {}
 
 
 def _cache_get(key: tuple):
     hit = _cache.get(key)
     if hit and (time.monotonic() - hit[0]) < settings.search_cache_ttl:
-        return hit[1], hit[2]
+        return hit[1], hit[2], hit[3]
     return None
 
 
-def _cache_put(key: tuple, raw: list, query_used: str) -> None:
+def _cache_put(key: tuple, raw: list, query_used: str, engines: list) -> None:
     if settings.search_cache_ttl <= 0:
         return
     if len(_cache) > 500:
         _cache.clear()
-    _cache[key] = (time.monotonic(), raw, query_used)
+    _cache[key] = (time.monotonic(), raw, query_used, engines)
+
+
+def _excluded_domains() -> set[str]:
+    """Siti che non sono notizie (testate.NON_NOTIZIE) più quelli da configurazione."""
+    extra = {d.strip().lower().removeprefix("www.") for d in settings.search_exclude_domains.split(",")}
+    return testate.NON_NOTIZIE | {d for d in extra if d}
 
 
 class SubjectIn(BaseModel):
@@ -74,6 +80,17 @@ class SearchResultOut(BaseModel):
     provider: str
     score: float | None = None
     corroborations: int | None = None  # da quanti provider è stato trovato (fan-out B8)
+    adverse_query: bool | None = None  # trovato dalla query con i termini avversi
+
+
+class EngineOut(BaseModel):
+    """Diagnostica per motore: query eseguite, risultati grezzi, errori."""
+    provider: str
+    count: int = 0
+    queries: list[str] = []
+    error: str | None = None
+    note: str | None = None
+    non_disponibili: list[str] = []    # SearXNG: motori che non hanno risposto
 
 
 class SearchResponse(BaseModel):
@@ -89,6 +106,7 @@ class SearchResponse(BaseModel):
     # zero risultati per guasto ≠ zero articoli trovati. Il worker non deve trattarlo
     # come esito "pulito".
     error: str | None = None
+    engines: list[EngineOut] = []   # cosa ha fatto ogni motore (console: diagnostica)
     results: list[SearchResultOut] = []
 
 
@@ -175,11 +193,13 @@ async def search(req: SearchRequest) -> dict:
     )
     cached = _cache_get(cache_key)
     if cached is not None:
-        raw, query_used, note = cached[0], cached[1], None
+        raw, query_used, engines = cached
+        note = None
     else:
-        raw, query_used, note = await providers.search(subject, mode, fetch_n, lang, timespan)
+        raw, query_used, note, engines = await providers.search(subject, mode, fetch_n, lang, timespan)
         if note is None:  # cache solo risposte pulite (non 429/errori)
-            _cache_put(cache_key, raw, query_used)
+            _cache_put(cache_key, raw, query_used, engines)
+    raw = [dict(r) for r in raw]   # postprocess annota i risultati: la cache resta pulita
 
     # Impresa con nome di una parola: prima gli articoli che citano la ragione sociale
     # completa ("Vita Srl"), gli altri potrebbero parlare della parola comune.
@@ -191,6 +211,7 @@ async def search(req: SearchRequest) -> dict:
         min_credibility=min_cred,
         max_results=max_results,
         first=first,
+        exclude=_excluded_domains(),
     )
     return {
         "provider": settings.search_provider,
@@ -202,5 +223,6 @@ async def search(req: SearchRequest) -> dict:
         "min_credibility": min_cred,
         "note": note,
         "error": str(note) if isinstance(note, providers.ProviderError) else None,
+        "engines": engines,
         "results": results,
     }

@@ -48,6 +48,25 @@ _TESTATE: dict[str, str] = {
 }
 
 
+# Siti che NON sono notizie ma compaiono cercando il nome di un'impresa o di una persona:
+# schede e bilanci d'impresa, elenchi, social, annunci di lavoro. Esclusi dai risultati
+# della ricerca (non dagli URL scelti a mano); altri con SEARCH_EXCLUDE_DOMAINS.
+NON_NOTIZIE: frozenset[str] = frozenset({
+    # schede d'impresa, registri, bilanci, elenchi
+    "reportaziende.it", "ufficiocamerale.it", "registroimprese.it", "registroaziende.it",
+    "fatturatoitalia.it", "companyreports.it", "infoimprese.it", "misterimprese.it",
+    "impresaitalia.info", "atoka.io", "kompass.com", "europages.it", "europages.com",
+    "dnb.com", "opencorporates.com", "guidamonaci.it", "infobel.com", "cylex-italia.it",
+    "hotfrog.it", "paginegialle.it", "paginebianche.it", "yelp.it", "yelp.com",
+    # social e video
+    "linkedin.com", "facebook.com", "instagram.com", "twitter.com", "x.com",
+    "youtube.com", "tiktok.com", "pinterest.com",
+    # annunci di lavoro e compravendite
+    "indeed.com", "glassdoor.it", "glassdoor.com", "infojobs.it", "jobrapido.com",
+    "monster.it", "subito.it",
+})
+
+
 def domain_of(url: str) -> str:
     """Dominio registrabile (minuscolo), senza `www.` e senza sottodomini.
     Es. https://roma.repubblica.it/... → repubblica.it."""
@@ -71,26 +90,28 @@ def credibility_of(domain: str) -> str:
 
 def postprocess(results: list[dict], *, dedup_by_domain: bool, max_per_domain: int,
                 min_credibility: str, max_results: int,
-                first=None) -> tuple[list[dict], int]:
-    """Annota (dominio + credibilità), filtra sotto soglia, ordina per
-    credibilità (poi per ordine originale), deduplica per dominio e tronca.
-    `first(r)`: se vero il risultato va prima degli altri (es. cita la ragione
-    sociale completa), a parità di credibilità e ordine.
-    Ritorna (risultati, quanti rimossi tra filtro e dedup)."""
+                first=None, exclude: frozenset[str] | set[str] = frozenset()) -> tuple[list[dict], int]:
+    """Annota (dominio + credibilità), toglie i domini esclusi (siti che non sono
+    notizie) e quelli sotto soglia, ordina, deduplica per dominio e tronca.
+    Ordine: prima i risultati `first(r)` (es. citano la ragione sociale completa), poi
+    quelli trovati con i termini avversi (`adverse_query`), poi per credibilità della
+    testata e ordine originale.
+    Ritorna (risultati, quanti rimossi tra esclusioni, filtro e dedup)."""
     for i, r in enumerate(results):
         d = domain_of(r.get("url", ""))
         r["domain"] = d or None
         r["testata_credibilita"] = credibility_of(d) if d else "sconosciuta"
         r["_idx"] = i
 
-    kept = results
+    kept = [r for r in results if not (r["domain"] and r["domain"] in exclude)]
     if min_credibility and min_credibility != "none":
         floor = CRED_RANK.get(min_credibility, 0)
         kept = [r for r in kept if CRED_RANK.get(r["testata_credibilita"], 0) >= floor]
 
-    # Prima i risultati `first`, poi credibilità decrescente, poi ordine originale
-    # (stabile: recenza nel tier).
+    # Prima i risultati `first`, poi quelli con i termini avversi, poi credibilità
+    # decrescente, poi ordine originale (stabile: recenza nel tier).
     kept = sorted(kept, key=lambda r: (0 if first and first(r) else 1,
+                                       0 if r.get("adverse_query") else 1,
                                        -CRED_RANK.get(r["testata_credibilita"], 0), r["_idx"]))
 
     if dedup_by_domain:

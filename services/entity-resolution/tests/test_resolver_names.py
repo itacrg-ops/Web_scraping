@@ -57,6 +57,38 @@ def test_soggetto_dichiarato_diverso_non_e_candidato() -> None:
         settings.allow_unregistered_subject = False
 
 
+ACME = {"id": "S-2", "tipo": "persona_giuridica", "denominazione": "ACME Costruzioni S.r.l.",
+        "cf_piva": "00743110157", "cup": [], "alias": [], "distinti": []}
+
+
+def _resolve_pg(denominazione: str, registry: list[dict], cf: str = "00743110157") -> dict:
+    orig = resolver.get_registry
+    resolver.get_registry = lambda: registry
+    try:
+        return resolver.resolve({"tipo_soggetto": "persona_giuridica", "denominazione": denominazione, "cf_piva": cf})
+    finally:
+        resolver.get_registry = orig
+
+
+def test_piva_di_un_altra_impresa_va_in_revisione() -> None:
+    # es. la P.IVA di esempio rimasta nel modulo di screening
+    r = _resolve_pg("Only Italia Logistics S.r.l.", [ACME])
+    assert r["status"] == "needs_review" and r["method"] == "conflitto_CF_nome" and r["matched"] is None, r
+    assert r["candidates"][0]["id"] == "S-2" and any("ACME Costruzioni" in w for w in r["warnings"])
+
+
+def test_piva_con_nome_compatibile_resta_deterministica() -> None:
+    for name in ("ACME Costruzioni", "Acme S.p.A.", "ACME COSTRUZIONI SRL"):
+        r = _resolve_pg(name, [ACME])
+        assert r["status"] == "resolved" and r["method"] == "deterministico_CF_PIVA", (name, r)
+    # nome precedente registrato come variante: stessa impresa
+    r = _resolve_pg("Beta Logistica Srl", [{**ACME, "alias": ["Beta Logistica"]}])
+    assert r["status"] == "resolved", r
+    # le parole comuni non bastano: "Costruzioni Rossi" non è ACME Costruzioni
+    r = _resolve_pg("Costruzioni Rossi", [ACME])
+    assert r["method"] == "conflitto_CF_nome", r
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

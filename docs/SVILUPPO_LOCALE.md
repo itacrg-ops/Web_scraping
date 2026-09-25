@@ -169,8 +169,17 @@ Dopo aver indicato il soggetto, il pulsante **Cerca articoli** interroga il
 
 In tutti i casi la pipeline verifica la **menzione** del soggetto in ogni
 articolo e produce **un alert con più evidenze** (una per articolo recuperato e
-con hash). La query di ricerca è nome/denominazione + termini avversi FATF
-(indagato, corruzione, sequestro, …).
+con hash).
+
+**Come si cerca.** Prima nome/denominazione + termini avversi FATF (indagato,
+corruzione, sequestro, …), poi il **solo nome**: con Brave e SearXNG i risultati delle
+due query si **sommano** (senza doppioni) finché non bastano, e quelli trovati con i
+termini avversi vanno in cima (in console: chip «termini avversi»). Prima la ricerca si
+fermava alla prima query con almeno un risultato: con «nome + 8 termini avversi», che i
+motori web vogliono tutti presenti, spesso ne restava uno solo. Eccezione: persona con
+azienda/località (qui sotto), dove ci si allarga solo se non si trova nulla. Sotto i
+risultati la console mostra **cosa ha fatto ogni motore**: quanti risultati, quali query,
+errori e motori che non hanno risposto (es. «google cse: CAPTCHA»).
 
 **Qualificatori persona fisica (anti-omonimia).** Per una persona si possono
 indicare (opzionali) **Azienda** e **Località**: entrano nella query come
@@ -188,6 +197,8 @@ nome, la probabilità di omonimia cala (driver "Contesto confermato"); se il nom
 compare senza alcun contesto, l'alert è marcato "⚠ possibile omonimo".
 
 **Deduplica per dominio e credibilità delle testate** (§5.1). I risultati sono:
+- **ripuliti dai siti che non sono notizie**: schede e bilanci d'impresa, elenchi,
+  social, annunci di lavoro (`testate.NON_NOTIZIE`; altri con `SEARCH_EXCLUDE_DOMAINS`);
 - **deduplicati per dominio** (`MAX_PER_DOMAIN=1`): un articolo per testata, per
   favorire la corroborazione da fonti indipendenti;
 - **annotati con la credibilità** della testata (alta | media | bassa |
@@ -226,10 +237,14 @@ Provider (`SEARCH_PROVIDER` nel `.env`):
   # nel .env: SEARCH_PROVIDER=brave e BRAVE_API_KEY=...
   docker compose -f docker-compose.dev.yml up -d --build search-gateway
   ```
-- **`searxng`** (meta-search self-hosted, **keyless**): aggrega più motori. Gira
-  come servizio nel compose; la configurazione (API JSON abilitata,
-  `search-gateway/searxng/settings.yml`) è **inclusa nell'immagine**, non montata: dopo
-  una modifica al file, `docker compose -f docker-compose.dev.yml up -d --build searxng`.
+- **`searxng`** (meta-search self-hosted, **keyless**): aggrega più motori. Cerca sia
+  nel **web** (categoria `general`: Google tramite Custom Search, DuckDuckGo, Brave —
+  trova anche articoli di anni fa, sentenze, provvedimenti) sia nelle **notizie**
+  (`news`: Google/Bing/DuckDuckGo/Brave News e le testate italiane ANSA e Il Post, che
+  cercano nel proprio archivio). Gira come servizio nel compose; la configurazione (API
+  JSON abilitata, motori, `search-gateway/searxng/settings.yml`) è **inclusa
+  nell'immagine**, non montata: dopo una modifica al file,
+  `docker compose -f docker-compose.dev.yml up -d --build searxng`.
 - **Persone giuridiche con nomi comuni** («Vita Srl», «Nuova Vita S.p.A.»): la ricerca
   usa la denominazione con la forma giuridica (mai la sola parola «vita») e mette prima
   i risultati che la citano per intero; nell'articolo il nome conta solo se usato come
@@ -344,6 +359,13 @@ deve comparire «sorgente montato».
 
 L'HMR su bind mount di Docker Desktop usa il **polling** (`vite.config.ts`,
 `server.watch.usePolling`): senza, le modifiche potrebbero non essere rilevate.
+
+**La ricerca trova meno articoli di Google.** Guarda sotto i risultati cosa ha fatto
+ogni motore. «Non hanno risposto: google cse: CAPTCHA/timeout» = il motore ha bloccato
+le richieste (troppe in poco tempo): riprova più tardi o aggiungi Brave
+(`SEARCH_PROVIDER=searxng,brave`, con `BRAVE_API_KEY`). Se un motore trova molti
+risultati ma in lista ne restano pochi, sono stati tolti i doppioni della stessa testata
+e i siti che non sono notizie (il numero dei «rimossi» è accanto al totale).
 
 **Il back-end mostra codice vecchio dopo un `git pull`.** I servizi Python sono
 immagini buildate: dopo un pull rigenera con `--build`

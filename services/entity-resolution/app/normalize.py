@@ -38,6 +38,27 @@ def normalize_name(name: str) -> str:
     return _SPACES.sub(" ", s).strip()
 
 
+# Parole comuni nelle denominazioni: da sole non dicono che due nomi sono la stessa
+# impresa (stesse del worker, mention.GENERIC).
+_GENERIC_WORDS = {
+    "GRUPPO", "GROUP", "HOLDING", "IMPRESA", "IMPRESE", "COSTRUZIONI", "INFRASTRUTTURE",
+    "SERVIZI", "ITALIA", "ITALIANA", "GENERALE", "GENERALI", "LAVORI", "EDILE", "EDILIZIA",
+    "IMPIANTI", "GESTIONE", "GESTIONI", "CONSORZIO", "ENERGIA", "AMBIENTE", "GLOBAL",
+    "INTERNATIONAL", "SOCIETA", "E", "DI", "DEL", "DELLA", "DEI", "DEGLI", "DELLE",
+}
+
+
+def share_distinctive_word(a: str, b: str) -> bool:
+    """Le due denominazioni hanno almeno una parola distintiva in comune ("Acme" /
+    "ACME Costruzioni S.r.l." sì; "Only Italia Logistics" / "ACME Costruzioni" no). Se
+    un nome ha solo parole comuni, basta una parola qualsiasi in comune."""
+    ta, tb = set(normalize_name(a).split()), set(normalize_name(b).split())
+    da, db = ta - _GENERIC_WORDS, tb - _GENERIC_WORDS
+    if da and db:
+        return bool(da & db)
+    return bool(ta & tb)
+
+
 def clean_id(value: str | None) -> str:
     return re.sub(r"[^A-Z0-9]", "", (value or "").upper())
 

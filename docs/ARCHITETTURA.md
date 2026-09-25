@@ -220,7 +220,11 @@ corroborazione, annota la credibilità della testata e applica dedup per dominio
 filtro. Cache in-memory per non ribattere sui rate-limit. Una persona giuridica con un
 nome comune di una parola («Vita Srl») si cerca con la forma giuridica («"Vita Srl" OR
 "Vita S.r.l."…», mai la parola da sola) e i risultati che citano la denominazione
-completa vengono prima.
+completa vengono prima. Con Brave e SearXNG la scala di query è **cumulativa** («nome +
+termini avversi», poi il solo nome: i risultati si sommano, prima quelli avversi; entro
+`SEARCH_LADDER_BUDGET`); SearXNG interroga **web e news**; i siti che non sono notizie
+(schede d'impresa, social, annunci) sono esclusi. La risposta riporta per ogni motore
+query eseguite, risultati ed errori (`engines`), mostrati in console.
 *Tecnologia:* FastAPI, httpx (asyncio.gather); provider mock/GDELT/Brave/SearXNG;
 throttle in-process per i limiti upstream.
 *Endpoint:* `POST /v1/search` · `POST /v1/credibility` · `GET /v1/providers`.
@@ -357,6 +361,7 @@ produce alcun giudizio. Ordine di risoluzione dal segnale più forte al più deb
 | `deterministico_CF_PIVA` | Match esatto su CF / P.IVA | resolved |
 | `incoerenza_CF_dati_anagrafici` | CF non coerente con nome/cognome/data | needs_review |
 | `conflitto_CF_data_nascita` | Data di nascita in conflitto col CF | needs_review |
+| `conflitto_CF_nome` | Persona giuridica: CF/P.IVA a registro ma nome senza parole distintive in comune (P.IVA errata o impresa rinominata) | needs_review |
 | `probabilistico_nome_CUP` | Nome + legame persona↔CUP dell'intervento | resolved |
 | `probabilistico_nome_dob` | Nome + data/luogo di nascita (± embedding) | resolved |
 | `non_a_registro` | Soggetto assente dal registro | provvisorio / unresolved |

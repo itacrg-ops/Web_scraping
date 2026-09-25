@@ -144,6 +144,18 @@ export interface SearchResult {
   language?: string | null;
   provider: string;
   score?: number | null;
+  corroborations?: number | null;     // da quanti motori è stato trovato
+  adverse_query?: boolean | null;     // trovato dalla query con i termini avversi
+}
+
+// Cosa ha fatto ogni motore di ricerca: query eseguite, risultati, errori.
+export interface SearchEngineReport {
+  provider: string;
+  count: number;                      // risultati grezzi (prima di esclusioni e dedup)
+  queries: string[];
+  error?: string | null;
+  note?: string | null;
+  non_disponibili?: string[];         // SearXNG: motori che non hanno risposto
 }
 
 export interface SearchResponse {
@@ -155,6 +167,8 @@ export interface SearchResponse {
   removed: number;
   min_credibility: string;
   note?: string | null;
+  error?: string | null;
+  engines?: SearchEngineReport[];
   results: SearchResult[];
 }
 

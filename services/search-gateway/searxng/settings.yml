@@ -16,3 +16,18 @@ search:
   safe_search: 0
   # Lingua di default coerente col pilota.
   default_lang: "it"
+
+# Motori: si parte da quelli di default (use_default_settings) e si attivano le testate
+# italiane con ricerca nell'archivio, disattivate di default. Il search-gateway
+# interroga le categorie "general" (web: Google tramite Custom Search, DuckDuckGo,
+# Brave) e "news" (Google News, Bing News, DuckDuckGo News, Brave News, ANSA, Il Post):
+# i motori di sole notizie restituiscono soprattutto articoli recenti.
+engines:
+  - name: ansa
+    engine: ansa
+    shortcut: ans
+    disabled: false
+  - name: il post
+    engine: il_post
+    shortcut: pst
+    disabled: false

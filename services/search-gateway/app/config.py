@@ -20,10 +20,17 @@ class Settings(BaseSettings):
     # searxng/settings.yml). Nel docker-compose gira come servizio locale.
     searxng_url: str = "http://searxng:8080"
     searxng_language: str = "it"
+    # Categorie interrogate: "general" è la ricerca web (come Google: anche articoli di
+    # anni fa, sentenze, provvedimenti), "news" i motori di notizie (soprattutto recenti).
+    searxng_categories: str = "general,news"
 
     # Timeout per singolo provider nel fan-out multi-provider (uno lento non
     # blocca gli altri).
     search_fanout_timeout: float = 25.0
+    # Scala di query cumulativa (Brave, SearXNG): dopo questi secondi non si avviano
+    # altre query e si tengono i risultati trovati. Sotto il timeout del fan-out, che
+    # altrimenti annullerebbe il provider perdendo anche quelli.
+    search_ladder_budget: float = 18.0
 
     # Numero massimo di risultati per ricerca.
     search_max_results: int = 10
@@ -71,6 +78,10 @@ class Settings(BaseSettings):
     # Filtro credibilità: soglia minima ("none" = nessun filtro, solo annotazione).
     # Valori: none | bassa | media | alta.
     min_credibility: str = "none"
+
+    # Domini da escludere dai risultati, oltre a quelli che non sono notizie (schede
+    # d'impresa, elenchi, social, annunci: vedi testate.NON_NOTIZIE). Separati da virgola.
+    search_exclude_domains: str = ""
 
     # User-Agent identificabile (riusa quello dello scraper).
     user_agent: str = Field(
