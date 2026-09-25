@@ -28,6 +28,9 @@ class SubjectIn(BaseModel):
     cup: list[str] = []
     sede: str | None = None
     alias: list[str] = []
+    # Disambiguazione umana: il soggetto del registro che il revisore ha indicato tra i
+    # candidati di un caso «Da disambiguare».
+    subject_id: str | None = None
 
 
 class MatchOut(BaseModel):

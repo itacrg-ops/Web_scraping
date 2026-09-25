@@ -14,12 +14,16 @@ import {
 import { checkCf } from "../codiceFiscale";
 import RoleChips from "../components/RoleChips";
 import SimilarNamesDialog, { type NameChoice } from "../components/SimilarNamesDialog";
+import DisambiguationPanel from "../components/DisambiguationPanel";
 import { ESITO } from "../esito";
 import { splitPerson } from "../personName";
 
 // Campi del soggetto che la conferma di un nome simile può sostituire.
 type NameFields = { denominazione?: string; cognome?: string; nome?: string; cf_piva?: string;
                     data_nascita?: string; luogo_nascita?: string };
+// Soggetto del registro indicato dal revisore per il nome `name` (disambiguazione): vale
+// finché il nome nel modulo resta quello.
+type Chosen = { id: string; label: string; name: string };
 // Solo i campi valorizzati: gli altri restano quelli del modulo.
 const definedName = (f: NameFields): NameFields =>
   Object.fromEntries(Object.entries(f).filter(([, v]) => v)) as NameFields;
@@ -69,23 +73,37 @@ export default function ScreeningPage() {
   const answer = useRef<((c: NameChoice) => void) | null>(null);
   const [checkedName, setCheckedName] = useState<string | null>(null);   // nome già verificato
   const [nameNote, setNameNote] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<Chosen | null>(null);
 
-  // Precompilazione da un link (es. «Ripeti lo screening» con il nome corretto).
+  // Precompilazione da un link: «Ripeti lo screening» con il nome corretto, o con il
+  // soggetto del registro indicato in un caso «Da disambiguare» (subject_id).
   const [params] = useSearchParams();
   useEffect(() => {
     const t = params.get("tipo");
     if (t !== "persona_fisica" && t !== "persona_giuridica") return;
+    const f = { denominazione: params.get("denominazione") ?? "", cognome: params.get("cognome") ?? "",
+                nome: params.get("nome") ?? "" };
     setTipo(t);
-    setDenominazione(params.get("denominazione") ?? "");
-    setCognome(params.get("cognome") ?? "");
-    setNome(params.get("nome") ?? "");
+    setDenominazione(f.denominazione);
+    setCognome(f.cognome);
+    setNome(f.nome);
     setCfPiva(params.get("cf_piva") ?? "");
     setCup(params.get("cup") ?? "");
+    const id = params.get("subject_id");
+    const name = t === "persona_fisica" ? `${f.cognome} ${f.nome}`.trim() : f.denominazione.trim();
+    setChosen(id ? { id, label: params.get("soggetto") || name, name } : null);
+    setResults(null);
+    setSelected(new Set());
+    setResult(null);
+    setOutcome(null);
+    setError(null);
   }, [params]);
 
   const isPerson = tipo === "persona_fisica";
   const hasSubject = isPerson ? Boolean(cognome && nome) : Boolean(denominazione);
   const typedName = isPerson ? `${cognome} ${nome}`.trim() : denominazione.trim();
+  // L'identità indicata vale solo per il nome per cui è stata indicata.
+  const identity = chosen && chosen.name === typedName ? chosen : null;
   // Controllo live CF ↔ dati anagrafici (persona fisica): feedback immediato.
   const cfCheck = isPerson ? checkCf(cfPiva, nome, cognome, dataNascita) : null;
 
@@ -95,6 +113,7 @@ export default function ScreeningPage() {
     setResults(null);
     setSelected(new Set());
     setCfPiva("");   // il CF di una persona non vale per un'impresa (e viceversa)
+    setChosen(null);
   }
 
   // Campi condivisi da ricerca e screening. Il RUOLO non è qui: non entra nella
@@ -128,7 +147,8 @@ export default function ScreeningPage() {
   // Prima di cercare o avviare: il nome è simile a un soggetto noto (registro o screening
   // passati) o è già stato screenato? Chiede conferma una volta per nome. Restituisce i
   // campi da sostituire ({} = nessuno) o null se l'utente annulla.
-  async function checkName(): Promise<NameFields | null> {
+  async function checkName(): Promise<(NameFields & { subject_id?: string }) | null> {
+    if (identity) return {};   // identità già indicata dal revisore
     if (checkedName === typedName) return {};
     let data: SimilarOut;
     try {
@@ -152,12 +172,21 @@ export default function ScreeningPage() {
         if (choice.c.subject_id) await decideName(choice.c.subject_id, typedName, "stesso");
         setNameNote(`Usato «${choice.c.denominazione}»` + (choice.c.subject_id
           ? `: «${typedName}» è registrato come sua variante.` : "."));
-        setCheckedName(isPerson ? `${f.cognome} ${f.nome}`.trim() : f.denominazione ?? typedName);
+        const name = isPerson ? `${f.cognome} ${f.nome}`.trim() : f.denominazione ?? typedName;
+        setCheckedName(name);
+        // soggetto del registro scelto dal revisore: è la sua identità (anche senza CF)
+        if (choice.c.subject_id) {
+          setChosen({ id: choice.c.subject_id, label: choice.c.denominazione, name });
+          return { ...f, subject_id: choice.c.subject_id };
+        }
         return f;
       }
       if (choice.action === "correggi") {
         await updateSubject(choice.c.subject_id!, { denominazione: typedName });
         setNameNote(`Registro corretto: «${choice.c.denominazione}» ora è «${typedName}» (il vecchio nome resta come variante).`);
+        setChosen({ id: choice.c.subject_id!, label: typedName, name: typedName });
+        setCheckedName(typedName);
+        return { subject_id: choice.c.subject_id! };
       } else if (choice.action === "diverso" && choice.c.subject_id) {
         await decideName(choice.c.subject_id, typedName, "diverso");
         setNameNote(`Registrato: «${typedName}» non è «${choice.c.denominazione}».`);
@@ -171,8 +200,9 @@ export default function ScreeningPage() {
   }
 
   async function search() {
-    const over = await checkName();
-    if (over === null) return;
+    const checked = await checkName();
+    if (checked === null) return;
+    const { subject_id: _, ...over } = checked;
     setSearching(true);
     setError(null);
     setResults(null);
@@ -208,8 +238,9 @@ export default function ScreeningPage() {
   }
 
   async function submit() {
-    const over = await checkName();
-    if (over === null) return;
+    const checked = await checkName();
+    if (checked === null) return;
+    const { subject_id: pickedId, ...over } = checked;
     setBusy(true);
     setError(null);
     setResult(null);
@@ -223,6 +254,7 @@ export default function ScreeningPage() {
         ...definedName(over),
         ruolo: isPerson && ruolo ? ruolo : undefined,   // solo screening (corroborazione)
         cup: cup ? cup.split(",").map((c) => c.trim()) : [],
+        subject_id: pickedId ?? identity?.id,
         // Precedenza: selezionati (web search) → URL singolo → ricerca automatica.
         seed_urls: urls.length > 0 ? urls : undefined,
         seed_url: urls.length === 0 && seedUrl ? seedUrl : undefined,
@@ -298,6 +330,14 @@ export default function ScreeningPage() {
                 helperText="Facoltativo: comune/stato, disambigua l'omonimia." />
             )}
           </Stack>
+
+          {identity && (
+            <MuiAlert severity="info" variant="outlined"
+              action={<Button size="small" color="inherit" onClick={() => setChosen(null)}>Annulla</Button>}>
+              Identità indicata dal revisore: <strong>{identity.label}</strong> del registro dei soggetti noti.
+              Lo screening la usa per l'Entity Resolution (anche senza codice fiscale).
+            </MuiAlert>
+          )}
 
           {cfCheck && !cfCheck.consistent && cfCheck.warnings.length > 0 && (
             <MuiAlert severity="warning" variant="outlined">
@@ -476,7 +516,9 @@ function Outcome({ a }: { a: Alert }) {
           <RoleChips roles={a.roles} pep={a.pep} />
         </Box>
       )}
-      {drivers.length > 0 && (
+      {a.disposition === "HITL_ENTITY_RESOLUTION" ? (
+        <Box sx={{ mt: 1.5 }}><DisambiguationPanel a={a} /></Box>
+      ) : drivers.length > 0 && (
         <Box component="ul" sx={{ m: 0, mt: 1, pl: 2.5 }}>
           {drivers.slice(0, 6).map((d) => (
             <li key={d}><Typography variant="body2">{d}</Typography></li>

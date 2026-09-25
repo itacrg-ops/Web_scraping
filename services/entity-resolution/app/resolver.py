@@ -62,6 +62,49 @@ def resolve(subject: dict) -> dict:
     id_ok = valid_identifier(cf) if cf else False
     similarity = person_name_similarity if is_person else name_similarity
 
+    # Disambiguazione umana: il revisore ha indicato QUALE soggetto del registro è
+    # (tra i candidati di un caso «Da disambiguare», o inserendolo nel registro). È una
+    # decisione autoritativa, tracciata come tale. Non vale — percorso normale — se il
+    # soggetto è di un altro tipo, ha un altro CF/P.IVA o un nome che non è il suo né
+    # una sua variante (soggetto rimasto indicato nel modulo mentre si cambiava nome).
+    chosen_id = (subject.get("subject_id") or "").strip()
+    if chosen_id:
+        def _find(registry: list[dict]) -> dict | None:
+            return next((r for r in registry if r.get("id") == chosen_id), None)
+
+        def _fits(r: dict) -> bool:
+            names = [r["denominazione"], *(r.get("alias") or [])]
+            return max(similarity(name, n) for n in names) >= settings.name_candidate
+
+        chosen = _find(reg)
+        if chosen is None or not _fits(chosen):
+            # appena inserito, o variante appena confermata: la cache non li ha ancora
+            reg = get_registry(fresh=True)
+            chosen = _find(reg)
+        if chosen is None:
+            warnings.append("Il soggetto indicato dal revisore non è più nel registro")
+        elif chosen.get("tipo", PERSONA_GIURIDICA) != (PERSONA_FISICA if is_person else PERSONA_GIURIDICA):
+            warnings.append(f"«{chosen['denominazione']}» nel registro è di un altro tipo di soggetto: "
+                            "scelta del revisore non applicata")
+        elif cf and clean_id(chosen.get("cf_piva")) and cf != clean_id(chosen.get("cf_piva")):
+            warnings.append(f"CF/P.IVA indicato diverso da quello di «{chosen['denominazione']}» "
+                            "nel registro: scelta del revisore non applicata")
+        elif not _fits(chosen):
+            warnings.append(f"Il nome «{name}» non è quello di «{chosen['denominazione']}» né una sua "
+                            "variante confermata: scelta del revisore non applicata")
+        else:
+            return {
+                "resolved": True,
+                "status": "resolved",
+                "method": "scelta_revisore",
+                "confidence": 1.0,
+                "identifier_valid": id_ok,
+                "matched": _match_record(chosen),
+                "candidates": [],
+                "warnings": warnings + [f"Identità indicata dal revisore: «{chosen['denominazione']}» "
+                                        "del registro dei soggetti noti"],
+            }
+
     # 0) Coerenza CF ↔ dati anagrafici inseriti (persona fisica). Il CF codifica
     #    cognome, nome e data di nascita: se non corrispondono a quanto inserito,
     #    l'input è contraddittorio (refuso o CF errato per il soggetto) → non si

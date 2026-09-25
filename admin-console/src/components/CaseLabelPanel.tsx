@@ -7,8 +7,9 @@
 // Un caso "affidabile" richiede un giudizio completo e certo: la scheda lo verifica
 // prima di salvare, evidenzia cosa manca (per numero di articolo) e porta al primo punto.
 // Mostra anche gli altri casi dello stesso soggetto (già nel dataset?), i giudizi che il
-// revisore ha già dato sugli stessi articoli, un possibile refuso nel nome e la conferma
-// degli articoli nel registro del soggetto.
+// revisore ha già dato sugli stessi articoli, un possibile refuso nel nome, la conferma
+// degli articoli nel registro del soggetto e, per i casi «Da disambiguare», chi è il
+// soggetto (candidati del registro).
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -25,6 +26,7 @@ import {
 } from "../api";
 import { asSubjectName, splitPerson } from "../personName";
 import ConfirmRegistryDialog from "./ConfirmRegistryDialog";
+import DisambiguationPanel from "./DisambiguationPanel";
 
 type Ev = EvidenceItem & { id: string };
 type Question = "pertinenza" | "avversa";
@@ -462,6 +464,7 @@ export default function CaseLabelPanel({ a, onSaved, onDirtyChange, onNext, onCl
   return (
     <>
       <Box sx={{ flex: 1, overflowY: "auto", px: 2, py: 2 }}>
+        {a.disposition === "HITL_ENTITY_RESOLUTION" && <DisambiguationPanel a={a} />}
         {variant && (
           <MuiAlert severity="warning" sx={{ mb: 2 }} action={
             <Button size="small" color="inherit" onClick={rescreen}>Ripeti lo screening</Button>}>

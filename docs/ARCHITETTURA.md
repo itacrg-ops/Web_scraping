@@ -362,6 +362,7 @@ produce alcun giudizio. Ordine di risoluzione dal segnale più forte al più deb
 
 | Metodo | Segnale | Esito tipico |
 |---|---|---|
+| `scelta_revisore` | Soggetto del registro indicato dal revisore (caso «Da disambiguare» → «È lui», o soggetto appena inserito nel registro); non vale se tipo, CF/P.IVA o nome non sono i suoi | resolved |
 | `deterministico_CF_PIVA` | Match esatto su CF / P.IVA | resolved |
 | `incoerenza_CF_dati_anagrafici` | CF non coerente con nome/cognome/data | needs_review |
 | `conflitto_CF_data_nascita` | Data di nascita in conflitto col CF | needs_review |
@@ -376,11 +377,28 @@ articoli, dati anagrafici (età/anno/luogo) coerenti o discordanti, e NER
 (soggetto = persona, azienda = organizzazione) — riducono l'omonimia o segnalano
 un "possibile omonimo".
 
+**Nomi di persona simili.** La somiglianza tra due nomi di persona è quella dei
+caratteri (parole in ordine alfabetico: «Rossi Mario» = «Mario Rossi»), limitata dalla
+parola **meno** simile: ogni parola di un nome deve avere una corrispondente vicina
+nell'altro (≥ 0,75). Un nome di battesimo in comune non basta: «Cocina Salvatore» e
+«Riina Salvatore» si somigliano per 0,84 sui caratteri, ma i cognomi solo per 0,55 →
+non sono candidati l'uno dell'altro. I refusi restano candidati («Stropp» / «Stroppa»
+0,92, «Cocina» / «Cucina» 0,83). Stessa regola nell'API (nomi simili in console).
+
 Il registro **impara dai revisori** (`docs/REGISTRO_SOGGETTI.md`): i nomi simili
 confermati come **varianti** dello stesso soggetto contano come il suo nome; quelli
 dichiarati **soggetti diversi** non sono più candidati. Prima di uno screening la console
 chiede conferma se il nome somiglia a un soggetto noto; dopo, se gli articoli citano solo
 una variante vicina del nome (refuso), la scheda del caso lo segnala.
+
+**Casi «Da disambiguare».** La scheda del caso (e l'esito nella pagina Screening)
+spiega perché il gate non è passato e mostra i candidati del registro con i loro dati
+(CF/P.IVA, nascita, ruolo, CUP). Il revisore indica: «È lui» (il nome del caso diventa
+una variante confermata e lo screening si ripete con quel soggetto: `subject_id` →
+metodo `scelta_revisore`, con voce di audit `screening.soggetto_indicato`), «È un altro
+soggetto» (non verrà più proposto) o, se non è nel registro, «Inserisci nel registro e
+ripeti lo screening». L'Entity Resolution rilegge subito il registro quando il soggetto
+indicato non è nella sua cache (inserito un momento prima).
 
 ---
 

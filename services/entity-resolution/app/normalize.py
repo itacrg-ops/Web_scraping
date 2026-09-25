@@ -134,11 +134,36 @@ def normalize_person_name(name: str) -> str:
     return _SPACES.sub(" ", s).strip()
 
 
+# Sotto questa somiglianza due PAROLE di un nome di persona sono diverse: Cocina/Riina
+# 0,55. I refusi restano simili: Stropp/Stroppa 0,92, Cocina/Cucina 0,83.
+WORD_MIN = 0.75
+
+
+def weakest_word(ta: list[str], tb: list[str]) -> float:
+    """Ogni parola del nome più corto ha una corrispondente simile nell'altro? Ritorna la
+    somiglianza della coppia peggiore (abbinamento greedy). Un nome di battesimo in
+    comune non basta: «Salvatore Cocina» e «Salvatore Riina» sono persone diverse."""
+    short, long_ = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+    free = list(long_)
+    worst = 1.0
+    for w in sorted(short, key=len, reverse=True):
+        scores = [1.0 if w == x else difflib.SequenceMatcher(None, w, x).ratio() for x in free]
+        if not scores:
+            return 0.0
+        i = max(range(len(scores)), key=scores.__getitem__)
+        worst = min(worst, scores[i])
+        free.pop(i)
+    return worst
+
+
 def person_name_similarity(a: str, b: str) -> float:
-    """Similarità 0..1 su nomi di persona (token-sort: l'ordine
-    nome/cognome non conta)."""
-    ta = " ".join(sorted(normalize_person_name(a).split()))
-    tb = " ".join(sorted(normalize_person_name(b).split()))
+    """Similarità 0..1 su nomi di persona (token-sort: l'ordine nome/cognome non conta),
+    limitata dalla parola meno simile: con un nome di battesimo lungo in comune i
+    caratteri coincidono per gran parte anche se i cognomi sono diversi («Cocina
+    Salvatore» / «Riina Salvatore»: 0,84 sulla stringa, 0,55 sui cognomi)."""
+    ta = sorted(normalize_person_name(a).split())
+    tb = sorted(normalize_person_name(b).split())
     if not ta or not tb:
         return 0.0
-    return difflib.SequenceMatcher(None, ta, tb).ratio()
+    full = difflib.SequenceMatcher(None, " ".join(ta), " ".join(tb)).ratio()
+    return min(full, weakest_word(ta, tb))

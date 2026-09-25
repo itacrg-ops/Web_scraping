@@ -65,6 +65,26 @@ def test_unreachable_without_cache_is_empty_outside_development() -> None:
     assert _with(down, env="production") == []
 
 
+def test_fresh_reads_again_despite_the_cache() -> None:
+    calls: list[int] = []
+
+    def fake_get(url, headers=None, timeout=None):
+        calls.append(1)
+        return _Resp(200, {"subjects": [{"id": f"X{len(calls)}"}]})
+
+    saved = registry.httpx.get
+    registry.httpx.get = fake_get
+    registry._cache.update(ts=0.0, data=None)
+    try:
+        assert registry.get_registry() == [{"id": "X1"}]
+        assert registry.get_registry() == [{"id": "X1"}]              # dalla cache
+        assert registry.get_registry(fresh=True) == [{"id": "X2"}]    # riletto subito
+    finally:
+        registry.httpx.get = saved
+        registry._cache.update(ts=0.0, data=None)
+    assert len(calls) == 2
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

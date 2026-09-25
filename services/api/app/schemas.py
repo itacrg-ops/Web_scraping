@@ -48,6 +48,9 @@ class ScreeningRequest(BaseModel):
     localita: str | None = None
     ruolo: str | None = None
     cup: list[str] = []
+    # Disambiguazione umana: soggetto del registro indicato dal revisore (caso «Da
+    # disambiguare» → «È lui: ripeti lo screening»).
+    subject_id: str | None = None
     # Sorgenti da screenare (precedenza: seed_url → seed_urls → ricerca automatica):
     seed_url: str | None = None         # URL singolo (override manuale)
     seed_urls: list[str] = []           # articoli scelti in console (web search)

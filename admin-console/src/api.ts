@@ -44,12 +44,28 @@ export interface SearchProvidersStatus {
   providers: SearchProvider[];
 }
 
+// Soggetto del registro proposto o riconosciuto dall'Entity Resolution.
+export interface ErSubject {
+  id: string;
+  tipo: TipoSoggetto;
+  denominazione: string;
+  cf_piva?: string | null;
+  cup?: string[];
+  ruolo?: string | null;
+  data_nascita?: string | null;
+  luogo_nascita?: string | null;
+  score?: number | null;          // somiglianza del nome (candidati)
+}
+
 export interface EntityResolution {
+  // resolved | provvisorio | needs_review | ambiguous | unresolved
   status: string;
   method: string;
   confidence: number;
   identifier_valid?: boolean;
   warnings?: string[];
+  matched?: ErSubject | null;
+  candidates?: ErSubject[];
 }
 
 export interface EvidenceItem {
@@ -126,6 +142,7 @@ export interface ScreeningRequest {
   localita?: string;   // persona fisica: qualificatore ricerca (AND)
   ruolo?: string;      // persona fisica: soft (corroborazione, non in query)
   cup: string[];
+  subject_id?: string;     // soggetto del registro indicato dal revisore (disambiguazione)
   seed_url?: string;       // URL singolo (override manuale)
   seed_urls?: string[];    // articoli scelti dalla web search
   max_articles?: number;   // max articoli in ricerca automatica

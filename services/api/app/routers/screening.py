@@ -13,7 +13,8 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import require_internal, require_user
+from app import audit
+from app.auth import User, require_internal, require_user
 from app.config import settings
 from app.db import get_session
 from app.models import Screening as ScreeningModel
@@ -25,9 +26,9 @@ logger = logging.getLogger("api.screening")
 router = APIRouter(prefix="/api/screening", tags=["screening"])
 
 
-@router.post("", response_model=ScreeningOut, status_code=202, dependencies=[Depends(require_user)])
+@router.post("", response_model=ScreeningOut, status_code=202)
 async def start_screening(
-    req: ScreeningRequest, session: AsyncSession = Depends(get_session)
+    req: ScreeningRequest, user: User = Depends(require_user), session: AsyncSession = Depends(get_session)
 ) -> ScreeningModel:
     screening = ScreeningModel(
         denominazione=req.denominazione,
@@ -38,6 +39,12 @@ async def start_screening(
         status="running",
     )
     session.add(screening)
+    await session.flush()
+    if req.subject_id:
+        # disambiguazione umana: chi ha indicato l'identità (l'ER la registra come
+        # «scelta_revisore» nell'alert)
+        audit.record(session, user, "screening.soggetto_indicato", "subject", req.subject_id,
+                     screening=screening.id)
     await session.commit()
     await session.refresh(screening)
 
@@ -54,6 +61,7 @@ async def start_screening(
         "localita": req.localita,
         "ruolo": req.ruolo,
         "cup": req.cup,
+        "subject_id": req.subject_id or None,
         # Precedenza: seed_url (override) → seed_urls (candidati console) →
         # ricerca automatica nel workflow (se entrambi vuoti).
         "seed_url": req.seed_url or None,

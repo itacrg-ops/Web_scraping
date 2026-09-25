@@ -94,6 +94,8 @@ class ScreeningWorkflow:
             "localita": req.get("localita"),
             "ruolo": req.get("ruolo"),
             "cup": req.get("cup", []),
+            # soggetto del registro indicato dal revisore (caso «Da disambiguare»)
+            "subject_id": req.get("subject_id"),
         }
 
         # --- GATE: Entity Resolution (obbligatoria prima del giudizio) ---

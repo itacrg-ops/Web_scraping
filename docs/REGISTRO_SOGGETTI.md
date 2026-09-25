@@ -13,8 +13,8 @@ console chiede conferma una volta per nome:
 
 | Scelta | Effetto |
 |---|---|
-| **È lo stesso: usa «Stroppa Andrea»** | il modulo prende nome e dati del soggetto; «Stropa Andrea» diventa una sua **variante** |
-| **È lo stesso: correggi il registro** | il soggetto del registro prende il nome inserito; il vecchio nome resta come variante |
+| **È lo stesso: usa «Stroppa Andrea»** | il modulo prende nome e dati del soggetto; «Stropa Andrea» diventa una sua **variante**; lo screening usa la sua identità (anche senza CF) |
+| **È lo stesso: correggi il registro** | il soggetto del registro prende il nome inserito; il vecchio nome resta come variante; lo screening usa la sua identità |
 | **È un altro soggetto** | la coppia viene ricordata come **soggetti diversi**: non verrà più proposta |
 | **Prosegui con «…»** | nessuna decisione: si continua con il nome inserito |
 
@@ -70,6 +70,25 @@ motivazione dell'alert e la scheda del caso mostra l'avviso con **«Ripeti lo sc
 **errato**. Le parole corte e comuni (Rossi/Rosso, Mario/Maria) non vengono proposte: sono
 quasi sempre persone diverse.
 
+## Caso «Da disambiguare»
+
+Senza un'identità certa il sistema non valuta le notizie (AMI 0, esito «Da
+disambiguare», niente SAS VI). La scheda del caso — e l'esito nella pagina Screening —
+dice perché e propone i **candidati del registro** con i loro dati (CF/P.IVA, nascita,
+ruolo, CUP, somiglianza del nome):
+
+| Azione | Effetto |
+|---|---|
+| **È lui: ripeti lo screening** | il nome del caso diventa una **variante** del soggetto; la pagina Screening si apre con lo stesso nome e l'avviso «Identità indicata dal revisore»; l'Entity Resolution usa quel soggetto (metodo `scelta_revisore`) |
+| **È un altro soggetto** | la coppia viene ricordata come **soggetti diversi**: non verrà più proposta |
+| **Inserisci nel registro e ripeti lo screening** | (nessun candidato) aggiunge il soggetto con il nome, il CF/P.IVA e i CUP del caso, poi ripete lo screening con la sua identità; se nel frattempo è già stato inserito, usa quello. CF, data e luogo di nascita si completano dalla pagina Soggetti |
+| **Ripeti lo screening** | stesso nome, per correggere o aggiungere i dati (es. il codice fiscale) |
+
+L'identità indicata vale solo per quel nome: cambiandolo nel modulo l'avviso sparisce (e
+«Annulla» la toglie). L'Entity Resolution non la applica se il soggetto nel registro è di
+un altro tipo, ha un altro CF/P.IVA o un nome che non è il suo né una sua variante; chi
+l'ha indicata resta nell'audit (`screening.soggetto_indicato`).
+
 ## Conferma nel registro, a valle dell'etichettatura
 
 Nella scheda del caso, dopo aver salvato l'etichetta: **«Conferma nel registro…»**. Gli
@@ -95,12 +114,17 @@ risposto (etichettatura cieca), evidenziato se diverso dal proprio.
   forte; con il CUP dell'intervento risolve l'identità).
 - **Soggetti diversi**: il soggetto non viene proposto come candidato per quel nome; lo
   screening non si ferma più in «da rivedere» per quella somiglianza.
+- **Soggetto indicato dal revisore** (`subject_id` dello screening): identità risolta
+  (`scelta_revisore`), anche senza CF/P.IVA.
+- **Nomi di persona**: conta anche la parola meno simile, quindi un nome di battesimo in
+  comune non rende candidato un altro soggetto («Cocina Salvatore» non è un possibile
+  «Riina Salvatore»; «Cucina Salvatore» sì, può essere un refuso).
 
 ## Audit
 
 Nella tabella `audit_log` restano chi e quando ha: eliminato un alert (con motivo e nota),
 creato, rinominato o eliminato un soggetto, deciso su un nome simile, confermato o rimosso
-notizie. I dettagli contengono identificativi e motivi, non i dati del soggetto.
+notizie, indicato l'identità di uno screening. I dettagli contengono identificativi e motivi, non i dati del soggetto.
 
 ## API
 

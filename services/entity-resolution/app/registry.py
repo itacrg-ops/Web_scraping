@@ -44,11 +44,12 @@ _FALLBACK: list[dict] = [
 _cache: dict = {"ts": 0.0, "data": None}
 
 
-def get_registry() -> list[dict]:
+def get_registry(fresh: bool = False) -> list[dict]:
     """Registro corrente (cache TTL). Non solleva: su errore usa la cache stantia;
-    senza cache, il seed di fallback in sviluppo, altrimenti un registro vuoto."""
+    senza cache, il seed di fallback in sviluppo, altrimenti un registro vuoto.
+    `fresh`: rilettura immediata (soggetto appena inserito dal revisore)."""
     now = time.monotonic()
-    if _cache["data"] is not None and (now - _cache["ts"]) < settings.registry_ttl:
+    if not fresh and _cache["data"] is not None and (now - _cache["ts"]) < settings.registry_ttl:
         return _cache["data"]
     headers = {"X-Internal-Token": settings.internal_api_token} if settings.internal_api_token else None
     try:
